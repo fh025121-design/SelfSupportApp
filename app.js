@@ -1,4 +1,5 @@
 const STORAGE_KEY = "selfSupportAppTrialStateV1";
+const DEFAULT_MINUTES = 20;
 
 const app = document.getElementById("app");
 const todayLabel = document.getElementById("todayLabel");
@@ -41,6 +42,7 @@ function loadState() {
     if (!raw) {
       return createInitialState(todayKey);
     }
+
     const parsed = JSON.parse(raw);
     if (!parsed) {
       return createInitialState(todayKey);
@@ -56,71 +58,110 @@ function loadState() {
       dateKey: todayKey
     };
 
-    if (!Array.isArray(safeState.tasks)) {
-      safeState.tasks = [];
-    }
+    safeState.tasks = Array.isArray(safeState.tasks) ? safeState.tasks : [];
+    safeState.navHistory = Array.isArray(safeState.navHistory) ? safeState.navHistory : [];
+    safeState.planFor = safeState.planFor === "today" ? "today" : "tomorrow";
+    safeState.additionalChoice = safeState.additionalChoice === "add" ? "add" : "none";
 
-    if (safeState.tasks.length === 0) {
-      safeState.tasks = [createTask("", 30)];
-    }
+    safeState.planningForm = {
+      ...createPlanningForm(),
+      ...(safeState.planningForm || {})
+    };
+    safeState.planningForm.mode = safeState.planningForm.mode === "edit" ? "edit" : "add";
+    safeState.planningForm.name = String(safeState.planningForm.name || "");
+    safeState.planningForm.plannedMinutes = sanitizeMinutes(safeState.planningForm.plannedMinutes || DEFAULT_MINUTES);
 
-    if (!safeState.running) {
-      safeState.running = { taskId: null, startedAt: null, baseSeconds: 0 };
-    }
+    safeState.running = {
+      taskId: null,
+      startedAt: null,
+      baseSeconds: 0,
+      isPaused: false,
+      confirmingComplete: false,
+      ...(safeState.running || {})
+    };
 
-    if (!safeState.review) {
-      safeState.review = { pendingIds: [], index: 0, pendingAction: null, draftMemo: "" };
-    }
+    safeState.review = {
+      pendingIds: [],
+      index: 0,
+      pendingAction: null,
+      draftMemo: "",
+      ...(safeState.review || {})
+    };
 
     if (typeof safeState.review.draftMemo !== "string") {
       safeState.review.draftMemo = "";
     }
 
+    safeState.homeReturnPhase = ["planning", "execution", "review", "result"].includes(safeState.homeReturnPhase)
+      ? safeState.homeReturnPhase
+      : "planning";
+
+    if (!["home", "planning", "execution", "review", "result"].includes(safeState.phase)) {
+      safeState.phase = "planning";
+    }
+
     return safeState;
-  } catch (e) {
+  } catch (error) {
     return createInitialState(todayKey);
   }
 }
 
 function createInitialState(todayKey) {
-  return createInitialStateWithTasks(todayKey, [createTask("", 30)]);
+  return createInitialStateWithTasks(todayKey, []);
 }
 
 function createInitialStateWithTasks(todayKey, tasks) {
-  const initialTasks = Array.isArray(tasks) && tasks.length > 0 ? tasks : [createTask("", 30)];
   return {
     dateKey: todayKey,
     phase: "planning",
+    navHistory: [],
+    homeReturnPhase: "planning",
+    planFor: "tomorrow",
     additionalChoice: "none",
-    tasks: initialTasks,
-    running: {
-      taskId: null,
-      startedAt: null,
-      baseSeconds: 0
-    },
-    review: {
-      pendingIds: [],
-      index: 0,
-      pendingAction: null,
-      draftMemo: ""
-    },
+    tasks: Array.isArray(tasks) ? tasks : [],
+    planningForm: createPlanningForm(),
+    running: createRunningState(),
+    review: createReviewState(),
     goPressedAt: null
+  };
+}
+
+function createPlanningForm() {
+  return {
+    mode: "add",
+    targetId: null,
+    name: "",
+    plannedMinutes: DEFAULT_MINUTES
+  };
+}
+
+function createRunningState() {
+  return {
+    taskId: null,
+    startedAt: null,
+    baseSeconds: 0,
+    isPaused: false,
+    confirmingComplete: false
+  };
+}
+
+function createReviewState() {
+  return {
+    pendingIds: [],
+    index: 0,
+    pendingAction: null,
+    draftMemo: ""
   };
 }
 
 function buildCarryoverTasks(previousState) {
   if (!previousState || !Array.isArray(previousState.tasks)) {
-    return [createTask("", 30)];
+    return [];
   }
 
-  const carried = previousState.tasks
+  return previousState.tasks
     .filter((task) => task && task.status === "deferred")
     .map((task) => createTask(String(task.name || "").trim(), sanitizeMinutes(task.plannedMinutes)));
-
-  if (carried.length > 0) {
-    return carried;
-  }
-  return [createTask("", 30)];
 }
 
 function createTask(name, plannedMinutes) {
@@ -142,6 +183,10 @@ function saveState() {
 function render() {
   clearTickTimer();
 
+  if (state.phase === "home") {
+    renderHome();
+    return;
+  }
   if (state.phase === "planning") {
     renderPlanning();
     return;
@@ -157,16 +202,126 @@ function render() {
   renderResult();
 }
 
+function renderHome() {
+  const counts = getCounts();
+  const runningTask = getRunningTask();
+  const isPaused = Boolean(runningTask && state.running.isPaused);
+  const isActive = Boolean(runningTask && !state.running.isPaused);
+  const returnPhase = getHomeReturnPhase();
+
+  let actionBlock = `
+    <div class="btn-row compact-stack">
+      <button id="openPlanningBtn" class="btn-main" type="button">予定確認へ</button>
+    </div>
+  `;
+
+  if (isPaused) {
+    actionBlock = `
+      <div class="task-card paused-card">
+        <h3>${escapeHtml(runningTask.name)}</h3>
+        <p>${secondsToMinutes(getRunningElapsedSeconds())}分で中断中</p>
+        <div class="btn-row compact-stack">
+          <button id="resumePausedBtn" class="btn-main" type="button">再開</button>
+          <button id="openPlanningBtn" class="btn-quiet" type="button">予定確認へ</button>
+        </div>
+      </div>
+    `;
+  } else if (isActive) {
+    actionBlock = `
+      <div class="task-card paused-card">
+        <h3>${escapeHtml(runningTask.name)}</h3>
+        <p>実行中: ${getRunningElapsedSeconds()}秒</p>
+        <div class="btn-row compact-stack">
+          <button id="returnExecutionBtn" class="btn-main" type="button">実行画面へ戻る</button>
+          <button id="openPlanningBtn" class="btn-quiet" type="button">予定確認へ</button>
+        </div>
+      </div>
+    `;
+  } else if (returnPhase === "review" && hasReviewTarget()) {
+    actionBlock = `
+      <div class="btn-row compact-stack">
+        <button id="resumeReviewBtn" class="btn-main" type="button">終了確認へ戻る</button>
+        <button id="openPlanningBtn" class="btn-quiet" type="button">予定確認へ</button>
+      </div>
+    `;
+  } else if (returnPhase === "result") {
+    actionBlock = `
+      <div class="btn-row compact-stack">
+        <button id="resumeResultBtn" class="btn-main" type="button">結果を見る</button>
+        <button id="openPlanningBtn" class="btn-quiet" type="button">予定確認へ</button>
+      </div>
+    `;
+  } else if (state.goPressedAt) {
+    actionBlock = `
+      <div class="btn-row compact-stack">
+        <button id="resumeExecutionBtn" class="btn-main" type="button">タスク実行へ戻る</button>
+        <button id="openPlanningBtn" class="btn-quiet" type="button">予定確認へ</button>
+      </div>
+    `;
+  }
+
+  renderScreen(`
+    <h2>ホーム</h2>
+    <p class="helper">現在の進みをここから確認できます。</p>
+
+    <div class="summary">
+      <p>予定を作る日: ${state.planFor === "today" ? "今日" : "明日"}</p>
+      <p>予定タスク数: ${counts.total}件</p>
+      <p>完了数: ${counts.done}件</p>
+      <p>未完了数: ${counts.unfinished}件</p>
+      <p>合計予定時間: ${sumPlanned()}分</p>
+    </div>
+
+    ${actionBlock}
+  `);
+
+  document.getElementById("openPlanningBtn")?.addEventListener("click", () => {
+    changePhase("planning", false);
+  });
+  document.getElementById("resumeExecutionBtn")?.addEventListener("click", () => {
+    changePhase("execution", false);
+  });
+  document.getElementById("returnExecutionBtn")?.addEventListener("click", () => {
+    changePhase("execution", false);
+  });
+  document.getElementById("resumeReviewBtn")?.addEventListener("click", () => {
+    changePhase("review", false);
+  });
+  document.getElementById("resumeResultBtn")?.addEventListener("click", () => {
+    changePhase("result", false);
+  });
+  document.getElementById("resumePausedBtn")?.addEventListener("click", () => {
+    resumePausedTask();
+  });
+}
+
 function renderPlanning() {
-  app.innerHTML = `
+  const showForm = state.planningForm.mode === "edit" || state.additionalChoice === "add" || state.tasks.length === 0;
+  const editingTask = state.planningForm.mode === "edit" ? findTask(state.planningForm.targetId) : null;
+
+  renderScreen(`
     <h2>1. 今日の予定確認</h2>
-    <p class="helper">タスク名と予定時間を入れて、今日の最終予定を作成します。</p>
-    <ul id="taskList" class="task-list"></ul>
+    <p class="helper">登録済みタスクを確認し、必要なら修正してからGOを押します。</p>
+
+    <p class="legend">予定を作る日</p>
+    <div class="option-group compact-options">
+      <label class="option-item">
+        <input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} />
+        <span>明日</span>
+      </label>
+      <label class="option-item">
+        <input type="radio" name="planFor" value="today" ${state.planFor === "today" ? "checked" : ""} />
+        <span>今日</span>
+      </label>
+    </div>
+
+    <h3>登録済みタスク</h3>
+    <ul id="taskList" class="task-list compact-task-list"></ul>
 
     <div class="summary" id="totalPlanned"></div>
 
     <p class="legend">追加事項はありますか？</p>
-    <div class="option-group">
+    <div class="option-group compact-options">
       <label class="option-item">
         <input type="radio" name="additional" value="none" ${state.additionalChoice === "none" ? "checked" : ""} />
         <span>なし</span>
@@ -177,20 +332,22 @@ function renderPlanning() {
       </label>
     </div>
 
-    <div id="additionalPanel" class="hidden">
-      <p class="inline-text">追加タスクを登録できます。</p>
-      <div class="grid-2">
-        <div>
-          <label for="newTaskName">タスク名</label>
-          <input id="newTaskName" type="text" placeholder="例: 英検" maxlength="40" />
+    <div id="planningFormArea" class="${showForm ? "" : "hidden"}">
+      <div class="task-form-box">
+        <p class="helper">${editingTask ? "修正する内容を入力してください。" : "次に追加するタスクを入力してください。"}</p>
+        <div class="grid-2">
+          <div>
+            <label for="taskFormName">タスク名</label>
+            <input id="taskFormName" type="text" value="${escapeHtml(state.planningForm.name)}" placeholder="例: 数学" maxlength="40" />
+          </div>
+          <div>
+            <label for="taskFormMinutes">予定時間（分）</label>
+            <input id="taskFormMinutes" type="number" min="1" max="600" value="${sanitizeMinutes(state.planningForm.plannedMinutes)}" />
+          </div>
         </div>
-        <div>
-          <label for="newTaskMinutes">予定時間（分）</label>
-          <input id="newTaskMinutes" type="number" min="1" max="600" value="20" />
+        <div class="btn-row compact-stack">
+          <button id="saveTaskBtn" class="btn-sub" type="button">${editingTask ? "修正を保存" : "追加"}</button>
         </div>
-      </div>
-      <div class="btn-row">
-        <button id="addAdditionalBtn" class="btn-sub" type="button">追加タスクを登録</button>
       </div>
     </div>
 
@@ -198,7 +355,7 @@ function renderPlanning() {
     <div class="btn-row">
       <button id="goBtn" class="btn-main" type="button">GO</button>
     </div>
-  `;
+  `);
 
   renderTaskListForPlanning();
   bindPlanningEvents();
@@ -208,126 +365,131 @@ function renderTaskListForPlanning() {
   const list = document.getElementById("taskList");
   list.innerHTML = "";
 
-  state.tasks.forEach((task, idx) => {
-    const li = document.createElement("li");
-    li.className = "task-card";
-    li.innerHTML = `
-      <h3>タスク ${idx + 1}</h3>
-      <div class="grid-2">
-        <div>
-          <label for="name-${task.id}">タスク名</label>
-          <input id="name-${task.id}" type="text" value="${escapeHtml(task.name)}" maxlength="40" />
-        </div>
-        <div>
-          <label for="minutes-${task.id}">予定時間（分）</label>
-          <input id="minutes-${task.id}" type="number" min="1" max="600" value="${Number(task.plannedMinutes) || 1}" />
-        </div>
-      </div>
+  if (state.tasks.length === 0) {
+    const emptyItem = document.createElement("li");
+    emptyItem.className = "task-card compact-empty";
+    emptyItem.innerHTML = "<p>登録済みタスクはまだありません。</p>";
+    list.appendChild(emptyItem);
+    updateTotalPlanned();
+    return;
+  }
 
-      <div class="btn-row split">
-        <button type="button" class="btn-quiet" data-action="up" data-id="${task.id}" ${idx === 0 ? "disabled" : ""}>上へ</button>
-        <button type="button" class="btn-quiet" data-action="down" data-id="${task.id}" ${idx === state.tasks.length - 1 ? "disabled" : ""}>下へ</button>
-      </div>
-      <div class="btn-row">
-        <button type="button" class="btn-sub" data-action="add" data-id="${task.id}">この下に追加</button>
-      </div>
-      <div class="btn-row">
-        <button type="button" class="btn-danger" data-action="delete" data-id="${task.id}">削除</button>
+  state.tasks.forEach((task, idx) => {
+    const item = document.createElement("li");
+    const isEditing = state.planningForm.mode === "edit" && state.planningForm.targetId === task.id;
+    item.className = `task-card compact-task-row${isEditing ? " editing-row" : ""}`;
+    item.innerHTML = `
+      <div class="task-inline-text">${escapeHtml(task.name)} <span>${task.plannedMinutes}分</span></div>
+      <div class="task-inline-actions">
+        <button type="button" class="btn-mini btn-quiet" data-action="up" data-id="${task.id}" ${idx === 0 ? "disabled" : ""}>↑</button>
+        <button type="button" class="btn-mini btn-quiet" data-action="down" data-id="${task.id}" ${idx === state.tasks.length - 1 ? "disabled" : ""}>↓</button>
+        <button type="button" class="btn-mini btn-sub" data-action="edit" data-id="${task.id}">修正</button>
+        <button type="button" class="btn-mini btn-danger" data-action="delete" data-id="${task.id}">削除</button>
       </div>
     `;
-    list.appendChild(li);
+    list.appendChild(item);
   });
 
   updateTotalPlanned();
-
-  const additionalPanel = document.getElementById("additionalPanel");
-  if (state.additionalChoice === "add") {
-    additionalPanel.classList.remove("hidden");
-  } else {
-    additionalPanel.classList.add("hidden");
-  }
 }
 
 function bindPlanningEvents() {
-  const list = document.getElementById("taskList");
-
-  list.querySelectorAll("input[id^='name-']").forEach((input) => {
-    input.addEventListener("input", (e) => {
-      const id = e.target.id.replace("name-", "");
-      const task = findTask(id);
-      if (!task) return;
-      task.name = e.target.value;
+  document.querySelectorAll("input[name='planFor']").forEach((radio) => {
+    radio.addEventListener("change", (event) => {
+      state.planFor = event.target.value === "today" ? "today" : "tomorrow";
       saveState();
     });
   });
 
-  list.querySelectorAll("input[id^='minutes-']").forEach((input) => {
-    input.addEventListener("input", (e) => {
-      const id = e.target.id.replace("minutes-", "");
-      const task = findTask(id);
-      if (!task) return;
-      task.plannedMinutes = sanitizeMinutes(e.target.value);
-      e.target.value = task.plannedMinutes;
-      updateTotalPlanned();
-      saveState();
-    });
-  });
-
-  list.querySelectorAll("button[data-action]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
-      if (!id || !action) return;
-      if (action === "delete") {
-        if (state.tasks.length === 1) {
-          alert("タスクは1件以上必要です。");
-          return;
-        }
-        state.tasks = state.tasks.filter((t) => t.id !== id);
+  document.querySelectorAll("input[name='additional']").forEach((radio) => {
+    radio.addEventListener("change", (event) => {
+      state.additionalChoice = event.target.value === "add" ? "add" : "none";
+      if (state.additionalChoice === "none" && state.planningForm.mode === "add") {
+        state.planningForm = createPlanningForm();
       }
+      saveState();
+      renderPlanning();
+    });
+  });
+
+  const nameEl = document.getElementById("taskFormName");
+  const minutesEl = document.getElementById("taskFormMinutes");
+  if (nameEl) {
+    nameEl.addEventListener("input", (event) => {
+      state.planningForm.name = event.target.value;
+      saveState();
+    });
+  }
+  if (minutesEl) {
+    minutesEl.addEventListener("input", (event) => {
+      state.planningForm.plannedMinutes = sanitizeMinutes(event.target.value);
+      event.target.value = state.planningForm.plannedMinutes;
+      saveState();
+    });
+  }
+
+  document.getElementById("saveTaskBtn")?.addEventListener("click", savePlanningTask);
+
+  document.querySelectorAll("button[data-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.id;
+      const action = button.dataset.action;
+      if (!id || !action) return;
+
       if (action === "up") {
         moveTask(id, -1);
       }
       if (action === "down") {
         moveTask(id, 1);
       }
-      if (action === "add") {
-        insertTaskAfter(id);
+      if (action === "edit") {
+        const task = findTask(id);
+        if (!task) return;
+        state.planningForm = {
+          mode: "edit",
+          targetId: id,
+          name: task.name,
+          plannedMinutes: sanitizeMinutes(task.plannedMinutes)
+        };
       }
+      if (action === "delete") {
+        state.tasks = state.tasks.filter((task) => task.id !== id);
+        if (state.planningForm.targetId === id) {
+          state.planningForm = createPlanningForm();
+        }
+      }
+
       saveState();
       renderPlanning();
     });
   });
-
-  document.querySelectorAll("input[name='additional']").forEach((radio) => {
-    radio.addEventListener("change", (e) => {
-      state.additionalChoice = e.target.value;
-      saveState();
-      renderPlanning();
-    });
-  });
-
-  const addAdditionalBtn = document.getElementById("addAdditionalBtn");
-  if (addAdditionalBtn) {
-    addAdditionalBtn.addEventListener("click", () => {
-      const nameEl = document.getElementById("newTaskName");
-      const minutesEl = document.getElementById("newTaskMinutes");
-      const name = nameEl.value.trim();
-      const planned = sanitizeMinutes(minutesEl.value);
-      if (!name) {
-        alert("追加タスク名を入力してください。");
-        nameEl.focus();
-        return;
-      }
-      state.tasks.push(createTask(name, planned));
-      nameEl.value = "";
-      minutesEl.value = "20";
-      saveState();
-      renderPlanning();
-    });
-  }
 
   document.getElementById("goBtn").addEventListener("click", onGo);
+}
+
+function savePlanningTask() {
+  const name = state.planningForm.name.trim();
+  const plannedMinutes = sanitizeMinutes(state.planningForm.plannedMinutes);
+
+  if (!name) {
+    alert("タスク名を入力してください。");
+    document.getElementById("taskFormName")?.focus();
+    return;
+  }
+
+  if (state.planningForm.mode === "edit") {
+    const task = findTask(state.planningForm.targetId);
+    if (!task) return;
+    task.name = name;
+    task.plannedMinutes = plannedMinutes;
+    state.planningForm = createPlanningForm();
+  } else {
+    state.tasks.push(createTask(name, plannedMinutes));
+    state.planningForm = createPlanningForm();
+  }
+
+  saveState();
+  renderPlanning();
 }
 
 function onGo() {
@@ -352,46 +514,69 @@ function onGo() {
     closeAction: ""
   }));
 
-  state.phase = "execution";
   state.goPressedAt = Date.now();
-  state.running = { taskId: null, startedAt: null, baseSeconds: 0 };
-  state.review = { pendingIds: [], index: 0, pendingAction: null, draftMemo: "" };
-  saveState();
-  render();
+  state.running = createRunningState();
+  state.review = createReviewState();
+  changePhase("execution");
 }
 
 function renderExecution() {
   const runningTask = getRunningTask();
-  const pending = state.tasks.filter((t) => t.status === "pending");
+  const pending = state.tasks.filter((task) => task.status === "pending");
 
-  app.innerHTML = `
+  renderScreen(`
     <h2>2. タスク実行</h2>
     <h2>今やることを選んでください</h2>
 
     <div id="runArea"></div>
 
     <hr class="sep" />
-    <div class="btn-row">
+    <div class="btn-row compact-stack">
       <button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button>
     </div>
-  `;
+  `);
 
   const runArea = document.getElementById("runArea");
 
-  if (runningTask) {
+  if (runningTask && !state.running.isPaused) {
+    const confirmArea = state.running.confirmingComplete
+      ? `
+        <div class="notice info confirm-box">
+          <p>本当に完了しますか？</p>
+          <div class="btn-row split compact-stack">
+            <button id="confirmCompleteBtn" class="btn-ok" type="button">完了する</button>
+            <button id="cancelCompleteBtn" class="btn-quiet" type="button">戻る</button>
+          </div>
+        </div>
+      `
+      : "";
+
     runArea.innerHTML = `
       <div class="timer-box">
         <p class="helper">実行中</p>
         <h3>${escapeHtml(runningTask.name)}</h3>
         <p>予定時間: ${runningTask.plannedMinutes}分</p>
         <p class="elapsed" id="elapsedLabel">${getRunningElapsedSeconds()}秒</p>
-        <div class="btn-row">
+        <div class="btn-row split compact-stack">
           <button id="completeBtn" class="btn-ok" type="button">完了</button>
+          <button id="interruptBtn" class="btn-quiet" type="button">中断</button>
         </div>
+        ${confirmArea}
       </div>
     `;
 
-    document.getElementById("completeBtn").addEventListener("click", completeRunningTask);
+    document.getElementById("completeBtn").addEventListener("click", () => {
+      state.running.confirmingComplete = true;
+      saveState();
+      renderExecution();
+    });
+    document.getElementById("interruptBtn").addEventListener("click", interruptRunningTask);
+    document.getElementById("confirmCompleteBtn")?.addEventListener("click", finalizeTaskCompletion);
+    document.getElementById("cancelCompleteBtn")?.addEventListener("click", () => {
+      state.running.confirmingComplete = false;
+      saveState();
+      renderExecution();
+    });
 
     tickTimer = setInterval(() => {
       const label = document.getElementById("elapsedLabel");
@@ -422,9 +607,9 @@ function renderExecution() {
 
     selectList.querySelectorAll("li[data-task-id]").forEach((card) => {
       card.addEventListener("click", () => startTask(card.dataset.taskId));
-      card.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
           startTask(card.dataset.taskId);
         }
       });
@@ -441,26 +626,57 @@ function renderExecution() {
 function startTask(taskId) {
   const task = findTask(taskId);
   if (!task || task.status !== "pending") return;
+
   state.running = {
     taskId,
     startedAt: Date.now(),
-    baseSeconds: 0
+    baseSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : 0,
+    isPaused: false,
+    confirmingComplete: false
   };
   saveState();
-  render();
+
+  if (state.phase !== "execution") {
+    changePhase("execution");
+    return;
+  }
+  renderExecution();
 }
 
-function completeRunningTask() {
+function interruptRunningTask() {
+  const runningTask = getRunningTask();
+  if (!runningTask) return;
+
+  const elapsed = Math.max(1, getRunningElapsedSeconds());
+  runningTask.actualSeconds = elapsed;
+  state.running.baseSeconds = elapsed;
+  state.running.startedAt = null;
+  state.running.isPaused = true;
+  state.running.confirmingComplete = false;
+  goHome();
+}
+
+function resumePausedTask() {
+  const runningTask = getRunningTask();
+  if (!runningTask || !state.running.isPaused) return;
+
+  state.running.startedAt = Date.now();
+  state.running.baseSeconds = typeof runningTask.actualSeconds === "number" ? runningTask.actualSeconds : state.running.baseSeconds;
+  state.running.isPaused = false;
+  state.running.confirmingComplete = false;
+  changePhase("execution", false);
+}
+
+function finalizeTaskCompletion() {
   const runningTask = getRunningTask();
   if (!runningTask) return;
 
   const elapsed = Math.max(1, getRunningElapsedSeconds());
   runningTask.actualSeconds = elapsed;
   runningTask.status = "done";
-
-  state.running = { taskId: null, startedAt: null, baseSeconds: 0 };
+  state.running = createRunningState();
   saveState();
-  render();
+  renderExecution();
 }
 
 function getRunningTask() {
@@ -469,52 +685,55 @@ function getRunningTask() {
 }
 
 function getRunningElapsedSeconds() {
-  if (!state.running || !state.running.taskId || !state.running.startedAt) {
+  if (!state.running || !state.running.taskId) {
     return 0;
   }
+
+  if (!state.running.startedAt) {
+    return Math.max(0, state.running.baseSeconds || 0);
+  }
+
   const passed = Math.floor((Date.now() - state.running.startedAt) / 1000);
   return Math.max(0, (state.running.baseSeconds || 0) + passed);
 }
 
 function startTodayFinishFlow() {
-  // Treat running task as unfinished when entering finish review.
-  state.running = { taskId: null, startedAt: null, baseSeconds: 0 };
+  const runningTask = getRunningTask();
+  if (runningTask) {
+    runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
+  }
 
-  const pendingIds = state.tasks.filter((t) => t.status === "pending").map((t) => t.id);
-  state.phase = "review";
+  state.running = createRunningState();
   state.review = {
-    pendingIds,
+    pendingIds: state.tasks.filter((task) => task.status === "pending").map((task) => task.id),
     index: 0,
     pendingAction: null,
     draftMemo: ""
   };
-  saveState();
-  render();
+  changePhase("review");
 }
 
 function renderReview() {
   moveReviewCursorToPending();
-
   const task = getCurrentReviewTask();
+
   if (!task) {
-    app.innerHTML = `
-      <h2>3. 今日終了</h2>
-      <p class="helper">未完了タスクの確認が完了しました。</p>
-      <div class="btn-row">
+    renderScreen(`
+      <h2>3. 今日は終了</h2>
+      <p class="helper">未完了タスクの確認が終わりました。</p>
+      <div class="btn-row compact-stack">
         <button id="toResultBtn" class="btn-main" type="button">結果を見る</button>
       </div>
-    `;
+    `);
 
     document.getElementById("toResultBtn").addEventListener("click", () => {
-      state.phase = "result";
-      saveState();
-      render();
+      changePhase("result");
     });
     return;
   }
 
-  app.innerHTML = `
-    <h2>3. 今日終了</h2>
+  renderScreen(`
+    <h2>3. 今日は終了</h2>
     <p class="helper">未完了タスクを1件ずつ確認します。</p>
 
     <div class="task-card">
@@ -522,7 +741,7 @@ function renderReview() {
       <p>予定時間: ${task.plannedMinutes}分</p>
     </div>
 
-    <div class="btn-row triple">
+    <div class="btn-row triple compact-stack">
       <button id="doTodayBtn" class="btn-main" type="button">今日やる</button>
       <button id="moveTomorrowBtn" class="btn-sub" type="button">明日に回す</button>
       <button id="dropTaskBtn" class="btn-danger" type="button">不要になった</button>
@@ -531,25 +750,15 @@ function renderReview() {
     <div id="memoPanel" class="hidden">
       <label for="reviewMemo">自由記述メモ</label>
       <textarea id="reviewMemo" placeholder="理由や状況を自由に入力"></textarea>
-      <div class="btn-row">
+      <div class="btn-row compact-stack">
         <button id="saveReviewBtn" class="btn-main" type="button">この内容で次へ</button>
       </div>
     </div>
-  `;
+  `);
 
   document.getElementById("doTodayBtn").addEventListener("click", () => {
-    state.running = {
-      taskId: task.id,
-      startedAt: Date.now(),
-      baseSeconds: 0
-    };
-    state.phase = "execution";
-    state.review.pendingAction = null;
-    state.review.draftMemo = "";
-    saveState();
-    render();
+    startTask(task.id);
   });
-
   document.getElementById("moveTomorrowBtn").addEventListener("click", () => showMemoPanel("deferred"));
   document.getElementById("dropTaskBtn").addEventListener("click", () => showMemoPanel("discarded"));
 
@@ -558,38 +767,36 @@ function renderReview() {
   }
 }
 
-function showMemoPanel(action, skipReset = false) {
+function showMemoPanel(action, restore = false) {
   state.review.pendingAction = action;
-  if (!skipReset) {
+  if (!restore) {
     state.review.draftMemo = "";
   }
   saveState();
 
   const panel = document.getElementById("memoPanel");
-  panel.classList.remove("hidden");
-
   const memoEl = document.getElementById("reviewMemo");
+  panel.classList.remove("hidden");
   memoEl.value = state.review.draftMemo || "";
-  memoEl.addEventListener("input", (e) => {
-    state.review.draftMemo = e.target.value;
+
+  memoEl.addEventListener("input", (event) => {
+    state.review.draftMemo = event.target.value;
     saveState();
   });
 
-  const saveBtn = document.getElementById("saveReviewBtn");
-  saveBtn.onclick = () => {
+  document.getElementById("saveReviewBtn").onclick = () => {
     const task = getCurrentReviewTask();
     if (!task) return;
 
-    const memo = memoEl.value.trim();
     task.status = action;
     task.closeAction = action;
-    task.memo = memo;
+    task.memo = memoEl.value.trim();
 
     state.review.index += 1;
     state.review.pendingAction = null;
     state.review.draftMemo = "";
     saveState();
-    render();
+    renderReview();
   };
 }
 
@@ -609,14 +816,12 @@ function getCurrentReviewTask() {
 }
 
 function renderResult() {
-  const done = state.tasks.filter((t) => t.status === "done");
-  const deferred = state.tasks.filter((t) => t.status === "deferred");
-  const discarded = state.tasks.filter((t) => t.status === "discarded");
+  const done = state.tasks.filter((task) => task.status === "done");
+  const deferred = state.tasks.filter((task) => task.status === "deferred");
+  const discarded = state.tasks.filter((task) => task.status === "discarded");
   const unfinished = state.tasks.length - done.length;
-
   const totalPlanned = sumPlanned();
   const totalActual = sumActualMinutes();
-
   const reportText = buildReportText({
     total: state.tasks.length,
     done,
@@ -627,7 +832,7 @@ function renderResult() {
     discarded
   });
 
-  app.innerHTML = `
+  renderScreen(`
     <h2>4. 今日の結果</h2>
 
     <div class="summary">
@@ -643,42 +848,35 @@ function renderResult() {
 
     <h3>保護者への報告文</h3>
     <div id="reportText" class="report-box"></div>
-    <div class="btn-row">
+    <div class="btn-row compact-stack">
       <button id="copyBtn" class="btn-main" type="button">報告文をコピー</button>
     </div>
     <p id="copyMessage" class="helper" aria-live="polite"></p>
-  `;
+  `);
 
   const resultList = document.getElementById("taskResultList");
-  state.tasks.forEach((t) => {
-    const actualMinutes = `${secondsToMinutes(t.actualSeconds)}分`;
-    const statusLabel = getTaskStatusLabel(t.status);
-    const memoBlock = (t.status === "deferred" || t.status === "discarded")
-      ? `<p>メモ: ${escapeHtml(t.memo || "(未入力)")}</p>`
-      : "";
+  state.tasks.forEach((task) => {
     const li = document.createElement("li");
     li.className = "result-card";
     li.innerHTML = `
-      <h3>${escapeHtml(t.name)}</h3>
-      <p>予定時間: ${t.plannedMinutes}分</p>
-      <p>実績時間: ${actualMinutes}</p>
-      <p>状態: ${statusLabel}</p>
-      ${memoBlock}
+      <h3>${escapeHtml(task.name)}</h3>
+      <p>予定時間: ${task.plannedMinutes}分</p>
+      <p>実績時間: ${secondsToMinutes(task.actualSeconds)}分</p>
+      <p>状態: ${getTaskStatusLabel(task.status)}</p>
+      ${task.status === "deferred" || task.status === "discarded" ? `<p>メモ: ${escapeHtml(task.memo || "(未入力)")}</p>` : ""}
     `;
     resultList.appendChild(li);
   });
 
   document.getElementById("reportText").textContent = reportText;
   document.getElementById("copyBtn").addEventListener("click", async () => {
-    const copyMessageEl = document.getElementById("copyMessage");
     const ok = await copyToClipboard(reportText);
-    copyMessageEl.textContent = ok ? "コピーしました" : "コピーに失敗しました";
+    document.getElementById("copyMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
   });
 }
 
 function buildReportText(data) {
   const lines = [];
-
   lines.push("【今日の結果】");
   lines.push("");
   lines.push(`予定：${data.total}件`);
@@ -691,30 +889,29 @@ function buildReportText(data) {
 
   if (data.done.length > 0) {
     lines.push("完了");
-    data.done.forEach((t) => {
-      lines.push(`・${t.name}　予定${t.plannedMinutes}分／実績${secondsToMinutes(t.actualSeconds)}分`);
+    data.done.forEach((task) => {
+      lines.push(`・${task.name}　予定${task.plannedMinutes}分／実績${secondsToMinutes(task.actualSeconds)}分`);
     });
     lines.push("");
   }
 
   if (data.deferred.length > 0) {
     lines.push("明日に回す");
-    data.deferred.forEach((t) => {
-      lines.push(`・${t.name}`);
-      lines.push(`　理由：${t.memo || "(未入力)"}`);
+    data.deferred.forEach((task) => {
+      lines.push(`・${task.name}`);
+      lines.push(`　理由：${task.memo || "(未入力)"}`);
     });
     lines.push("");
   }
 
   if (data.discarded.length > 0) {
     lines.push("不要になった");
-    data.discarded.forEach((t) => {
-      lines.push(`・${t.name}`);
-      lines.push(`　理由：${t.memo || "(未入力)"}`);
+    data.discarded.forEach((task) => {
+      lines.push(`・${task.name}`);
+      lines.push(`　理由：${task.memo || "(未入力)"}`);
     });
   }
 
-  // Avoid trailing empty lines in clipboard text.
   while (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
   }
@@ -729,12 +926,81 @@ function getTaskStatusLabel(status) {
   return "未完了";
 }
 
+function renderScreen(content) {
+  app.innerHTML = `${renderTopNav()}${content}`;
+  bindTopNav();
+}
+
+function renderTopNav() {
+  const disabled = state.navHistory.length === 0 ? "disabled" : "";
+  return `
+    <div class="top-nav">
+      <button id="homeBtn" class="btn-mini btn-quiet" type="button">ホーム</button>
+      <button id="backBtn" class="btn-mini btn-quiet" type="button" ${disabled}>戻る</button>
+    </div>
+  `;
+}
+
+function bindTopNav() {
+  document.getElementById("homeBtn")?.addEventListener("click", goHome);
+  document.getElementById("backBtn")?.addEventListener("click", goBack);
+}
+
+function goHome() {
+  if (state.phase === "home") return;
+  state.homeReturnPhase = state.phase;
+  state.navHistory.push(state.phase);
+  state.phase = "home";
+  saveState();
+  render();
+}
+
+function goBack() {
+  if (state.navHistory.length === 0) return;
+  state.phase = state.navHistory.pop();
+  saveState();
+  render();
+}
+
+function changePhase(nextPhase, pushHistory = true) {
+  if (pushHistory && state.phase !== nextPhase) {
+    state.navHistory.push(state.phase);
+  }
+  state.phase = nextPhase;
+  if (nextPhase !== "home") {
+    state.homeReturnPhase = nextPhase;
+  }
+  saveState();
+  render();
+}
+
+function getHomeReturnPhase() {
+  if (["planning", "execution", "review", "result"].includes(state.homeReturnPhase)) {
+    return state.homeReturnPhase;
+  }
+  return "planning";
+}
+
+function hasReviewTarget() {
+  moveReviewCursorToPending();
+  return Boolean(getCurrentReviewTask());
+}
+
+function getCounts() {
+  const done = state.tasks.filter((task) => task.status === "done").length;
+  return {
+    total: state.tasks.length,
+    done,
+    unfinished: state.tasks.length - done
+  };
+}
+
 function findTask(id) {
-  return state.tasks.find((t) => t.id === id);
+  return state.tasks.find((task) => task.id === id);
 }
 
 function moveTask(id, direction) {
-  const idx = state.tasks.findIndex((t) => t.id === id);
+  const idx = state.tasks.findIndex((task) => task.id === id);
   if (idx === -1) return;
 
   const next = idx + direction;
@@ -751,21 +1017,12 @@ function updateTotalPlanned() {
   totalEl.textContent = `合計予定時間 ${sumPlanned()}分`;
 }
 
-function insertTaskAfter(id) {
-  const idx = state.tasks.findIndex((t) => t.id === id);
-  if (idx === -1) return;
-  state.tasks.splice(idx + 1, 0, createTask("", 20));
-}
-
 function sumPlanned() {
-  return state.tasks.reduce((sum, t) => sum + sanitizeMinutes(t.plannedMinutes), 0);
+  return state.tasks.reduce((sum, task) => sum + sanitizeMinutes(task.plannedMinutes), 0);
 }
 
 function sumActualMinutes() {
-  return state.tasks.reduce((sum, t) => {
-    if (typeof t.actualSeconds !== "number") return sum;
-    return sum + secondsToMinutes(t.actualSeconds);
-  }, 0);
+  return state.tasks.reduce((sum, task) => sum + secondsToMinutes(task.actualSeconds), 0);
 }
 
 function secondsToMinutes(sec) {
@@ -777,12 +1034,6 @@ function sanitizeMinutes(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 1;
   return Math.min(600, Math.max(1, Math.round(n)));
-}
-
-function formatElapsed(sec) {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 function clearTickTimer() {
@@ -817,7 +1068,7 @@ async function copyToClipboard(text) {
       const ok = document.execCommand("copy");
       document.body.removeChild(tmp);
       return ok;
-    } catch (e) {
+    } catch (error) {
       return false;
     }
   }

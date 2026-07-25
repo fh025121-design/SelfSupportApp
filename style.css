@@ -64,6 +64,12 @@ h1 {
   padding: 18px 14px 22px;
 }
 
+.top-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 h2 {
   font-size: 1.35rem;
   margin: 0 0 14px;
@@ -167,6 +173,13 @@ button {
   cursor: pointer;
 }
 
+.btn-mini {
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 .btn-main {
   background: var(--accent);
   color: #fff;
@@ -203,6 +216,10 @@ button {
   margin: 10px 0;
 }
 
+.compact-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .option-item {
   display: flex;
   align-items: center;
@@ -232,6 +249,67 @@ button {
   border-radius: 14px;
   background: #fff5f2;
   padding: 14px;
+}
+
+.task-form-box {
+  border: 2px solid #dbe5f2;
+  border-radius: 14px;
+  background: #f9fbff;
+  padding: 12px;
+}
+
+.compact-task-list {
+  gap: 10px;
+}
+
+.compact-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.compact-empty {
+  padding: 10px 12px;
+}
+
+.editing-row {
+  border-color: #ffc9bb;
+  background: #fff8f5;
+}
+
+.task-inline-text {
+  min-width: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.task-inline-text span {
+  color: var(--sub);
+  font-weight: 700;
+}
+
+.task-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.compact-stack {
+  margin-top: 10px;
+}
+
+.paused-card {
+  border-color: #d6e5f5;
+  background: #f8fbff;
+}
+
+.confirm-box p {
+  margin: 0 0 8px;
 }
 
 .elapsed {
@@ -294,5 +372,9 @@ button {
 
   .btn-row.triple {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .compact-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
