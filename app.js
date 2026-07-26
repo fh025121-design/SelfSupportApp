@@ -2857,14 +2857,37 @@ function renderReturnCheck() {
         <div><label for="troubleAnswer">困ったことの有無</label><input id="troubleAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.trouble)}" placeholder="例: あり（内容） / なし" /></div>
         <div><label for="replyAnswer">家庭教師・親への返信</label><input id="replyAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.reply)}" placeholder="例: LINEで返信した" /></div>
       </div>
-      <div class="btn-row compact-stack"><button id="finishReturnCheckBtn" class="btn-main" type="button">帰宅後チェックを完了</button></div>
+      <div class="btn-row split compact-stack">
+        <button id="copyReturnCheckBtn" class="btn-sub" type="button">チェック内容をコピー</button>
+        <button id="finishReturnCheckBtn" class="btn-main" type="button">帰宅後に上記を対応し共有した</button>
+      </div>
+      <p id="returnCheckCopyMsg" class="helper" aria-live="polite"></p>
     </div>
   `);
 
-  document.getElementById("homeworkAnswer").addEventListener("input", (e) => { state.returnCheck.answers.homework = e.target.value; saveState(); });
-  document.getElementById("troubleAnswer").addEventListener("input", (e) => { state.returnCheck.answers.trouble = e.target.value; saveState(); });
-  document.getElementById("replyAnswer").addEventListener("input", (e) => { state.returnCheck.answers.reply = e.target.value; saveState(); });
+  const copyMsgEl = document.getElementById("returnCheckCopyMsg");
+  const refreshCopyText = () => {
+    return buildReturnCheckCopyText();
+  };
+
+  document.getElementById("copyReturnCheckBtn").addEventListener("click", async () => {
+    const ok = await copyToClipboard(refreshCopyText());
+    if (copyMsgEl) copyMsgEl.textContent = ok ? "コピーしました" : "コピーに失敗しました";
+  });
+  document.getElementById("homeworkAnswer").addEventListener("input", (e) => { state.returnCheck.answers.homework = e.target.value; saveState(); refreshCopyText(); });
+  document.getElementById("troubleAnswer").addEventListener("input", (e) => { state.returnCheck.answers.trouble = e.target.value; saveState(); refreshCopyText(); });
+  document.getElementById("replyAnswer").addEventListener("input", (e) => { state.returnCheck.answers.reply = e.target.value; saveState(); refreshCopyText(); });
   document.getElementById("finishReturnCheckBtn").addEventListener("click", finishReturnCheck);
+}
+
+function buildReturnCheckCopyText() {
+  const a = state.returnCheck.answers;
+  return [
+    "【帰宅後チェック】",
+    `宿題の有無: ${a.homework || "(未入力)"}`,
+    `困ったことの有無: ${a.trouble || "(未入力)"}`,
+    `家庭教師・親への返信: ${a.reply || "(未入力)"}`
+  ].join("\n");
 }
 
 function finishReturnCheck() {
@@ -3118,7 +3141,10 @@ function isAnyDepartureCheckIncomplete() {
 }
 
 function needsDepartureCheck() {
-  return state.planTimes.departure !== "none" && !state.departureCheck.done;
+  if (state.planTimes.departure === "none" || state.departureCheck.done) return false;
+  const now = getNowInJst();
+  const dt = getDateTimeToday(state.planTimes.departure);
+  return dt && now >= dt;
 }
 
 function getDateTimeToday(hhmm) {
