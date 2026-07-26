@@ -6,7 +6,7 @@ const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
 const DEPARTURE_CHECK_ITEMS = [
   "テーブルに物は残っていないか",
   "コンタクトのゴミを捨てたか",
-  "提出物を指差し確認・目視したか",
+  "提出物・持ち物を指差し確認・目視したか",
   "今日の予定に目を通したか",
   "スマホを玄関へ置いたか"
 ];
@@ -329,15 +329,18 @@ function enforcePriorityPhase() {
   }
 
   if (needsDepartureCheck()) {
+    if (state.phase === "home") return;
     if (state.phase !== "departureCheck") {
       state.phase = "departureCheck";
-      state.departureCheck.index = 0;
     }
     return;
   }
 
-  if (needsReturnCheck() && !["returnCheck", "returnReport"].includes(state.phase)) {
-    state.phase = "returnCheck";
+  if (needsReturnCheck()) {
+    if (state.phase === "home") return;
+    if (!["returnCheck", "returnReport"].includes(state.phase)) {
+      state.phase = "returnCheck";
+    }
   }
 }
 
@@ -1383,14 +1386,22 @@ function renderDepartureCheck() {
     return renderHome();
   }
 
+  const progressRows = DEPARTURE_CHECK_ITEMS.map((item, itemIndex) => {
+    const status = itemIndex < idx ? "済" : "未";
+    return `<li>${item} <span class="status-chip">${status}</span></li>`;
+  }).join("");
+
   renderScreen(`
     <h2>出発前チェック</h2>
     <div class="task-card checklist-card">
       <p>${idx + 1}. ${DEPARTURE_CHECK_ITEMS[idx]}</p>
       <div class="btn-row compact-stack">
         <button id="confirmDepartureItemBtn" class="btn-main" type="button">確認した</button>
-        <button id="skipToHomeBtn" class="btn-quiet" type="button">ホームへ進む</button>
       </div>
+    </div>
+    <div class="task-card">
+      <p class="helper">確認状況</p>
+      <ul class="confirm-list">${progressRows}</ul>
     </div>
   `);
 
@@ -1398,9 +1409,6 @@ function renderDepartureCheck() {
     state.departureCheck.index += 1;
     saveState();
     renderDepartureCheck();
-  });
-  document.getElementById("skipToHomeBtn").addEventListener("click", () => {
-    changePhase("home", false);
   });
 }
 
@@ -1431,14 +1439,12 @@ function renderTopNav() {
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button">ホーム</button>
-      <button id="backBtn" class="btn-mini btn-quiet" type="button" ${state.navHistory.length === 0 ? "disabled" : ""}>戻る</button>
     </div>
   `;
 }
 
 function bindTopNav() {
   document.getElementById("homeBtn")?.addEventListener("click", goHome);
-  document.getElementById("backBtn")?.addEventListener("click", goBack);
 }
 
 function goHome() {
