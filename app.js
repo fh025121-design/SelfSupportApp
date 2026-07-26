@@ -581,10 +581,10 @@ function renderTaskListForPlanning() {
     li.innerHTML = `
       <div class="task-inline-text">${escapeHtml(task.name)} <span>${task.plannedMinutes}分</span> ${done ? '<span class="status-chip">完了</span>' : ""}</div>
       <div class="task-inline-actions">
-        <button type="button" class="btn-mini btn-quiet" data-action="up" data-id="${task.id}" ${done ? "disabled" : ""}>↑</button>
-        <button type="button" class="btn-mini btn-quiet" data-action="down" data-id="${task.id}" ${done ? "disabled" : ""}>↓</button>
-        <button type="button" class="btn-mini btn-sub" data-action="edit" data-id="${task.id}" ${done ? "disabled" : ""}>修正</button>
-        <button type="button" class="btn-mini btn-danger" data-action="delete" data-id="${task.id}" ${done ? "disabled" : ""}>削除</button>
+        <button type="button" class="btn-mini btn-quiet" data-action="up" data-id="${task.id}">↑</button>
+        <button type="button" class="btn-mini btn-quiet" data-action="down" data-id="${task.id}">↓</button>
+        <button type="button" class="btn-mini btn-sub" data-action="edit" data-id="${task.id}">修正</button>
+        <button type="button" class="btn-mini btn-danger" data-action="delete" data-id="${task.id}">削除</button>
       </div>
     `;
     list.appendChild(li);
@@ -655,7 +655,7 @@ function bindPlanningEvents() {
       const id = btn.dataset.id;
       const action = btn.dataset.action;
       const task = findTask(id);
-      if (!id || !action || !task || task.status === "done") return;
+      if (!id || !action || !task) return;
 
       if (action === "up") movePendingTask(id, -1);
       if (action === "down") movePendingTask(id, 1);
@@ -678,7 +678,6 @@ function movePendingTask(taskId, dir) {
   if (idx === -1) return;
   const target = idx + dir;
   if (target < 0 || target >= state.tasks.length) return;
-  if (state.tasks[target].status === "done") return;
   const tmp = state.tasks[idx];
   state.tasks[idx] = state.tasks[target];
   state.tasks[target] = tmp;
@@ -713,7 +712,7 @@ function bindTimeSelectInput(key, hasNone = false, modeId = "") {
 
 function loadTaskIntoForm(taskId) {
   const task = findTask(taskId);
-  if (!task || task.status === "done") return;
+  if (!task) return;
 
   const knownName = getSortedTaskNameOptions().find((o) => o.name === task.name);
   state.planningForm = {
@@ -737,7 +736,7 @@ function savePlanningTask() {
 
   if (state.planningForm.mode === "edit") {
     const task = findTask(state.planningForm.targetId);
-    if (!task || task.status === "done") return;
+    if (!task) return;
     task.name = name;
     task.plannedMinutes = minutes;
     task.content = content;
@@ -805,6 +804,17 @@ function confirmPlan() {
     content: t.content.trim(),
     plannedMinutes: sanitizeMinutes(t.plannedMinutes)
   }));
+
+  if (state.planFor === "tomorrow") {
+    // Next-day planning starts a fresh execution state for all tasks.
+    state.tasks = state.tasks.map((t) => ({
+      ...t,
+      status: "pending",
+      actualSeconds: null,
+      memo: "",
+      closeAction: ""
+    }));
+  }
 
   updateTaskNameStats();
 
