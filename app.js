@@ -14,6 +14,7 @@ const app = document.getElementById("app");
 const todayLabel = document.getElementById("todayLabel");
 
 let tickTimer = null;
+let notificationAudioCtx = null;
 
 const state = loadState();
 render();
@@ -403,10 +404,8 @@ function renderHome() {
 
     <div class="btn-row compact-stack">
       <button id="openPlanningBtn" class="btn-quiet" type="button">予定入力へ</button>
-      <button id="copyHomePlanBtn" class="btn-sub" type="button">予定をコピー</button>
       <button id="openDayEndBtn" class="btn-danger" type="button">1日の終了</button>
     </div>
-    <p id="copyHomePlanMessage" class="helper" aria-live="polite"></p>
 
     ${runningTask && state.running.isPaused ? '<div class="notice info">中断中タスクがあります。再開してください。</div>' : ""}
   `);
@@ -451,11 +450,6 @@ function renderHome() {
     });
   });
 
-  document.getElementById("copyHomePlanBtn").addEventListener("click", async () => {
-    const report = state.confirmedPlan?.reportText || buildPlanReportText();
-    const ok = await copyToClipboard(report);
-    document.getElementById("copyHomePlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
-  });
   document.getElementById("openPlanningBtn").addEventListener("click", () => changePhase("planning", false));
   document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
   document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
@@ -927,6 +921,10 @@ function renderExecution() {
   renderScreen(`
     <h2>タスク実行</h2>
     <h2>今やることを選んでください</h2>
+    <div class="btn-row split compact-stack">
+      <button id="testSoundBtn" class="btn-sub" type="button">音をテスト</button>
+      <button id="testVibrateBtn" class="btn-sub" type="button">バイブをテスト</button>
+    </div>
     <div id="runArea"></div>
     <hr class="sep" />
     <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
@@ -952,6 +950,9 @@ function renderExecution() {
         <div class="btn-row split compact-stack">
           <button id="completeBtn" class="btn-ok" type="button">完了</button>
           <button id="interruptBtn" class="btn-quiet" type="button">中断</button>
+        </div>
+        <div class="btn-row compact-stack">
+          <button id="setOneMinuteTestBtn" class="btn-quiet" type="button">1分テスト設定</button>
         </div>
         ${renderOverrunControls(elapsed)}
         <div id="completeConfirmArea"></div>
@@ -992,6 +993,13 @@ function renderExecution() {
     runArea.innerHTML = `<p class="notice warn">未完了タスクはありません。</p>`;
   }
 
+  document.getElementById("testSoundBtn").addEventListener("click", async () => {
+    await ensureNotificationAudioReady(true);
+    playNotificationSound();
+  });
+  document.getElementById("testVibrateBtn").addEventListener("click", () => {
+    runVibrationFeedback();
+  });
   document.getElementById("finishTodayBtn").addEventListener("click", startTodayFinishFlow);
 }
 
@@ -1049,6 +1057,16 @@ function bindExecutionButtons() {
     saveState();
     renderExecution();
   });
+  document.getElementById("setOneMinuteTestBtn")?.addEventListener("click", () => {
+    const task = getRunningTask();
+    if (task) task.plannedMinutes = 1;
+    state.running.alertAtSeconds = 60;
+    state.running.alerting = false;
+    state.running.lastAlertTarget = null;
+    console.log("[OverrunTest] plannedMinutes and alertAtSeconds set to 1 minute");
+    saveState();
+    renderExecution();
+  });
   document.getElementById("extend10Btn")?.addEventListener("click", () => extendRunningTask(10));
   document.getElementById("extend20Btn")?.addEventListener("click", () => extendRunningTask(20));
   document.getElementById("extendCustom")?.addEventListener("input", (e) => {
@@ -1074,40 +1092,104 @@ function extendRunningTask(min) {
 function checkOverrunNotification(elapsed) {
   const target = state.running.alertAtSeconds;
   if (target == null) return;
+  if (elapsed >= target) {
+    const willTrigger = state.running.lastAlertTarget !== target;
+    console.log("[OverrunCheck] elapsed/target/last/willTrigger", elapsed, target, state.running.lastAlertTarget, willTrigger);
+  }
   if (elapsed >= target && state.running.lastAlertTarget !== target) {
     state.running.alerting = true;
     state.running.lastAlertTarget = target;
+    console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
     triggerAlertFeedback();
   }
 }
 
-function triggerAlertFeedback() {
-  try {
-    if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
-  } catch (_) {
-    // Ignore vibration failures.
+async function ensureNotificationAudioReady(fromUserAction = false) {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) {
+    console.error("[Audio] AudioContext is not supported on this browser.");
+    return null;
   }
+
+  if (!notificationAudioCtx) {
+    try {
+      notificationAudioCtx = new AudioCtor();
+      console.log("[Audio] AudioContext created", notificationAudioCtx.state);
+    } catch (error) {
+      console.error("[Audio] Failed to create AudioContext", error);
+      return null;
+    }
+  }
+
+  if (notificationAudioCtx.state === "suspended" && fromUserAction) {
+    try {
+      await notificationAudioCtx.resume();
+      console.log("[Audio] AudioContext resumed by user action");
+    } catch (error) {
+      console.error("[Audio] Failed to resume AudioContext", error);
+    }
+  }
+
+  return notificationAudioCtx;
+}
+
+function playNotificationSound() {
+  if (!notificationAudioCtx) {
+    console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
+    return;
+  }
+
+  if (notificationAudioCtx.state !== "running") {
+    console.error("[Audio] Notification sound skipped because AudioContext is not running.", notificationAudioCtx.state);
+    return;
+  }
+
   try {
-    const audio = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.frequency.value = 880;
-    gain.gain.value = 0.08;
+    const now = notificationAudioCtx.currentTime;
+    const osc = notificationAudioCtx.createOscillator();
+    const gain = notificationAudioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(1046.5, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
     osc.connect(gain);
-    gain.connect(audio.destination);
-    osc.start();
-    setTimeout(() => {
-      osc.stop();
-      audio.close();
-    }, 200);
-  } catch (_) {
-    // Ignore audio failures.
+    gain.connect(notificationAudioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  } catch (error) {
+    console.error("[Audio] Failed to play notification sound", error);
   }
+}
+
+function runVibrationFeedback() {
+  try {
+    if (!("vibrate" in navigator)) {
+      console.log("[Vibrate] navigator.vibrate is not available.");
+      return;
+    }
+    const result = navigator.vibrate([300, 150, 300]);
+    console.log("[Vibrate] navigator.vibrate result:", result);
+  } catch (error) {
+    console.error("[Vibrate] Failed to vibrate", error);
+  }
+}
+
+function triggerAlertFeedback() {
+  playNotificationSound();
+  runVibrationFeedback();
+}
+
+function startAudioWarmupFromUserAction() {
+  ensureNotificationAudioReady(true).catch((error) => {
+    console.error("[Audio] Warmup failed", error);
+  });
 }
 
 function startTask(taskId) {
   const task = findTask(taskId);
   if (!task || task.status !== "pending") return;
+  startAudioWarmupFromUserAction();
   state.running = {
     taskId,
     startedAt: Date.now(),
@@ -1152,6 +1234,7 @@ function interruptRunningTask() {
 function resumePausedTask() {
   const task = getRunningTask();
   if (!task || !state.running.isPaused) return;
+  startAudioWarmupFromUserAction();
   state.running.startedAt = Date.now();
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
   state.running.isPaused = false;
