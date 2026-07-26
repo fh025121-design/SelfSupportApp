@@ -56,6 +56,11 @@ const todayLabel = document.getElementById("todayLabel");
 
 let tickTimer = null;
 let notificationAudioCtx = null;
+let overrunSecondAlertTimer = null;
+let overrunAlertReactionObserved = false;
+let overrunAlertSequenceId = 0;
+let activeAlertTimeoutIds = [];
+let activeAlertOscillators = [];
 let authReady = false;
 let authErrorMessage = "";
 let authLoading = false;
@@ -76,6 +81,9 @@ let localBootOwnerUid = "";
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
 const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const FIRST_ALERT_DELAY_TO_ESCALATE_MS = 30_000;
+const FIRST_ALERT_TOTAL_MS = 5_000;
+const SECOND_ALERT_TOTAL_MS = 10_000;
 
 const state = loadState();
 render();
@@ -2208,6 +2216,7 @@ function renderOverrunControls(elapsed) {
 
 function bindExecutionButtons() {
   document.getElementById("completeBtn")?.addEventListener("click", () => {
+    acknowledgeOverrunAlertReaction();
     state.running.confirmingComplete = true;
     saveState();
     renderExecution();
@@ -2233,11 +2242,13 @@ function bindExecutionButtons() {
   }
 
   document.getElementById("stopNotifyBtn")?.addEventListener("click", () => {
+    acknowledgeOverrunAlertReaction();
     state.running.alerting = false;
     saveState();
     renderExecution();
   });
   document.getElementById("setOneMinuteTestBtn")?.addEventListener("click", () => {
+    clearOverrunAlertFeedback();
     const task = getRunningTask();
     if (task) task.plannedMinutes = 1;
     state.running.alertAtSeconds = 60;
@@ -2261,6 +2272,7 @@ function bindExecutionButtons() {
 }
 
 function extendRunningTask(min) {
+  acknowledgeOverrunAlertReaction();
   state.running.alertAtSeconds = (state.running.alertAtSeconds || 0) + min * 60;
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
@@ -2280,7 +2292,7 @@ function checkOverrunNotification(elapsed) {
     state.running.alerting = true;
     state.running.lastAlertTarget = target;
     console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
-    triggerAlertFeedback();
+    triggerAlertFeedback("first");
   }
 }
 
@@ -2313,7 +2325,51 @@ async function ensureNotificationAudioReady(fromUserAction = false) {
   return notificationAudioCtx;
 }
 
-function playNotificationSound() {
+function playAlertToneBurst(startAtSec, frequencyHz, durationSec, gainPeak, oscType = "square") {
+  if (!notificationAudioCtx || notificationAudioCtx.state !== "running") return;
+  const osc = notificationAudioCtx.createOscillator();
+  const gain = notificationAudioCtx.createGain();
+  osc.type = oscType;
+  osc.frequency.setValueAtTime(frequencyHz, startAtSec);
+  gain.gain.setValueAtTime(0.0001, startAtSec);
+  gain.gain.exponentialRampToValueAtTime(gainPeak, startAtSec + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAtSec + durationSec);
+  osc.connect(gain);
+  gain.connect(notificationAudioCtx.destination);
+  osc.onended = () => {
+    activeAlertOscillators = activeAlertOscillators.filter((item) => item !== osc);
+  };
+  activeAlertOscillators.push(osc);
+  osc.start(startAtSec);
+  osc.stop(startAtSec + durationSec + 0.01);
+}
+
+function clearOverrunAlertFeedback() {
+  if (overrunSecondAlertTimer) {
+    clearTimeout(overrunSecondAlertTimer);
+    overrunSecondAlertTimer = null;
+  }
+  activeAlertTimeoutIds.forEach((id) => clearTimeout(id));
+  activeAlertTimeoutIds = [];
+  activeAlertOscillators.forEach((osc) => {
+    try {
+      osc.stop();
+    } catch (_) {
+      // Oscillator may already be stopped.
+    }
+    try {
+      osc.disconnect();
+    } catch (_) {
+      // Already disconnected.
+    }
+  });
+  activeAlertOscillators = [];
+  if ("vibrate" in navigator) {
+    navigator.vibrate(0);
+  }
+}
+
+function playFirstAlertPattern() {
   if (!notificationAudioCtx) {
     console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
     return;
@@ -2326,38 +2382,86 @@ function playNotificationSound() {
 
   try {
     const now = notificationAudioCtx.currentTime;
-    const osc = notificationAudioCtx.createOscillator();
-    const gain = notificationAudioCtx.createGain();
-    osc.type = "square";
-    osc.frequency.setValueAtTime(1046.5, now);
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
-    osc.connect(gain);
-    gain.connect(notificationAudioCtx.destination);
-    osc.start(now);
-    osc.stop(now + 0.25);
+    const totalSec = FIRST_ALERT_TOTAL_MS / 1000;
+    const cycleSec = 1.0;
+    for (let t = 0; t < totalSec; t += cycleSec) {
+      playAlertToneBurst(now + t + 0.00, 1320, 0.11, 0.16, "square");
+      playAlertToneBurst(now + t + 0.22, 1320, 0.11, 0.16, "square");
+      playAlertToneBurst(now + t + 0.44, 1320, 0.11, 0.16, "square");
+    }
   } catch (error) {
     console.error("[Audio] Failed to play notification sound", error);
   }
 }
 
-function runVibrationFeedback() {
+function playSecondAlertPattern() {
+  if (!notificationAudioCtx) {
+    console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
+    return;
+  }
+
+  if (notificationAudioCtx.state !== "running") {
+    console.error("[Audio] Notification sound skipped because AudioContext is not running.", notificationAudioCtx.state);
+    return;
+  }
+
+  try {
+    const now = notificationAudioCtx.currentTime;
+    const totalSec = SECOND_ALERT_TOTAL_MS / 1000;
+    const stepSec = 0.33;
+    let i = 0;
+    for (let t = 0; t < totalSec; t += stepSec) {
+      const freq = i % 2 === 0 ? 1046.5 : 1396.9;
+      playAlertToneBurst(now + t, freq, 0.15, 0.23, "square");
+      i += 1;
+    }
+  } catch (error) {
+    console.error("[Audio] Failed to play escalation notification sound", error);
+  }
+}
+
+function runVibrationFeedback(stage = "first") {
   try {
     if (!("vibrate" in navigator)) {
       console.log("[Vibrate] navigator.vibrate is not available.");
       return;
     }
-    const result = navigator.vibrate([300, 150, 300]);
+    const pattern = stage === "second"
+      ? [280, 120, 280, 120, 280, 120, 280, 120, 280]
+      : [180, 100, 180, 100, 180, 140, 180, 100, 180, 100, 180];
+    const result = navigator.vibrate(pattern);
     console.log("[Vibrate] navigator.vibrate result:", result);
   } catch (error) {
     console.error("[Vibrate] Failed to vibrate", error);
   }
 }
 
-function triggerAlertFeedback() {
-  playNotificationSound();
-  runVibrationFeedback();
+function triggerAlertFeedback(stage = "first") {
+  clearOverrunAlertFeedback();
+  if (stage === "second") {
+    playSecondAlertPattern();
+    runVibrationFeedback("second");
+    return;
+  }
+
+  overrunAlertReactionObserved = false;
+  const sequenceId = ++overrunAlertSequenceId;
+  playFirstAlertPattern();
+  runVibrationFeedback("first");
+  overrunSecondAlertTimer = window.setTimeout(() => {
+    overrunSecondAlertTimer = null;
+    if (sequenceId !== overrunAlertSequenceId) return;
+    if (overrunAlertReactionObserved) return;
+    if (!getRunningTask() || state.running.isPaused) return;
+    if (!state.running.alertAtSeconds) return;
+    if (getRunningElapsedSeconds() < state.running.alertAtSeconds) return;
+    triggerAlertFeedback("second");
+  }, FIRST_ALERT_DELAY_TO_ESCALATE_MS);
+}
+
+function acknowledgeOverrunAlertReaction() {
+  overrunAlertReactionObserved = true;
+  clearOverrunAlertFeedback();
 }
 
 function startAudioWarmupFromUserAction() {
@@ -2401,6 +2505,7 @@ function getRunningElapsedSeconds() {
 function interruptRunningTask() {
   const task = getRunningTask();
   if (!task) return;
+  acknowledgeOverrunAlertReaction();
   const elapsed = Math.max(1, getRunningElapsedSeconds());
   task.actualSeconds = elapsed;
   state.running.baseSeconds = elapsed;
@@ -2414,6 +2519,7 @@ function interruptRunningTask() {
 function resumePausedTask() {
   const task = getRunningTask();
   if (!task || !state.running.isPaused) return;
+  acknowledgeOverrunAlertReaction();
   startAudioWarmupFromUserAction();
   state.running.startedAt = Date.now();
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
@@ -2425,6 +2531,7 @@ function resumePausedTask() {
 function finalizeTaskCompletion() {
   const task = getRunningTask();
   if (!task) return;
+  acknowledgeOverrunAlertReaction();
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
   state.running = createRunningState();
@@ -2440,6 +2547,7 @@ function formatElapsedSmart(sec) {
 }
 
 function startTodayFinishFlow() {
+  acknowledgeOverrunAlertReaction();
   const runningTask = getRunningTask();
   if (runningTask) runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   state.running = createRunningState();
