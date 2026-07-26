@@ -2456,9 +2456,7 @@ function runVibrationFeedback(stage = "first") {
       console.log("[Vibrate] navigator.vibrate is not available.");
       return;
     }
-    const pattern = stage === "second"
-      ? [280, 120, 280, 120, 280, 120, 280, 120, 280]
-      : [180, 100, 180, 100, 180, 140, 180, 100, 180, 100, 180];
+    const pattern = [3000];
     const result = navigator.vibrate(pattern);
     console.log("[Vibrate] navigator.vibrate result:", result);
   } catch (error) {
