@@ -2355,23 +2355,37 @@ function bindAudioUnlockHandlers() {
   });
 }
 
-function playAlertToneBurst(startAtSec, frequencyHz, durationSec, gainPeak, oscType = "square") {
-  if (!notificationAudioCtx || notificationAudioCtx.state !== "running") return;
-  const osc = notificationAudioCtx.createOscillator();
-  const gain = notificationAudioCtx.createGain();
-  osc.type = oscType;
-  osc.frequency.setValueAtTime(frequencyHz, startAtSec);
-  gain.gain.setValueAtTime(0.0001, startAtSec);
-  gain.gain.exponentialRampToValueAtTime(gainPeak, startAtSec + 0.015);
-  gain.gain.exponentialRampToValueAtTime(0.0001, startAtSec + durationSec);
-  osc.connect(gain);
-  gain.connect(notificationAudioCtx.destination);
-  osc.onended = () => {
-    activeAlertOscillators = activeAlertOscillators.filter((item) => item !== osc);
-  };
-  activeAlertOscillators.push(osc);
-  osc.start(startAtSec);
-  osc.stop(startAtSec + durationSec + 0.01);
+function playNotificationSound(frequency = 1046.5, peakGain = 0.2, durationSec = 0.25) {
+  if (!notificationAudioCtx) {
+    console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
+    return;
+  }
+
+  if (notificationAudioCtx.state !== "running") {
+    console.error("[Audio] Notification sound skipped because AudioContext is not running.", notificationAudioCtx.state);
+    return;
+  }
+
+  try {
+    const now = notificationAudioCtx.currentTime;
+    const osc = notificationAudioCtx.createOscillator();
+    const gain = notificationAudioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(frequency, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + Math.max(0.06, durationSec));
+    osc.connect(gain);
+    gain.connect(notificationAudioCtx.destination);
+    osc.onended = () => {
+      activeAlertOscillators = activeAlertOscillators.filter((item) => item !== osc);
+    };
+    activeAlertOscillators.push(osc);
+    osc.start(now);
+    osc.stop(now + Math.max(0.06, durationSec));
+  } catch (error) {
+    console.error("[Audio] Failed to play notification sound", error);
+  }
 }
 
 function clearOverrunAlertFeedback() {
@@ -2400,54 +2414,11 @@ function clearOverrunAlertFeedback() {
 }
 
 function playFirstAlertPattern() {
-  if (!notificationAudioCtx) {
-    console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
-    return;
-  }
-
-  if (notificationAudioCtx.state !== "running") {
-    console.error("[Audio] Notification sound skipped because AudioContext is not running.", notificationAudioCtx.state);
-    return;
-  }
-
-  try {
-    const now = notificationAudioCtx.currentTime;
-    const totalSec = FIRST_ALERT_TOTAL_MS / 1000;
-    const cycleSec = 1.0;
-    for (let t = 0; t < totalSec; t += cycleSec) {
-      playAlertToneBurst(now + t + 0.00, 1320, 0.11, 0.16, "square");
-      playAlertToneBurst(now + t + 0.22, 1320, 0.11, 0.16, "square");
-      playAlertToneBurst(now + t + 0.44, 1320, 0.11, 0.16, "square");
-    }
-  } catch (error) {
-    console.error("[Audio] Failed to play notification sound", error);
-  }
+  playNotificationSound(1046.5, 0.2, 0.25);
 }
 
 function playSecondAlertPattern() {
-  if (!notificationAudioCtx) {
-    console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
-    return;
-  }
-
-  if (notificationAudioCtx.state !== "running") {
-    console.error("[Audio] Notification sound skipped because AudioContext is not running.", notificationAudioCtx.state);
-    return;
-  }
-
-  try {
-    const now = notificationAudioCtx.currentTime;
-    const totalSec = SECOND_ALERT_TOTAL_MS / 1000;
-    const stepSec = 0.33;
-    let i = 0;
-    for (let t = 0; t < totalSec; t += stepSec) {
-      const freq = i % 2 === 0 ? 1046.5 : 1396.9;
-      playAlertToneBurst(now + t, freq, 0.15, 0.23, "square");
-      i += 1;
-    }
-  } catch (error) {
-    console.error("[Audio] Failed to play escalation notification sound", error);
-  }
+  playNotificationSound(1318.5, 0.24, 0.3);
 }
 
 function runVibrationFeedback(stage = "first") {
