@@ -1017,7 +1017,6 @@ function scheduleFirestoreSave() {
 
   if (syncStatus !== "offline") {
     syncStatus = "saving";
-    render();
   }
 
   syncSaveTimer = setTimeout(() => {
