@@ -80,7 +80,7 @@ let pendingPassiveRender = false;
 let devAlertTestConfig = {
   volume: 5,
   toneType: "type1",
-  durationSeconds: 1
+  durationSeconds: 5
 };
 
 const SYNC_SCHEMA_VERSION = 1;
@@ -1161,7 +1161,6 @@ function enforcePriorityPhase() {
   }
 
   if (needsDepartureCheck()) {
-    if (state.phase === "home") return;
     if (state.phase !== "departureCheck") {
       state.phase = "departureCheck";
     }
@@ -1169,7 +1168,6 @@ function enforcePriorityPhase() {
   }
 
   if (needsReturnCheck()) {
-    if (state.phase === "home") return;
     if (!["returnCheck", "returnReport"].includes(state.phase)) {
       state.phase = "returnCheck";
     }
@@ -2494,7 +2492,11 @@ function playNotificationSound(options = {}) {
     const peakGain = 0.06 + volume * 0.07;
     const tone = getAlertTonePreset(String(options.overrideToneType || "type1"));
     const durationInput = Number(options.overrideDurationSeconds);
-    const durationSeconds = Number.isFinite(durationInput) ? Math.min(10, Math.max(0.2, durationInput)) : 0.25;
+    const durationSeconds = Number.isFinite(durationInput)
+      ? Math.min(10, Math.max(0.2, durationInput))
+      : tone.kind === "single"
+        ? 5
+        : 0.25;
     const now = notificationAudioCtx.currentTime;
 
     if (tone.kind === "pattern") {
@@ -2621,17 +2623,23 @@ function playNotificationSound(options = {}) {
       return;
     }
 
-    const osc = notificationAudioCtx.createOscillator();
-    const gain = notificationAudioCtx.createGain();
-    osc.type = tone.oscType;
-    osc.frequency.setValueAtTime(tone.frequency, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
-    osc.connect(gain);
-    gain.connect(notificationAudioCtx.destination);
-    osc.start(now);
-    osc.stop(now + durationSeconds);
+    const beepInterval = 0.18;
+    const beepLength = 0.06;
+    for (let t = 0; t < durationSeconds; t += beepInterval) {
+      const start = now + t;
+      const stop = Math.min(now + durationSeconds, start + beepLength);
+      const osc = notificationAudioCtx.createOscillator();
+      const gain = notificationAudioCtx.createGain();
+      osc.type = tone.oscType;
+      osc.frequency.setValueAtTime(tone.frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peakGain, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, stop);
+      osc.connect(gain);
+      gain.connect(notificationAudioCtx.destination);
+      osc.start(start);
+      osc.stop(stop);
+    }
   } catch (error) {
     console.error("[Audio] Failed to play notification sound", error);
   }
