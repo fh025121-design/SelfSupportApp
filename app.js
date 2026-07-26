@@ -2838,7 +2838,7 @@ function renderTopNav() {
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button">${primaryLabel}</button>
-      ${showSettings ? '<button id="openSettingsBtn" class="btn-mini btn-quiet" type="button">⚙️設定</button>' : ""}
+      ${showSettings ? '<div class="top-nav-actions"><button id="openSettingsBtn" class="btn-mini btn-quiet" type="button">⚙️設定</button><button id="reloadPageBtn" class="btn-mini btn-quiet" type="button">再読み込み</button></div>' : ""}
     </div>
   `;
 }
@@ -2851,6 +2851,9 @@ function bindTopNav() {
     homeBtn?.addEventListener("click", goHome);
   }
   document.getElementById("openSettingsBtn")?.addEventListener("click", () => changePhase("settings", false));
+  document.getElementById("reloadPageBtn")?.addEventListener("click", () => {
+    window.location.reload();
+  });
 }
 
 async function performLogout() {

@@ -82,8 +82,15 @@ h1 {
   margin-bottom: 12px;
 }
 
-#openSettingsBtn {
+.top-nav-actions {
   margin-left: auto;
+  display: grid;
+  gap: 6px;
+}
+
+#openSettingsBtn,
+#reloadPageBtn {
+  width: 100%;
 }
 
 .settings-menu-list {
