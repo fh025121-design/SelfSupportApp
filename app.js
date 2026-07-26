@@ -642,6 +642,10 @@ function isUserEditing() {
   return isTextInputFocused || isComposingText;
 }
 
+function shouldSkipInputWhileComposing(e) {
+  return Boolean(e?.isComposing) || isComposingText;
+}
+
 function requestPassiveRender() {
   if (isUserEditing()) {
     pendingPassiveRender = true;
@@ -700,6 +704,11 @@ function setupInputGuard() {
   document.addEventListener("compositionend", (e) => {
     if (isEditableTextElement(e.target)) {
       isComposingText = false;
+      const target = e.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        // Ensure finalized IME text is persisted even if intermediate composing input was skipped.
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       window.setTimeout(() => {
         flushDeferredUiUpdates();
       }, 0);
@@ -1603,6 +1612,7 @@ function renderRecurringListRows() {
 
   function bindRecurringEditEvents() {
     document.getElementById("recurringName").addEventListener("input", (e) => {
+      if (shouldSkipInputWhileComposing(e)) return;
       state.recurringForm.name = e.target.value;
       saveState();
     });
@@ -1621,10 +1631,12 @@ function renderRecurringListRows() {
       });
     });
     document.getElementById("recurringContent").addEventListener("input", (e) => {
+      if (shouldSkipInputWhileComposing(e)) return;
       state.recurringForm.content = e.target.value;
       saveState();
     });
     document.getElementById("recurringBelongingInput")?.addEventListener("input", (e) => {
+      if (shouldSkipInputWhileComposing(e)) return;
       state.recurringForm.belongingInput = e.target.value;
       saveState();
     });
@@ -1842,6 +1854,7 @@ function renderHomeworkEditScreen() {
 
 function bindHomeworkEditEvents() {
   document.getElementById("homeworkName").addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
     state.homeworkForm.name = e.target.value;
     saveState();
   });
@@ -1850,6 +1863,7 @@ function bindHomeworkEditEvents() {
     saveState();
   });
   document.getElementById("homeworkContent").addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
     state.homeworkForm.content = e.target.value;
     saveState();
   });
@@ -2109,6 +2123,7 @@ function bindPlanningEvents() {
     renderPlanning();
   });
   document.getElementById("customTaskName")?.addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
     state.planningForm.customTaskName = e.target.value;
     saveState();
   });
@@ -2129,11 +2144,13 @@ function bindPlanningEvents() {
     });
   });
   document.getElementById("taskContent").addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
     state.planningForm.content = e.target.value;
     saveState();
   });
 
   document.getElementById("dailyBelongingInput")?.addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
     state.planningDailyBelongingInput = e.target.value;
     saveState();
   });
@@ -3138,6 +3155,7 @@ function showMemoPanel(action, restore = false) {
   panel.classList.remove("hidden");
   memoEl.value = state.review.draftMemo || "";
   memoEl.addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
     state.review.draftMemo = e.target.value;
     saveState();
   });
@@ -3189,9 +3207,24 @@ function renderReturnCheck() {
     const ok = await copyToClipboard(refreshCopyText());
     if (copyMsgEl) copyMsgEl.textContent = ok ? "コピーしました" : "コピーに失敗しました";
   });
-  document.getElementById("homeworkAnswer").addEventListener("input", (e) => { state.returnCheck.answers.homework = e.target.value; saveState(); refreshCopyText(); });
-  document.getElementById("troubleAnswer").addEventListener("input", (e) => { state.returnCheck.answers.trouble = e.target.value; saveState(); refreshCopyText(); });
-  document.getElementById("replyAnswer").addEventListener("input", (e) => { state.returnCheck.answers.reply = e.target.value; saveState(); refreshCopyText(); });
+  document.getElementById("homeworkAnswer").addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
+    state.returnCheck.answers.homework = e.target.value;
+    saveState();
+    refreshCopyText();
+  });
+  document.getElementById("troubleAnswer").addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
+    state.returnCheck.answers.trouble = e.target.value;
+    saveState();
+    refreshCopyText();
+  });
+  document.getElementById("replyAnswer").addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
+    state.returnCheck.answers.reply = e.target.value;
+    saveState();
+    refreshCopyText();
+  });
   document.getElementById("finishReturnCheckBtn").addEventListener("click", finishReturnCheck);
 }
 
@@ -3941,7 +3974,7 @@ function ensurePhaseRefreshTimer() {
   phaseRefreshTimer = setInterval(() => {
     if (!authReady || !currentUser || !syncReady) return;
     if (state.phase === "execution" && state.running.taskId && !state.running.isPaused) return;
-    render();
+    requestPassiveRender();
   }, 10000);
 }
 
