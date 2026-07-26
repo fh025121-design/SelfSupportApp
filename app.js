@@ -238,7 +238,9 @@ function createReviewState() {
 
 function createDepartureCheckState() {
   return {
-    index: 0,
+    remainingIndices: [],
+    completedIndices: [],
+    lastAutoPromptAt: 0,
     done: false
   };
 }
@@ -480,7 +482,7 @@ function loadState() {
     safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
     safe.running = { ...createRunningState(), ...(safe.running || {}) };
     safe.review = { ...createReviewState(), ...(safe.review || {}) };
-    safe.departureCheck = { ...createDepartureCheckState(), ...(safe.departureCheck || {}) };
+    safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
     safe.returnCheck = {
       ...createReturnCheckState(),
       ...(safe.returnCheck || {}),
@@ -860,7 +862,7 @@ function normalizeLoadedState(rawState) {
   safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
   safe.running = { ...createRunningState(), ...(safe.running || {}) };
   safe.review = { ...createReviewState(), ...(safe.review || {}) };
-  safe.departureCheck = { ...createDepartureCheckState(), ...(safe.departureCheck || {}) };
+  safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
   safe.returnCheck = {
     ...createReturnCheckState(),
     ...(safe.returnCheck || {}),
@@ -1163,8 +1165,9 @@ function enforcePriorityPhase() {
     return;
   }
 
-  if (needsDepartureCheck()) {
+  if (shouldAutoPromptDepartureCheck()) {
     if (state.phase !== "departureCheck") {
+      state.departureCheck.lastAutoPromptAt = Date.now();
       state.phase = "departureCheck";
     }
     return;
@@ -1214,7 +1217,7 @@ function renderPreviousDayEnd() {
 
 function renderHome() {
   const runningTask = getRunningTask();
-  const departureWarn = needsDepartureCheck();
+  const departureReminder = getDepartureReminderForHome();
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const syncText = getSyncStatusText();
@@ -1222,7 +1225,7 @@ function renderHome() {
   renderScreen(`
     <h2>今日の予定</h2>
     <p class="sync-indicator">同期: ${escapeHtml(syncText)}</p>
-    ${departureWarn ? '<p class="notice warn">出発前チェック未完了</p>' : ""}
+    ${departureReminder ? `<div class="notice warn"><p>🟡 出発前チェック（あと${departureReminder.minutesLeft}分）</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     <div class="home-overview">
       <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
       <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
@@ -1290,6 +1293,7 @@ function renderHome() {
   document.getElementById("openHomeworkBtn").addEventListener("click", () => changePhase("homeworkList", false));
   document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
   document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
+  document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
 }
 
 function renderSettings() {
@@ -1337,6 +1341,9 @@ function renderSettings() {
     <div id="devAlertFeedbackArea" class="notice warn hidden">
       <p>予定時間を超えました。</p>
     </div>
+    <div class="btn-row compact-stack">
+      <button id="resetDailyStatusBtn" class="btn-danger" type="button">当日の状態をクリーンにする</button>
+    </div>
   `);
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
@@ -1366,6 +1373,7 @@ function renderSettings() {
     }
   });
   document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
+  document.getElementById("resetDailyStatusBtn").addEventListener("click", resetDailyStatus);
 }
 
 function runDevAlertTest() {
@@ -1379,6 +1387,31 @@ function runDevAlertTest() {
     });
     feedback?.classList.remove("hidden");
   });
+}
+
+function resetDailyStatus() {
+  const ok = window.confirm("当日の予定の進行状態、完了事項、出発前チェック、帰宅後チェックのステータスを初期化しますか？");
+  if (!ok) return;
+
+  state.tasks = state.tasks.map((task) => ({
+    ...task,
+    status: "pending",
+    actualSeconds: null,
+    memo: "",
+    closeAction: ""
+  }));
+  state.running = createRunningState();
+  state.review = createReviewState();
+  state.departureCheck = createDepartureCheckState();
+  state.returnCheck = createReturnCheckState();
+  state.confirmedPlan = null;
+  state.goPressedAt = null;
+  state.dayClosed = false;
+  state.previousDayPending = null;
+  state.lastResultReportText = "";
+  state.phase = "home";
+  saveState();
+  render();
 }
 
 function renderRecurringListScreen() {
@@ -3094,16 +3127,26 @@ function buildResultReportHtml(doneCount, unfinishedCount, totalActual) {
 }
 
 function renderDepartureCheck() {
-  if (!needsDepartureCheck()) {
+  if (!hasPendingDepartureCheck()) {
     state.phase = "home";
     saveState();
     return renderHome();
   }
 
-  const idx = state.departureCheck.index;
-  const done = idx >= DEPARTURE_CHECK_ITEMS.length;
+  normalizeDepartureCheckQueue();
+  const queue = Array.isArray(state.departureCheck.remainingIndices) ? state.departureCheck.remainingIndices : [];
+  const done = state.departureCheck.done || queue.length === 0;
 
   if (done) {
+    state.departureCheck.done = true;
+    state.departureCheck.lastAutoPromptAt = 0;
+    state.phase = "home";
+    saveState();
+    return renderHome();
+  }
+
+  const currentIndex = queue[0];
+  if (typeof currentIndex !== "number") {
     state.departureCheck.done = true;
     state.phase = "home";
     saveState();
@@ -3111,40 +3154,130 @@ function renderDepartureCheck() {
   }
 
   const progressRows = DEPARTURE_CHECK_ITEMS.map((item, itemIndex) => {
-    const status = itemIndex < idx ? "済" : "未";
+    const status = Array.isArray(state.departureCheck.completedIndices) && state.departureCheck.completedIndices.includes(itemIndex) ? "済" : "未";
     return `<li>${item} <span class="status-chip">${status}</span></li>`;
   }).join("");
 
   renderScreen(`
     <h2>出発前チェック</h2>
     <div class="task-card checklist-card">
-      <p>${idx + 1}. ${DEPARTURE_CHECK_ITEMS[idx]}</p>
-      <div class="btn-row compact-stack">
+      <p>${currentIndex + 1}. ${DEPARTURE_CHECK_ITEMS[currentIndex]}</p>
+      <div class="btn-row split compact-stack">
         <button id="confirmDepartureItemBtn" class="btn-main" type="button">確認した</button>
+        <button id="stillDepartureItemBtn" class="btn-quiet" type="button">まだ</button>
       </div>
     </div>
     <div class="task-card">
       <p class="helper">確認状況</p>
       <ul class="confirm-list">${progressRows}</ul>
     </div>
+    <div class="btn-row compact-stack">
+      <button id="backHomeFromDepartureBtn" class="btn-quiet" type="button">ホームへ戻る</button>
+    </div>
   `);
 
   document.getElementById("confirmDepartureItemBtn").addEventListener("click", () => {
-    state.departureCheck.index += 1;
+    markDepartureItemDone(currentIndex);
     saveState();
     renderDepartureCheck();
   });
+  document.getElementById("stillDepartureItemBtn").addEventListener("click", () => {
+    rotateDepartureItem(currentIndex);
+    saveState();
+    renderDepartureCheck();
+  });
+  document.getElementById("backHomeFromDepartureBtn").addEventListener("click", goHome);
+}
+
+function normalizeDepartureCheckState(raw) {
+  const base = { ...createDepartureCheckState(), ...(raw || {}) };
+  if (Array.isArray(raw?.remainingIndices) && raw.remainingIndices.length > 0) {
+    base.remainingIndices = base.remainingIndices
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n < DEPARTURE_CHECK_ITEMS.length);
+  } else if (typeof raw?.index === "number") {
+    const idx = Math.max(0, Math.min(DEPARTURE_CHECK_ITEMS.length, Math.floor(base.index)));
+    base.completedIndices = Array.isArray(raw?.completedIndices) && raw.completedIndices.length > 0
+      ? raw.completedIndices
+      : Array.from({ length: idx }, (_, i) => i);
+    base.remainingIndices = Array.from({ length: DEPARTURE_CHECK_ITEMS.length - idx }, (_, i) => i + idx);
+  } else {
+    base.remainingIndices = Array.from({ length: DEPARTURE_CHECK_ITEMS.length }, (_, i) => i);
+  }
+
+  base.completedIndices = Array.isArray(base.completedIndices)
+    ? Array.from(new Set(base.completedIndices.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < DEPARTURE_CHECK_ITEMS.length)))
+    : [];
+  base.lastAutoPromptAt = typeof base.lastAutoPromptAt === "number" ? base.lastAutoPromptAt : 0;
+  base.done = Boolean(base.done) && base.remainingIndices.length === 0;
+  delete base.index;
+  return base;
+}
+
+function normalizeDepartureCheckQueue() {
+  state.departureCheck = normalizeDepartureCheckState(state.departureCheck);
+}
+
+function markDepartureItemDone(itemIndex) {
+  normalizeDepartureCheckQueue();
+  const queue = state.departureCheck.remainingIndices || [];
+  const current = queue[0];
+  if (current !== itemIndex) return;
+  if (!state.departureCheck.completedIndices.includes(itemIndex)) {
+    state.departureCheck.completedIndices.push(itemIndex);
+  }
+  state.departureCheck.remainingIndices = queue.slice(1);
+  state.departureCheck.done = state.departureCheck.remainingIndices.length === 0;
+  if (state.departureCheck.done) {
+    state.departureCheck.lastAutoPromptAt = 0;
+  }
+}
+
+function rotateDepartureItem(itemIndex) {
+  normalizeDepartureCheckQueue();
+  const queue = state.departureCheck.remainingIndices || [];
+  const current = queue[0];
+  if (current !== itemIndex) return;
+  if (queue.length <= 1) return;
+  state.departureCheck.remainingIndices = [...queue.slice(1), current];
 }
 
 function isAnyDepartureCheckIncomplete() {
-  return needsDepartureCheck();
+  return hasPendingDepartureCheck();
 }
 
-function needsDepartureCheck() {
-  if (state.planTimes.departure === "none" || state.departureCheck.done) return false;
-  const now = getNowInJst();
+function hasPendingDepartureCheck() {
+  normalizeDepartureCheckQueue();
+  return state.planTimes.departure !== "none" && !state.departureCheck.done;
+}
+
+function getDepartureTimingInfo() {
+  if (!hasPendingDepartureCheck()) return null;
   const dt = getDateTimeToday(state.planTimes.departure);
-  return dt && now >= dt;
+  if (!dt) return null;
+  const now = getNowInJst();
+  const msUntil = dt.getTime() - now.getTime();
+  const minutesUntil = Math.max(0, Math.ceil(msUntil / 60000));
+  return { msUntil, minutesUntil, departureAt: dt, now };
+}
+
+function getDepartureReminderForHome() {
+  const info = getDepartureTimingInfo();
+  if (!info) return null;
+  if (info.msUntil > 60 * 60000) return null;
+  if (info.msUntil <= 15 * 60000) return null;
+  return { minutesLeft: info.minutesUntil };
+}
+
+function shouldAutoPromptDepartureCheck() {
+  const info = getDepartureTimingInfo();
+  if (!info) return false;
+  if (info.msUntil > 15 * 60000) return false;
+
+  const nowMs = info.now.getTime();
+  const lastMs = Number(state.departureCheck.lastAutoPromptAt || 0);
+  if (!lastMs) return true;
+  return nowMs - lastMs >= 3 * 60 * 1000;
 }
 
 function getDateTimeToday(hhmm) {
