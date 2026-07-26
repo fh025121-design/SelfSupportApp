@@ -56,12 +56,6 @@ const todayLabel = document.getElementById("todayLabel");
 
 let tickTimer = null;
 let notificationAudioCtx = null;
-let audioUnlockHandlersBound = false;
-let overrunSecondAlertTimer = null;
-let overrunAlertReactionObserved = false;
-let overrunAlertSequenceId = 0;
-let activeAlertTimeoutIds = [];
-let activeAlertOscillators = [];
 let authReady = false;
 let authErrorMessage = "";
 let authLoading = false;
@@ -82,12 +76,8 @@ let localBootOwnerUid = "";
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
 const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-const FIRST_ALERT_DELAY_TO_ESCALATE_MS = 30_000;
-const FIRST_ALERT_TOTAL_MS = 5_000;
-const SECOND_ALERT_TOTAL_MS = 10_000;
 
 const state = loadState();
-bindAudioUnlockHandlers();
 render();
 
 window.addEventListener("online", () => {
@@ -1019,6 +1009,7 @@ function scheduleFirestoreSave() {
 
   if (syncStatus !== "offline") {
     syncStatus = "saving";
+    render();
   }
 
   syncSaveTimer = setTimeout(() => {
@@ -2217,7 +2208,6 @@ function renderOverrunControls(elapsed) {
 
 function bindExecutionButtons() {
   document.getElementById("completeBtn")?.addEventListener("click", () => {
-    acknowledgeOverrunAlertReaction();
     state.running.confirmingComplete = true;
     saveState();
     renderExecution();
@@ -2243,13 +2233,11 @@ function bindExecutionButtons() {
   }
 
   document.getElementById("stopNotifyBtn")?.addEventListener("click", () => {
-    acknowledgeOverrunAlertReaction();
     state.running.alerting = false;
     saveState();
     renderExecution();
   });
   document.getElementById("setOneMinuteTestBtn")?.addEventListener("click", () => {
-    clearOverrunAlertFeedback();
     const task = getRunningTask();
     if (task) task.plannedMinutes = 1;
     state.running.alertAtSeconds = 60;
@@ -2273,7 +2261,6 @@ function bindExecutionButtons() {
 }
 
 function extendRunningTask(min) {
-  acknowledgeOverrunAlertReaction();
   state.running.alertAtSeconds = (state.running.alertAtSeconds || 0) + min * 60;
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
@@ -2293,7 +2280,7 @@ function checkOverrunNotification(elapsed) {
     state.running.alerting = true;
     state.running.lastAlertTarget = target;
     console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
-    triggerAlertFeedback("first");
+    triggerAlertFeedback();
   }
 }
 
@@ -2314,14 +2301,10 @@ async function ensureNotificationAudioReady(fromUserAction = false) {
     }
   }
 
-  if (notificationAudioCtx.state === "suspended") {
+  if (notificationAudioCtx.state === "suspended" && fromUserAction) {
     try {
       await notificationAudioCtx.resume();
-      if (fromUserAction) {
-        console.log("[Audio] AudioContext resumed by user action");
-      } else {
-        console.log("[Audio] AudioContext resumed");
-      }
+      console.log("[Audio] AudioContext resumed by user action");
     } catch (error) {
       if (fromUserAction) {
         console.error("[Audio] Failed to resume AudioContext", error);
@@ -2332,30 +2315,7 @@ async function ensureNotificationAudioReady(fromUserAction = false) {
   return notificationAudioCtx;
 }
 
-function bindAudioUnlockHandlers() {
-  if (audioUnlockHandlersBound) return;
-  audioUnlockHandlersBound = true;
-
-  const events = ["pointerdown", "touchstart", "mousedown", "keydown"];
-  const unlock = () => {
-    ensureNotificationAudioReady(true).then((ctx) => {
-      if (!ctx || ctx.state !== "running") return;
-      events.forEach((eventName) => {
-        window.removeEventListener(eventName, unlock, true);
-      });
-      audioUnlockHandlersBound = false;
-      console.log("[Audio] Global unlock handlers detached after successful resume.");
-    }).catch((error) => {
-      console.error("[Audio] Global unlock failed", error);
-    });
-  };
-
-  events.forEach((eventName) => {
-    window.addEventListener(eventName, unlock, { capture: true, passive: true });
-  });
-}
-
-function playNotificationSound(frequency = 1046.5, peakGain = 0.2, durationSec = 0.25) {
+function playNotificationSound() {
   if (!notificationAudioCtx) {
     console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
     return;
@@ -2371,54 +2331,17 @@ function playNotificationSound(frequency = 1046.5, peakGain = 0.2, durationSec =
     const osc = notificationAudioCtx.createOscillator();
     const gain = notificationAudioCtx.createGain();
     osc.type = "square";
-    osc.frequency.setValueAtTime(frequency, now);
+    osc.frequency.setValueAtTime(1046.5, now);
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + Math.max(0.06, durationSec));
+    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
     osc.connect(gain);
     gain.connect(notificationAudioCtx.destination);
-    osc.onended = () => {
-      activeAlertOscillators = activeAlertOscillators.filter((item) => item !== osc);
-    };
-    activeAlertOscillators.push(osc);
     osc.start(now);
-    osc.stop(now + Math.max(0.06, durationSec));
+    osc.stop(now + 0.25);
   } catch (error) {
     console.error("[Audio] Failed to play notification sound", error);
   }
-}
-
-function clearOverrunAlertFeedback() {
-  if (overrunSecondAlertTimer) {
-    clearTimeout(overrunSecondAlertTimer);
-    overrunSecondAlertTimer = null;
-  }
-  activeAlertTimeoutIds.forEach((id) => clearTimeout(id));
-  activeAlertTimeoutIds = [];
-  activeAlertOscillators.forEach((osc) => {
-    try {
-      osc.stop();
-    } catch (_) {
-      // Oscillator may already be stopped.
-    }
-    try {
-      osc.disconnect();
-    } catch (_) {
-      // Already disconnected.
-    }
-  });
-  activeAlertOscillators = [];
-  if ("vibrate" in navigator) {
-    navigator.vibrate(0);
-  }
-}
-
-function playFirstAlertPattern() {
-  playNotificationSound(1046.5, 0.2, 0.25);
-}
-
-function playSecondAlertPattern() {
-  playNotificationSound(1318.5, 0.24, 0.3);
 }
 
 function runVibrationFeedback(stage = "first") {
@@ -2427,7 +2350,9 @@ function runVibrationFeedback(stage = "first") {
       console.log("[Vibrate] navigator.vibrate is not available.");
       return;
     }
-    const pattern = [3000];
+    const pattern = stage === "second"
+      ? [300, 150, 300]
+      : [300, 150, 300];
     const result = navigator.vibrate(pattern);
     console.log("[Vibrate] navigator.vibrate result:", result);
   } catch (error) {
@@ -2436,33 +2361,8 @@ function runVibrationFeedback(stage = "first") {
 }
 
 function triggerAlertFeedback(stage = "first") {
-  ensureNotificationAudioReady(false).finally(() => {
-    clearOverrunAlertFeedback();
-    if (stage === "second") {
-      playSecondAlertPattern();
-      runVibrationFeedback("second");
-      return;
-    }
-
-    overrunAlertReactionObserved = false;
-    const sequenceId = ++overrunAlertSequenceId;
-    playFirstAlertPattern();
-    runVibrationFeedback("first");
-    overrunSecondAlertTimer = window.setTimeout(() => {
-      overrunSecondAlertTimer = null;
-      if (sequenceId !== overrunAlertSequenceId) return;
-      if (overrunAlertReactionObserved) return;
-      if (!getRunningTask() || state.running.isPaused) return;
-      if (!state.running.alertAtSeconds) return;
-      if (getRunningElapsedSeconds() < state.running.alertAtSeconds) return;
-      triggerAlertFeedback("second");
-    }, FIRST_ALERT_DELAY_TO_ESCALATE_MS);
-  });
-}
-
-function acknowledgeOverrunAlertReaction() {
-  overrunAlertReactionObserved = true;
-  clearOverrunAlertFeedback();
+  playNotificationSound();
+  runVibrationFeedback(stage);
 }
 
 function startAudioWarmupFromUserAction() {
@@ -2506,7 +2406,6 @@ function getRunningElapsedSeconds() {
 function interruptRunningTask() {
   const task = getRunningTask();
   if (!task) return;
-  acknowledgeOverrunAlertReaction();
   const elapsed = Math.max(1, getRunningElapsedSeconds());
   task.actualSeconds = elapsed;
   state.running.baseSeconds = elapsed;
@@ -2520,7 +2419,6 @@ function interruptRunningTask() {
 function resumePausedTask() {
   const task = getRunningTask();
   if (!task || !state.running.isPaused) return;
-  acknowledgeOverrunAlertReaction();
   startAudioWarmupFromUserAction();
   state.running.startedAt = Date.now();
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
@@ -2532,7 +2430,6 @@ function resumePausedTask() {
 function finalizeTaskCompletion() {
   const task = getRunningTask();
   if (!task) return;
-  acknowledgeOverrunAlertReaction();
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
   state.running = createRunningState();
@@ -2548,7 +2445,6 @@ function formatElapsedSmart(sec) {
 }
 
 function startTodayFinishFlow() {
-  acknowledgeOverrunAlertReaction();
   const runningTask = getRunningTask();
   if (runningTask) runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   state.running = createRunningState();
