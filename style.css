@@ -403,6 +403,10 @@ button {
   margin-top: 0;
 }
 
+.result-report-content-row {
+  padding-left: 1.6em;
+}
+
 .task-content-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

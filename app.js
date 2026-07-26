@@ -1436,9 +1436,9 @@ function buildResultReportHtml(doneCount, unfinishedCount, totalActual) {
   state.tasks.forEach((task, index) => {
     lines.push('<div class="result-report-task">');
     lines.push(`<p>${toCircledNumber(index + 1)} ${escapeHtml(task.name)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分</p>`);
-    lines.push(`<div class="task-content-row"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content || "(未入力)")}</span></div>`);
+    lines.push(`<div class="task-content-row result-report-content-row"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content || "(未入力)")}</span></div>`);
     if (task.status === "deferred" || task.status === "discarded") {
-      lines.push(`<div class="task-content-row"><span class="task-content-label">メモ：</span><span class="task-content-text">${escapeHtml(task.memo || "(未入力)")}</span></div>`);
+      lines.push(`<div class="task-content-row result-report-content-row"><span class="task-content-label">メモ：</span><span class="task-content-text">${escapeHtml(task.memo || "(未入力)")}</span></div>`);
     }
     lines.push('</div>');
   });
