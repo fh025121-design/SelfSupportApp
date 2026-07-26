@@ -57,6 +57,11 @@ h1 {
   font-weight: 700;
 }
 
+.auth-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .panel {
   background: var(--card);
   border-radius: var(--radius);

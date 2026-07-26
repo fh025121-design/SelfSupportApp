@@ -1,3 +1,23 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCQjvGNR-C_vSTlihkuFn9WIx31eQrjS_Q",
+  authDomain: "selfsupportapp-web.firebaseapp.com",
+  projectId: "selfsupportapp-web",
+  storageBucket: "selfsupportapp-web.firebasestorage.app",
+  messagingSenderId: "714557706189",
+  appId: "1:714557706189:web:53fbfed35647ec89bd7e84"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const DEFAULT_MINUTES = 30;
 const TASK_NAME_NEW = "__new__";
@@ -26,9 +46,21 @@ const todayLabel = document.getElementById("todayLabel");
 
 let tickTimer = null;
 let notificationAudioCtx = null;
+let authReady = false;
+let authErrorMessage = "";
+let authLoading = false;
+let currentUser = null;
 
 const state = loadState();
 render();
+
+onAuthStateChanged(auth, (user) => {
+  currentUser = user;
+  authReady = true;
+  authLoading = false;
+  authErrorMessage = "";
+  render();
+});
 
 function getTodayKeyJst() {
   const fmt = new Intl.DateTimeFormat("ja-JP", {
@@ -476,6 +508,10 @@ function saveState() {
 
 function render() {
   clearTickTimer();
+
+  if (!authReady) return renderAuthChecking();
+  if (!currentUser) return renderLogin();
+
   enforcePriorityPhase();
 
   if (state.phase === "planning") {
@@ -499,6 +535,80 @@ function render() {
   if (state.phase === "homeworkList") return renderHomeworkListScreen();
   if (state.phase === "homeworkEdit") return renderHomeworkEditScreen();
   return renderResult();
+}
+
+function renderAuthChecking() {
+  app.innerHTML = `
+    <div class="task-card auth-card">
+      <h2>認証を確認中...</h2>
+      <p class="helper">しばらくお待ちください。</p>
+    </div>
+  `;
+}
+
+function renderLogin() {
+  app.innerHTML = `
+    <h2>ログイン</h2>
+    <div class="task-form-box auth-card">
+      <div class="form-stack">
+        <div>
+          <label for="loginEmail">メールアドレス</label>
+          <input id="loginEmail" type="email" autocomplete="email" inputmode="email" placeholder="example@mail.com" />
+        </div>
+        <div>
+          <label for="loginPassword">パスワード</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="パスワード" />
+        </div>
+      </div>
+      <div class="btn-row compact-stack">
+        <button id="loginBtn" class="btn-main" type="button" ${authLoading ? "disabled" : ""}>${authLoading ? "ログイン中..." : "ログイン"}</button>
+      </div>
+    </div>
+    <p id="loginError" class="helper auth-error" aria-live="polite">${escapeHtml(authErrorMessage)}</p>
+  `;
+
+  const emailEl = document.getElementById("loginEmail");
+  const passEl = document.getElementById("loginPassword");
+  const loginBtn = document.getElementById("loginBtn");
+
+  const submit = async () => {
+    if (authLoading) return;
+    const email = String(emailEl?.value || "").trim();
+    const password = String(passEl?.value || "");
+    if (!email || !password) {
+      authErrorMessage = "メールアドレスとパスワードを入力してください。";
+      return renderLogin();
+    }
+
+    authLoading = true;
+    authErrorMessage = "";
+    renderLogin();
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+      authLoading = false;
+      authErrorMessage = mapAuthError(error);
+      renderLogin();
+    }
+  };
+
+  loginBtn?.addEventListener("click", submit);
+  passEl?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    submit();
+  });
+}
+
+function mapAuthError(error) {
+  const code = String(error?.code || "");
+  if (code === "auth/invalid-email") return "メールアドレスの形式が正しくありません。";
+  if (code === "auth/invalid-credential") return "メールアドレスまたはパスワードが正しくありません。";
+  if (code === "auth/user-disabled") return "このアカウントは無効化されています。";
+  if (code === "auth/too-many-requests") return "試行回数が多すぎます。しばらくしてから再試行してください。";
+  if (code === "auth/network-request-failed") return "ネットワーク接続を確認してください。";
+  return "ログインに失敗しました。入力内容を確認してください。";
 }
 
 function enforcePriorityPhase() {
@@ -643,6 +753,7 @@ function renderHome() {
 function renderSettings() {
   renderScreen(`
     <h2>設定</h2>
+    <p class="helper">ログイン中: ${escapeHtml(currentUser?.email || "不明")}</p>
     <div class="task-card settings-menu-list">
       <button id="openRecurringListBtn" class="settings-menu-row" type="button">
         <span>定期予定</span>
@@ -650,11 +761,19 @@ function renderSettings() {
       </button>
     </div>
     <div class="btn-row compact-stack">
+      <button id="logoutBtn" class="btn-danger" type="button">ログアウト</button>
       <button id="backToHomeFromSettingsBtn" class="btn-quiet" type="button">戻る</button>
     </div>
   `);
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
+  document.getElementById("logoutBtn").addEventListener("click", async () => {
+    try {
+      await signOut(auth);
+    } catch (_) {
+      alert("ログアウトに失敗しました。通信状態を確認して再試行してください。");
+    }
+  });
   document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
 }
 

@@ -1,5 +1,15 @@
 # Release History
 
+## 2026-07-26 19:57 JST
+- Firebase Authentication（Email/Password）を導入し、ログイン状態監視（onAuthStateChanged）で画面表示を切り替えるよう変更。
+- 未ログイン時はログイン画面（メールアドレス・パスワード・ログインボタン）のみ表示、ログイン済み時のみ既存アプリ画面を表示する制御を追加。
+- 設定画面にログアウトボタンを追加し、現在ログイン中のメールアドレス表示とログアウト処理を実装。
+- Firebase Authenticationの永続ログインにより、次回起動時の自動ログインに対応（Firestore同期は未実装）。
+
+## 2026-07-26 19:52 JST
+- Firebase Web SDK（modular）初期化コードを追加し、`selfsupportapp-web` プロジェクト設定を登録。
+- `app.js` をES Modulesとして読み込むため、`index.html` のスクリプトタグを `type="module"` に変更。
+
 ## 2026-07-26 22:40 JST
 - 出発前チェック文言を「提出物・持ち物を指差し確認・目視したか」に変更。
 - 出発前チェック画面の「ホームへ進む」ボタンを削除。
