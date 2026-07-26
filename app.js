@@ -381,61 +381,101 @@ function renderPreviousDayEnd() {
 
 function renderHome() {
   const runningTask = getRunningTask();
-  const counts = getCounts();
   const departureWarn = needsDepartureCheck();
 
   renderScreen(`
     <h2>今日の予定</h2>
     ${departureWarn ? '<p class="notice warn">出発前チェック未完了</p>' : ""}
-    <div class="summary">
-      <p>予定を作る日: ${state.planFor === "today" ? "今日" : "明日"}</p>
-      <p>予定タスク数: ${counts.total}件 / 完了: ${counts.done}件</p>
-      <p>合計予定時間: ${sumPlanned()}分</p>
+    <div class="home-overview">
+      <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
+      <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
+      <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
+      <p>勉強 ${formatTimeForDisplay(state.planTimes.studyStart)}</p>
     </div>
+    <hr class="sep" />
 
-    <ul class="task-list" id="homeTaskList"></ul>
+    <ul class="home-task-list" id="homeTaskList"></ul>
+
+    <div class="btn-row">
+      <button id="openExecutionBtn" class="btn-main" type="button">タスク実行へ</button>
+    </div>
 
     <div class="btn-row compact-stack">
       <button id="openPlanningBtn" class="btn-quiet" type="button">予定入力へ</button>
-      <button id="openExecutionBtn" class="btn-main" type="button">タスク実行へ</button>
+      <button id="copyHomePlanBtn" class="btn-sub" type="button">予定をコピー</button>
       <button id="openDayEndBtn" class="btn-danger" type="button">1日の終了</button>
     </div>
+    <p id="copyHomePlanMessage" class="helper" aria-live="polite"></p>
 
     ${runningTask && state.running.isPaused ? '<div class="notice info">中断中タスクがあります。再開してください。</div>' : ""}
   `);
 
   const list = document.getElementById("homeTaskList");
+  if (state.tasks.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "home-task-empty";
+    empty.textContent = "予定タスクはまだありません。";
+    list.appendChild(empty);
+  }
+
   state.tasks.forEach((task) => {
     const li = document.createElement("li");
-    li.className = "task-card compact-task-row";
-    const status = getUnifiedStatus(task);
+    li.className = "home-task-row";
+    const status = getHomeStatusIcon(task);
+    li.setAttribute("role", "button");
+    li.setAttribute("tabindex", "0");
+    li.dataset.taskId = task.id;
     li.innerHTML = `
-      <div class="task-inline-text">${status} ${escapeHtml(task.name)} <span>${task.plannedMinutes}分</span></div>
-      <div class="task-inline-actions">
-        ${status === "【中断】" ? `<button class="btn-mini btn-main" data-resume-id="${task.id}" type="button">再開</button>` : ""}
+      <div class="home-task-main">
+        <p class="home-task-line1"><span class="home-task-status" aria-hidden="true">${status}</span><span class="home-task-name">${escapeHtml(task.name)}</span><span class="home-task-meta">予定${task.plannedMinutes}分　実績${getHomeActualText(task)}</span></p>
       </div>
     `;
     list.appendChild(li);
   });
 
-  document.querySelectorAll("button[data-resume-id]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (state.running.taskId === btn.dataset.resumeId) {
+  list.querySelectorAll("li[data-task-id]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const taskId = row.dataset.taskId;
+      if (!taskId) return;
+      if (state.running.taskId === taskId && state.running.isPaused) {
         resumePausedTask();
+        return;
       }
+      changePhase("execution", false);
+    });
+    row.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      row.click();
     });
   });
 
+  document.getElementById("copyHomePlanBtn").addEventListener("click", async () => {
+    const report = state.confirmedPlan?.reportText || buildPlanReportText();
+    const ok = await copyToClipboard(report);
+    document.getElementById("copyHomePlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
+  });
   document.getElementById("openPlanningBtn").addEventListener("click", () => changePhase("planning", false));
   document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
   document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
 }
 
-function getUnifiedStatus(task) {
+function getHomeStatusIcon(task) {
   if (task.status === "done") return "【完了】";
-  if (state.running.taskId === task.id && state.running.isPaused) return "【中断】";
-  if (state.running.taskId === task.id && !state.running.isPaused) return "【実行中】";
+  if (state.running.taskId === task.id && state.running.isPaused) return "【再開】";
+  if (state.running.taskId === task.id && !state.running.isPaused) return "▶";
   return "○";
+}
+
+function getHomeActualText(task) {
+  const formatMinutes = (sec) => `${Math.max(1, Math.floor(sec / 60))}分`;
+  if (state.running.taskId === task.id && !state.running.isPaused) {
+    return formatMinutes(getRunningElapsedSeconds());
+  }
+  if (typeof task.actualSeconds === "number" && task.actualSeconds > 0) {
+    return formatMinutes(task.actualSeconds);
+  }
+  return "-";
 }
 
 function renderPlanning() {
@@ -883,7 +923,7 @@ function renderExecution() {
       li.dataset.taskId = task.id;
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", "0");
-      li.innerHTML = `<h3>${escapeHtml(task.name)}</h3><p>予定時間: ${task.plannedMinutes}分</p>`;
+      li.innerHTML = `<h3>${escapeHtml(task.name)}</h3><p>予定時間: ${task.plannedMinutes}分</p><p class="helper">内容: ${escapeHtml(task.content)}</p>`;
       list.appendChild(li);
     });
     list.querySelectorAll("li[data-task-id]").forEach((card) => {

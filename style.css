@@ -271,6 +271,82 @@ button {
   font-weight: 700;
 }
 
+.home-overview {
+  background: #f7fafc;
+  border: 2px solid #dbe5f2;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 10px 0 8px;
+}
+
+.home-overview p {
+  margin: 4px 0;
+  color: var(--ink);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.home-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.home-task-row {
+  display: block;
+  border-bottom: 1px solid #dbe5f2;
+  padding: 8px 4px;
+  cursor: pointer;
+}
+
+.home-task-row:focus-visible,
+.home-task-row:hover {
+  outline: none;
+  background: #f6fbff;
+  border-radius: 8px;
+}
+
+.home-task-main {
+  min-width: 0;
+}
+
+.home-task-line1 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-task-status {
+  min-width: 3.8em;
+  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.home-task-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+  word-break: break-word;
+  flex: 1;
+}
+
+.home-task-meta {
+  margin: 0;
+  color: var(--sub);
+  font-size: 0.88rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.home-task-empty {
+  color: var(--muted);
+  padding: 8px 2px;
+}
+
 .timer-box {
   border: 2px solid #ffd7cf;
   border-radius: 14px;
