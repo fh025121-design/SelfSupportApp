@@ -30,6 +30,8 @@ const db = getFirestore(firebaseApp);
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const STORAGE_OWNER_UID_KEY = "selfSupportAppTrialStateV3_ownerUid";
 const DEFAULT_MINUTES = 30;
+const DEFAULT_ALERT_VOLUME = 5;
+const DEFAULT_VIBRATION_SECONDS = 3;
 const TASK_NAME_NEW = "__new__";
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
 const RECURRING_DAY_KEYS = ["daily", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -215,6 +217,32 @@ function createRunningState() {
   };
 }
 
+function createAlertSettings() {
+  return {
+    volume: DEFAULT_ALERT_VOLUME,
+    vibrationSeconds: DEFAULT_VIBRATION_SECONDS
+  };
+}
+
+function sanitizeAlertVolume(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return DEFAULT_ALERT_VOLUME;
+  return Math.min(10, Math.max(1, n));
+}
+
+function sanitizeVibrationSeconds(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return DEFAULT_VIBRATION_SECONDS;
+  return Math.min(5, Math.max(1, n));
+}
+
+function normalizeAlertSettings(raw) {
+  const base = { ...createAlertSettings(), ...(raw || {}) };
+  base.volume = sanitizeAlertVolume(base.volume);
+  base.vibrationSeconds = sanitizeVibrationSeconds(base.vibrationSeconds);
+  return base;
+}
+
 function createReviewState() {
   return {
     pendingIds: [],
@@ -262,6 +290,7 @@ function createInitialState(dateKey, tasks = []) {
     homeworkForm: createHomeworkForm(),
     confirmedPlan: null,
     running: createRunningState(),
+    alertSettings: createAlertSettings(),
     review: createReviewState(),
     departureCheck: createDepartureCheckState(),
     returnCheck: createReturnCheckState(),
@@ -467,6 +496,7 @@ function loadState() {
     safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
     safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
     safe.running = { ...createRunningState(), ...(safe.running || {}) };
+    safe.alertSettings = normalizeAlertSettings(safe.alertSettings);
     safe.review = { ...createReviewState(), ...(safe.review || {}) };
     safe.departureCheck = { ...createDepartureCheckState(), ...(safe.departureCheck || {}) };
     safe.returnCheck = {
@@ -769,6 +799,7 @@ function normalizeLoadedState(rawState) {
   safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
   safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
   safe.running = { ...createRunningState(), ...(safe.running || {}) };
+  safe.alertSettings = normalizeAlertSettings(safe.alertSettings);
   safe.review = { ...createReviewState(), ...(safe.review || {}) };
   safe.departureCheck = { ...createDepartureCheckState(), ...(safe.departureCheck || {}) };
   safe.returnCheck = {
@@ -1206,9 +1237,25 @@ function renderHome() {
 }
 
 function renderSettings() {
+  const alertSettings = normalizeAlertSettings(state.alertSettings);
   renderScreen(`
     <h2>設定</h2>
     <p class="helper">ログイン中: ${escapeHtml(currentUser?.email || "不明")}</p>
+    <div class="task-card">
+      <h3>通知設定</h3>
+      <div class="form-stack">
+        <div>
+          <label for="alertVolumeRange">アラート音量（1〜10）</label>
+          <input id="alertVolumeRange" type="range" min="1" max="10" step="1" value="${alertSettings.volume}" />
+          <p id="alertVolumeValue" class="helper">現在: ${alertSettings.volume}</p>
+        </div>
+        <div>
+          <label for="vibrationSecondsRange">バイブ長さ（1〜5秒）</label>
+          <input id="vibrationSecondsRange" type="range" min="1" max="5" step="1" value="${alertSettings.vibrationSeconds}" />
+          <p id="vibrationSecondsValue" class="helper">現在: ${alertSettings.vibrationSeconds}秒</p>
+        </div>
+      </div>
+    </div>
     <div class="task-card settings-menu-list">
       <button id="openRecurringListBtn" class="settings-menu-row" type="button">
         <span>定期予定</span>
@@ -1220,6 +1267,45 @@ function renderSettings() {
       <button id="backToHomeFromSettingsBtn" class="btn-quiet" type="button">戻る</button>
     </div>
   `);
+
+  const volumeRange = document.getElementById("alertVolumeRange");
+  const vibrationRange = document.getElementById("vibrationSecondsRange");
+  const volumeValue = document.getElementById("alertVolumeValue");
+  const vibrationValue = document.getElementById("vibrationSecondsValue");
+
+  const updateVolumePreview = () => {
+    const v = sanitizeAlertVolume(volumeRange?.value);
+    if (volumeValue) volumeValue.textContent = `現在: ${v}`;
+  };
+
+  const updateVibrationPreview = () => {
+    const s = sanitizeVibrationSeconds(vibrationRange?.value);
+    if (vibrationValue) vibrationValue.textContent = `現在: ${s}秒`;
+  };
+
+  volumeRange?.addEventListener("input", () => {
+    updateVolumePreview();
+  });
+  volumeRange?.addEventListener("change", () => {
+    state.alertSettings = normalizeAlertSettings({
+      ...state.alertSettings,
+      volume: volumeRange.value
+    });
+    saveState();
+    updateVolumePreview();
+  });
+
+  vibrationRange?.addEventListener("input", () => {
+    updateVibrationPreview();
+  });
+  vibrationRange?.addEventListener("change", () => {
+    state.alertSettings = normalizeAlertSettings({
+      ...state.alertSettings,
+      vibrationSeconds: vibrationRange.value
+    });
+    saveState();
+    updateVibrationPreview();
+  });
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
   document.getElementById("logoutBtn").addEventListener("click", performLogout);
@@ -2327,13 +2413,15 @@ function playNotificationSound() {
   }
 
   try {
+    const settings = normalizeAlertSettings(state.alertSettings);
+    const peakGain = 0.04 + settings.volume * 0.04;
     const now = notificationAudioCtx.currentTime;
     const osc = notificationAudioCtx.createOscillator();
     const gain = notificationAudioCtx.createGain();
     osc.type = "square";
     osc.frequency.setValueAtTime(1046.5, now);
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
     osc.connect(gain);
     gain.connect(notificationAudioCtx.destination);
@@ -2350,9 +2438,8 @@ function runVibrationFeedback(stage = "first") {
       console.log("[Vibrate] navigator.vibrate is not available.");
       return;
     }
-    const pattern = stage === "second"
-      ? [300, 150, 300]
-      : [300, 150, 300];
+    const settings = normalizeAlertSettings(state.alertSettings);
+    const pattern = [settings.vibrationSeconds * 1000];
     const result = navigator.vibrate(pattern);
     console.log("[Vibrate] navigator.vibrate result:", result);
   } catch (error) {
