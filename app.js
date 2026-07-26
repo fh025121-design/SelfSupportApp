@@ -55,6 +55,7 @@ const app = document.getElementById("app");
 const todayLabel = document.getElementById("todayLabel");
 
 let tickTimer = null;
+let phaseRefreshTimer = null;
 let notificationAudioCtx = null;
 let authReady = false;
 let authErrorMessage = "";
@@ -665,6 +666,7 @@ function render() {
   if (!currentUser) return renderLogin();
   if (!syncReady) return renderAuthSyncing();
 
+  ensurePhaseRefreshTimer();
   enforcePriorityPhase();
 
   if (state.phase === "planning") {
@@ -894,6 +896,7 @@ function teardownSyncSession() {
   pendingRemoteState = null;
   pendingRemoteHash = "";
   pendingPassiveRender = false;
+  clearPhaseRefreshTimer();
 }
 
 function classifyFirestoreError(operation, error) {
@@ -3386,6 +3389,21 @@ function clearTickTimer() {
     clearInterval(tickTimer);
     tickTimer = null;
   }
+}
+
+function ensurePhaseRefreshTimer() {
+  if (phaseRefreshTimer) return;
+  phaseRefreshTimer = setInterval(() => {
+    if (!authReady || !currentUser || !syncReady) return;
+    if (state.phase === "execution" && state.running.taskId && !state.running.isPaused) return;
+    render();
+  }, 10000);
+}
+
+function clearPhaseRefreshTimer() {
+  if (!phaseRefreshTimer) return;
+  clearInterval(phaseRefreshTimer);
+  phaseRefreshTimer = null;
 }
 
 function escapeHtml(text) {
