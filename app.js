@@ -72,24 +72,30 @@ let syncWritesBlocked = false;
 let localBootHasValidData = false;
 let localBootRawExisted = false;
 let localBootOwnerUid = "";
+let isTextInputFocused = false;
+let isComposingText = false;
+let pendingRemoteState = null;
+let pendingRemoteHash = "";
+let pendingPassiveRender = false;
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
 const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 const state = loadState();
+setupInputGuard();
 render();
 
 window.addEventListener("online", () => {
   if (syncStatus === "offline") {
     syncStatus = syncReady ? "synced" : "syncing";
-    render();
+    requestPassiveRender();
   }
 });
 
 window.addEventListener("offline", () => {
   syncStatus = "offline";
-  render();
+  requestPassiveRender();
 });
 
 onAuthStateChanged(auth, async (user) => {
@@ -570,6 +576,83 @@ function saveState(options = {}) {
   scheduleFirestoreSave();
 }
 
+function isEditableTextElement(el) {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName !== "INPUT") return false;
+  const type = String(el.type || "text").toLowerCase();
+  return ["text", "search", "number", "email", "password", "tel", "url", "date", "time"].includes(type);
+}
+
+function isUserEditing() {
+  return isTextInputFocused || isComposingText;
+}
+
+function requestPassiveRender() {
+  if (isUserEditing()) {
+    pendingPassiveRender = true;
+    return;
+  }
+  pendingPassiveRender = false;
+  render();
+}
+
+function applyRemoteStateKeepingCurrentPhase(rawState) {
+  const currentPhase = state.phase;
+  const nextState = normalizeLoadedState(rawState);
+  isApplyingRemoteState = true;
+  replaceState(nextState);
+  state.phase = currentPhase;
+  saveState({ skipRemote: true });
+  isApplyingRemoteState = false;
+}
+
+function flushDeferredUiUpdates() {
+  if (isUserEditing()) return;
+  if (pendingRemoteState) {
+    applyRemoteStateKeepingCurrentPhase(pendingRemoteState);
+    pendingRemoteState = null;
+    lastSavedStateHash = pendingRemoteHash || hashStateObject(state);
+    pendingRemoteHash = "";
+    requestPassiveRender();
+    return;
+  }
+  if (pendingPassiveRender) {
+    requestPassiveRender();
+  }
+}
+
+function setupInputGuard() {
+  document.addEventListener("focusin", (e) => {
+    if (isEditableTextElement(e.target)) {
+      isTextInputFocused = true;
+    }
+  });
+
+  document.addEventListener("focusout", () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      isTextInputFocused = isEditableTextElement(active);
+      flushDeferredUiUpdates();
+    }, 0);
+  });
+
+  document.addEventListener("compositionstart", (e) => {
+    if (isEditableTextElement(e.target)) {
+      isComposingText = true;
+    }
+  });
+
+  document.addEventListener("compositionend", (e) => {
+    if (isEditableTextElement(e.target)) {
+      isComposingText = false;
+      window.setTimeout(() => {
+        flushDeferredUiUpdates();
+      }, 0);
+    }
+  });
+}
+
 function render() {
   clearTickTimer();
 
@@ -803,6 +886,9 @@ function teardownSyncSession() {
   lastSavedStateHash = "";
   syncWritesBlocked = false;
   syncStatus = "syncing";
+  pendingRemoteState = null;
+  pendingRemoteHash = "";
+  pendingPassiveRender = false;
 }
 
 function classifyFirestoreError(operation, error) {
@@ -908,7 +994,7 @@ async function startSyncSessionForUser(user) {
   teardownSyncSession();
   syncOwnerUid = uid;
   syncStatus = navigator.onLine ? "syncing" : "offline";
-  render();
+  requestPassiveRender();
 
   const appStateRef = getAppStateDocRef(uid);
   let snapshot;
@@ -921,11 +1007,7 @@ async function startSyncSessionForUser(user) {
 
   if (snapshot.exists() && isValidSyncPayload(snapshot.data())) {
     const payload = snapshot.data();
-    const remoteState = normalizeLoadedState(payload.state);
-    isApplyingRemoteState = true;
-    replaceState(remoteState);
-    saveState({ skipRemote: true });
-    isApplyingRemoteState = false;
+    applyRemoteStateKeepingCurrentPhase(payload.state);
     lastSavedStateHash = hashStateObject(payload.state);
   } else {
     const canSeedFromLocal = localBootHasValidData && (!localBootOwnerUid || localBootOwnerUid === uid);
@@ -943,10 +1025,7 @@ async function startSyncSessionForUser(user) {
     }
     lastSavedStateHash = hashStateObject(seedState);
     if (!canSeedFromLocal && !localBootRawExisted) {
-      isApplyingRemoteState = true;
-      replaceState(seedState);
-      saveState({ skipRemote: true });
-      isApplyingRemoteState = false;
+      applyRemoteStateKeepingCurrentPhase(seedState);
     }
   }
 
@@ -969,18 +1048,21 @@ async function startSyncSessionForUser(user) {
       return;
     }
 
-    const nextState = normalizeLoadedState(payload.state);
-    isApplyingRemoteState = true;
-    replaceState(nextState);
-    saveState({ skipRemote: true });
-    isApplyingRemoteState = false;
+    if (isUserEditing()) {
+      pendingRemoteState = payload.state;
+      pendingRemoteHash = remoteHash;
+      if (syncStatus !== "offline") syncStatus = "synced";
+      return;
+    }
+
+    applyRemoteStateKeepingCurrentPhase(payload.state);
     lastSavedStateHash = remoteHash;
     if (syncStatus !== "offline") syncStatus = "synced";
-    render();
+    requestPassiveRender();
   }, (error) => {
     reportFirestoreError("snapshot-listen", error, { uid });
     syncStatus = navigator.onLine ? "error" : "offline";
-    render();
+    requestPassiveRender();
   });
 
   syncReady = true;
@@ -1009,7 +1091,6 @@ function scheduleFirestoreSave() {
 
   if (syncStatus !== "offline") {
     syncStatus = "saving";
-    render();
   }
 
   syncSaveTimer = setTimeout(() => {
@@ -1051,7 +1132,7 @@ async function flushFirestoreSave(expectedHash) {
     syncStatus = navigator.onLine ? "error" : "offline";
   } finally {
     syncSaveInFlight = false;
-    render();
+    requestPassiveRender();
   }
 }
 
