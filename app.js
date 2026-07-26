@@ -68,12 +68,14 @@ let syncSaveTimer = null;
 let syncSaveInFlight = false;
 let isApplyingRemoteState = false;
 let lastSavedStateHash = "";
+let syncWritesBlocked = false;
 let localBootHasValidData = false;
 let localBootRawExisted = false;
 let localBootOwnerUid = "";
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
+const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 const state = loadState();
 render();
@@ -106,7 +108,7 @@ onAuthStateChanged(auth, async (user) => {
   try {
     await startSyncSessionForUser(user);
   } catch (error) {
-    console.error("[Sync] Failed to initialize sync session", error);
+    reportFirestoreError("session-init", error);
     syncStatus = navigator.onLine ? "error" : "offline";
     syncOwnerUid = user.uid;
     syncReady = true;
@@ -799,7 +801,104 @@ function teardownSyncSession() {
   syncOwnerUid = null;
   isApplyingRemoteState = false;
   lastSavedStateHash = "";
+  syncWritesBlocked = false;
   syncStatus = "syncing";
+}
+
+function classifyFirestoreError(operation, error) {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "");
+  const detail = {
+    category: "unknown",
+    probableCause: "不明",
+    firebaseConsoleSettingIssue: false,
+    firestoreRuleIssue: false,
+    writeBlockedUntilRelogin: false,
+    suggestion: "コンソールログ詳細を確認してください。"
+  };
+
+  if (code === "permission-denied") {
+    detail.category = "rules";
+    detail.probableCause = "Firestoreルールで現在ユーザーの読み書きが拒否されている可能性";
+    detail.firestoreRuleIssue = true;
+    detail.writeBlockedUntilRelogin = true;
+    detail.suggestion = "Firestoreルールで request.auth.uid と users/{uid} の一致条件を確認してください。";
+    return detail;
+  }
+
+  if (code === "unauthenticated") {
+    detail.category = "auth";
+    detail.probableCause = "認証セッション未確立・期限切れ";
+    detail.suggestion = "再ログインして認証状態を更新してください。";
+    return detail;
+  }
+
+  if (code === "unavailable") {
+    detail.category = "network";
+    detail.probableCause = "ネットワーク断またはFirestore到達不可";
+    detail.suggestion = "オンライン状態と接続先ネットワークを確認してください。";
+    return detail;
+  }
+
+  if (code === "failed-precondition") {
+    const msgLower = message.toLowerCase();
+    if (msgLower.includes("firestore api") || msgLower.includes("database") || msgLower.includes("index")) {
+      detail.category = "console-setting";
+      detail.firebaseConsoleSettingIssue = true;
+      detail.probableCause = "Firebase Console側のFirestore有効化・DB作成・設定不足の可能性";
+      detail.writeBlockedUntilRelogin = true;
+      detail.suggestion = "Firestore Databaseの作成状態、API有効化、必要な設定を確認してください。";
+      return detail;
+    }
+  }
+
+  if (code === "not-found") {
+    detail.category = "console-setting";
+    detail.firebaseConsoleSettingIssue = true;
+    detail.probableCause = "Firestoreデータベース未作成、または参照先不整合の可能性";
+    detail.writeBlockedUntilRelogin = true;
+    detail.suggestion = "Firebase ConsoleでFirestore Databaseが作成済みか確認してください。";
+    return detail;
+  }
+
+  if (code === "resource-exhausted") {
+    detail.category = "quota";
+    detail.probableCause = "クォータ超過の可能性";
+    detail.suggestion = "Firebase利用量・請求設定を確認してください。";
+    return detail;
+  }
+
+  return detail;
+}
+
+function reportFirestoreError(operation, error, extra = {}) {
+  const info = classifyFirestoreError(operation, error);
+  const code = String(error?.code || "");
+  const message = String(error?.message || "");
+
+  if (!SYNC_DEBUG) {
+    console.error("[Sync] Firestore error", { operation, code, message });
+  } else {
+    console.groupCollapsed(`[Sync][${operation}] Firestore error: ${code || "(no-code)"}`);
+    console.error("error", error);
+    console.log("operation", operation);
+    console.log("code", code);
+    console.log("message", message);
+    console.log("probableCause", info.probableCause);
+    console.log("firebaseConsoleSettingIssue", info.firebaseConsoleSettingIssue);
+    console.log("firestoreRuleIssue", info.firestoreRuleIssue);
+    console.log("category", info.category);
+    console.log("suggestion", info.suggestion);
+    if (Object.keys(extra).length > 0) {
+      console.log("context", extra);
+    }
+    console.groupEnd();
+  }
+
+  if (info.writeBlockedUntilRelogin) {
+    syncWritesBlocked = true;
+  }
+  return info;
 }
 
 async function startSyncSessionForUser(user) {
@@ -812,7 +911,13 @@ async function startSyncSessionForUser(user) {
   render();
 
   const appStateRef = getAppStateDocRef(uid);
-  const snapshot = await getDoc(appStateRef);
+  let snapshot;
+  try {
+    snapshot = await getDoc(appStateRef);
+  } catch (error) {
+    reportFirestoreError("initial-read", error, { uid });
+    throw error;
+  }
 
   if (snapshot.exists() && isValidSyncPayload(snapshot.data())) {
     const payload = snapshot.data();
@@ -825,12 +930,17 @@ async function startSyncSessionForUser(user) {
   } else {
     const canSeedFromLocal = localBootHasValidData && (!localBootOwnerUid || localBootOwnerUid === uid);
     const seedState = canSeedFromLocal ? cloneStateForSync() : createInitialState(getTodayKeyJst());
-    await setDoc(appStateRef, {
-      state: seedState,
-      schemaVersion: SYNC_SCHEMA_VERSION,
-      updatedBy: uid,
-      updatedAt: serverTimestamp()
-    }, { merge: true });
+    try {
+      await setDoc(appStateRef, {
+        state: seedState,
+        schemaVersion: SYNC_SCHEMA_VERSION,
+        updatedBy: uid,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (error) {
+      reportFirestoreError("initial-seed-write", error, { uid });
+      throw error;
+    }
     lastSavedStateHash = hashStateObject(seedState);
     if (!canSeedFromLocal && !localBootRawExisted) {
       isApplyingRemoteState = true;
@@ -868,7 +978,7 @@ async function startSyncSessionForUser(user) {
     if (syncStatus !== "offline") syncStatus = "synced";
     render();
   }, (error) => {
-    console.error("[Sync] Snapshot listener error", error);
+    reportFirestoreError("snapshot-listen", error, { uid });
     syncStatus = navigator.onLine ? "error" : "offline";
     render();
   });
@@ -883,6 +993,7 @@ function shouldSyncToFirestore() {
   if (!currentUser?.uid) return false;
   if (!syncReady) return false;
   if (syncOwnerUid !== currentUser.uid) return false;
+  if (syncWritesBlocked) return false;
   return true;
 }
 
@@ -933,7 +1044,10 @@ async function flushFirestoreSave(expectedHash) {
     lastSavedStateHash = latestHash;
     if (syncStatus !== "offline") syncStatus = "synced";
   } catch (error) {
-    console.error("[Sync] Firestore save failed", error);
+    reportFirestoreError("save-write", error, {
+      uid,
+      expectedHashLength: String(expectedHash || "").length
+    });
     syncStatus = navigator.onLine ? "error" : "offline";
   } finally {
     syncSaveInFlight = false;
@@ -1108,13 +1222,7 @@ function renderSettings() {
   `);
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
-  document.getElementById("logoutBtn").addEventListener("click", async () => {
-    try {
-      await signOut(auth);
-    } catch (_) {
-      alert("ログアウトに失敗しました。通信状態を確認して再試行してください。");
-    }
-  });
+  document.getElementById("logoutBtn").addEventListener("click", performLogout);
   document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
 }
 
@@ -2723,17 +2831,31 @@ function renderScreen(content) {
 
 function renderTopNav() {
   const showSettings = state.phase === "home";
+  const primaryLabel = state.phase === "home" ? "ログアウト" : "ホーム";
   return `
     <div class="top-nav">
-      <button id="homeBtn" class="btn-mini btn-quiet" type="button">ホーム</button>
+      <button id="homeBtn" class="btn-mini btn-quiet" type="button">${primaryLabel}</button>
       ${showSettings ? '<button id="openSettingsBtn" class="btn-mini btn-quiet" type="button">⚙️設定</button>' : ""}
     </div>
   `;
 }
 
 function bindTopNav() {
-  document.getElementById("homeBtn")?.addEventListener("click", goHome);
+  const homeBtn = document.getElementById("homeBtn");
+  if (state.phase === "home") {
+    homeBtn?.addEventListener("click", performLogout);
+  } else {
+    homeBtn?.addEventListener("click", goHome);
+  }
   document.getElementById("openSettingsBtn")?.addEventListener("click", () => changePhase("settings", false));
+}
+
+async function performLogout() {
+  try {
+    await signOut(auth);
+  } catch (_) {
+    alert("ログアウトに失敗しました。通信状態を確認して再試行してください。");
+  }
 }
 
 function goHome() {
