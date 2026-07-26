@@ -70,6 +70,27 @@ h1 {
   margin-bottom: 12px;
 }
 
+#openSettingsBtn {
+  margin-left: auto;
+}
+
+.settings-menu-list {
+  padding: 0;
+}
+
+.settings-menu-row {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  font-weight: 800;
+  color: var(--ink);
+  cursor: pointer;
+}
+
 h2 {
   font-size: 1.35rem;
   margin: 0 0 14px;
@@ -220,6 +241,70 @@ button {
   min-width: 1cm;
   padding: 6px 0;
   text-align: center;
+}
+
+#recurringMinutePresetRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#recurringMinutePresetRow .btn-mini {
+  min-width: 48px;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.recurring-day-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.recurring-day-item {
+  padding: 10px;
+}
+
+.recurring-list {
+  gap: 8px;
+}
+
+.recurring-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) auto auto auto;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.recurring-list-row:focus-visible,
+.recurring-list-row:hover {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(231, 90, 60, 0.14);
+}
+
+.recurring-list-main,
+.recurring-list-days,
+.recurring-list-minutes,
+.recurring-list-arrow {
+  white-space: nowrap;
+}
+
+.recurring-list-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+}
+
+.recurring-list-days,
+.recurring-list-minutes {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.recurring-list-arrow {
+  color: var(--muted);
 }
 
 .btn-main {

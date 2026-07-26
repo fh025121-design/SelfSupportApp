@@ -2,6 +2,17 @@ const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const DEFAULT_MINUTES = 30;
 const TASK_NAME_NEW = "__new__";
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
+const RECURRING_DAY_KEYS = ["daily", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const RECURRING_DAY_LABELS = {
+  daily: "毎日",
+  mon: "月",
+  tue: "火",
+  wed: "水",
+  thu: "木",
+  fri: "金",
+  sat: "土",
+  sun: "日"
+};
 const DEPARTURE_CHECK_ITEMS = [
   "テーブルに物は残っていないか",
   "コンタクトのゴミを捨てたか",
@@ -79,6 +90,31 @@ function createPlanningForm() {
   };
 }
 
+function createRecurringForm() {
+  return {
+    mode: "add",
+    targetId: null,
+    name: "",
+    minutes: String(DEFAULT_MINUTES),
+    content: "",
+    repeatType: "daily",
+    days: [],
+    googleSync: false
+  };
+}
+
+function createHomeworkForm() {
+  return {
+    mode: "add",
+    targetId: null,
+    name: "",
+    deadlineDate: "",
+    content: "",
+    googleSync: false,
+    done: false
+  };
+}
+
 function createRunningState() {
   return {
     taskId: null,
@@ -133,6 +169,11 @@ function createInitialState(dateKey, tasks = []) {
     tasks,
     planningForm: createPlanningForm(),
     taskNameStats: [],
+    recurringPlans: [],
+    recurringForm: createRecurringForm(),
+    recurringSyncDateKey: null,
+    homeworkTasks: [],
+    homeworkForm: createHomeworkForm(),
     confirmedPlan: null,
     running: createRunningState(),
     review: createReviewState(),
@@ -142,6 +183,18 @@ function createInitialState(dateKey, tasks = []) {
     dayClosed: false,
     previousDayPending: null,
     lastResultReportText: ""
+  };
+}
+
+function createRecurringPlan(name, plannedMinutes, content, repeatType, days, googleSync) {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    plannedMinutes,
+    content,
+    repeatType: normalizeRecurringRepeatType(repeatType),
+    days: normalizeRepeatDays(days),
+    googleSync: Boolean(googleSync)
   };
 }
 
@@ -182,6 +235,88 @@ function normalizeTaskNameStats(rawStats) {
     }));
 }
 
+function normalizeRecurringDays(rawDays) {
+  const list = Array.isArray(rawDays) ? rawDays : [];
+  const normalized = list
+    .map((d) => String(d || "").toLowerCase())
+    .filter((d) => RECURRING_DAY_KEYS.includes(d));
+  if (normalized.includes("daily")) return ["daily"];
+  const unique = [];
+  normalized.forEach((d) => {
+    if (!unique.includes(d)) unique.push(d);
+  });
+  return unique;
+}
+
+function normalizeRecurringRepeatType(value) {
+  return String(value || "daily") === "weekday" ? "weekday" : "daily";
+}
+
+function normalizeRepeatType(value) {
+  const v = String(value || "none");
+  if (v === "daily" || v === "weekday" || v === "none") return v;
+  return "none";
+}
+
+function normalizeRepeatDays(rawDays) {
+  const weekdayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  if (!Array.isArray(rawDays)) return [];
+  const out = [];
+  rawDays.forEach((d) => {
+    const key = String(d || "").toLowerCase();
+    if (weekdayKeys.includes(key) && !out.includes(key)) out.push(key);
+  });
+  return out;
+}
+
+function normalizeDeadlineType(value) {
+  return String(value || "none") === "date" ? "date" : "none";
+}
+
+function normalizeDeadlineDate(value) {
+  const text = String(value || "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+function normalizeRecurringPlan(item) {
+  const normalizedDays = normalizeRecurringDays(item?.days);
+  const migratedType = normalizedDays.includes("daily") ? "daily" : "weekday";
+  return {
+    id: item?.id || crypto.randomUUID(),
+    name: String(item?.name || "").trim(),
+    plannedMinutes: sanitizeMinutes(item?.plannedMinutes || DEFAULT_MINUTES),
+    content: String(item?.content || "").trim(),
+    repeatType: normalizeRecurringRepeatType(item?.repeatType || migratedType),
+    days: normalizeRepeatDays(normalizedDays),
+    googleSync: Boolean(item?.googleSync)
+  };
+}
+
+function normalizeRecurringPlans(rawPlans) {
+  if (!Array.isArray(rawPlans)) return [];
+  return rawPlans
+    .map(normalizeRecurringPlan)
+    .filter((p) => p.name && p.content && (p.repeatType === "daily" || p.days.length > 0));
+}
+
+function normalizeHomeworkTask(item) {
+  return {
+    id: item?.id || crypto.randomUUID(),
+    name: String(item?.name || "").trim(),
+    deadlineDate: normalizeDeadlineDate(item?.deadlineDate),
+    content: String(item?.content || "").trim(),
+    googleSync: Boolean(item?.googleSync),
+    done: Boolean(item?.done)
+  };
+}
+
+function normalizeHomeworkTasks(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeHomeworkTask)
+    .filter((item) => item.name && item.deadlineDate && item.content);
+}
+
 function buildCarryoverTasks(previousState) {
   if (!previousState || !Array.isArray(previousState.tasks)) return [];
   return previousState.tasks
@@ -207,6 +342,7 @@ function loadState() {
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildCarryoverTasks(parsed));
       nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
+      nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
       if (parsed.goPressedAt && !parsed.dayClosed) {
         nextState.previousDayPending = {
           dateKey: parsed.dateKey,
@@ -225,7 +361,7 @@ function loadState() {
 
     safe.phase = [
       "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
-      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd"
+      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeReturnPhase = [
@@ -236,6 +372,11 @@ function loadState() {
     safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map(normalizeTask) : [];
     safe.planningForm = normalizePlanningForm(safe.planningForm);
     safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
+    safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
+    safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
+    safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
+    safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
+    safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
     safe.running = { ...createRunningState(), ...(safe.running || {}) };
     safe.review = { ...createReviewState(), ...(safe.review || {}) };
     safe.departureCheck = { ...createDepartureCheckState(), ...(safe.departureCheck || {}) };
@@ -283,6 +424,11 @@ function normalizePlanningForm(raw) {
   base.minutesChoice = typeof base.minutesChoice === "string" ? base.minutesChoice : String(DEFAULT_MINUTES);
   base.customMinutes = String(base.customMinutes || base.minutesChoice || DEFAULT_MINUTES);
   base.content = String(base.content || "");
+  delete base.repeatType;
+  delete base.repeatDays;
+  delete base.deadlineType;
+  delete base.deadlineDate;
+  delete base.googleSync;
   return base;
 }
 
@@ -298,6 +444,32 @@ function normalizeConfirmedPlan(raw) {
   };
 }
 
+function normalizeRecurringForm(raw) {
+  const base = { ...createRecurringForm(), ...(raw || {}) };
+  base.mode = base.mode === "edit" ? "edit" : "add";
+  base.targetId = base.targetId || null;
+  base.name = String(base.name || "");
+  base.minutes = String(base.minutes || DEFAULT_MINUTES);
+  base.content = String(base.content || "");
+  base.repeatType = normalizeRecurringRepeatType(base.repeatType);
+  base.days = normalizeRepeatDays(base.days);
+  if (base.repeatType === "daily") base.days = [];
+  base.googleSync = Boolean(base.googleSync);
+  return base;
+}
+
+function normalizeHomeworkForm(raw) {
+  const base = { ...createHomeworkForm(), ...(raw || {}) };
+  base.mode = base.mode === "edit" ? "edit" : "add";
+  base.targetId = base.targetId || null;
+  base.name = String(base.name || "");
+  base.deadlineDate = normalizeDeadlineDate(base.deadlineDate);
+  base.content = String(base.content || "");
+  base.googleSync = Boolean(base.googleSync);
+  base.done = Boolean(base.done);
+  return base;
+}
+
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
@@ -305,6 +477,10 @@ function saveState() {
 function render() {
   clearTickTimer();
   enforcePriorityPhase();
+
+  if (state.phase === "planning") {
+    syncRecurringPlansForPlanningIfNeeded();
+  }
 
   if (state.phase === "previousDayEnd") return renderPreviousDayEnd();
   if (state.phase === "departureCheck") return renderDepartureCheck();
@@ -317,6 +493,11 @@ function render() {
   if (state.phase === "returnCheck") return renderReturnCheck();
   if (state.phase === "returnReport") return renderReturnReport();
   if (state.phase === "dayEnd") return renderDayEnd();
+  if (state.phase === "settings") return renderSettings();
+  if (state.phase === "recurringList") return renderRecurringListScreen();
+  if (state.phase === "recurringEdit") return renderRecurringEditScreen();
+  if (state.phase === "homeworkList") return renderHomeworkListScreen();
+  if (state.phase === "homeworkEdit") return renderHomeworkEditScreen();
   return renderResult();
 }
 
@@ -384,6 +565,8 @@ function renderPreviousDayEnd() {
 function renderHome() {
   const runningTask = getRunningTask();
   const departureWarn = needsDepartureCheck();
+  const homeworkPending = getHomeworkPendingCount();
+  const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
 
   renderScreen(`
     <h2>今日の予定</h2>
@@ -404,6 +587,7 @@ function renderHome() {
 
     <div class="btn-row compact-stack">
       <button id="openPlanningBtn" class="btn-quiet" type="button">予定入力へ</button>
+      <button id="openHomeworkBtn" class="btn-quiet" type="button">${homeworkLabel}</button>
       <button id="openDayEndBtn" class="btn-danger" type="button">1日の終了</button>
     </div>
 
@@ -451,8 +635,447 @@ function renderHome() {
   });
 
   document.getElementById("openPlanningBtn").addEventListener("click", () => changePhase("planning", false));
+  document.getElementById("openHomeworkBtn").addEventListener("click", () => changePhase("homeworkList", false));
   document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
   document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
+}
+
+function renderSettings() {
+  renderScreen(`
+    <h2>設定</h2>
+    <div class="task-card settings-menu-list">
+      <button id="openRecurringListBtn" class="settings-menu-row" type="button">
+        <span>定期予定</span>
+        <span aria-hidden="true">＞</span>
+      </button>
+    </div>
+    <div class="btn-row compact-stack">
+      <button id="backToHomeFromSettingsBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
+  document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
+}
+
+function renderRecurringListScreen() {
+  renderScreen(`
+    <h2>定期予定一覧</h2>
+    <ul id="recurringList" class="task-list recurring-list"></ul>
+    <div class="btn-row compact-stack">
+      <button id="addRecurringBtn" class="btn-main" type="button">＋ 定期予定を追加</button>
+      <button id="backToSettingsBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  renderRecurringListRows();
+  bindRecurringListEvents();
+}
+
+function renderRecurringEditScreen() {
+  const editing = state.recurringForm.mode === "edit";
+  renderScreen(`
+    <h2>${editing ? "定期予定を編集" : "定期予定を追加"}</h2>
+    <div class="task-form-box">
+      <div class="form-stack">
+        <div><label for="recurringName">予定名</label><input id="recurringName" type="text" value="${escapeHtml(state.recurringForm.name)}" maxlength="40" placeholder="例: 原田先生" /></div>
+        <div>
+          <label>予定時間（分）</label>
+          <div class="btn-row" id="recurringMinutePresetRow">${renderRecurringMinutePresetButtons()}</div>
+        </div>
+        <div><label for="recurringMinutes">自分で入力（分）</label><input id="recurringMinutes" type="number" min="1" max="600" step="1" value="${escapeHtml(String(sanitizeMinutes(state.recurringForm.minutes) || DEFAULT_MINUTES))}" /></div>
+        <div><label for="recurringContent">内容</label><input id="recurringContent" type="text" value="${escapeHtml(state.recurringForm.content)}" maxlength="120" placeholder="例: 宿題 p54" /></div>
+        <div>
+          <label>繰り返し</label>
+          <div class="option-group compact-options">
+            <label class="option-item"><input type="radio" name="recurringRepeatType" value="daily" ${state.recurringForm.repeatType === "daily" ? "checked" : ""} /><span>毎日</span></label>
+            <label class="option-item"><input type="radio" name="recurringRepeatType" value="weekday" ${state.recurringForm.repeatType === "weekday" ? "checked" : ""} /><span>曜日指定</span></label>
+          </div>
+        </div>
+        <div id="recurringDaysWrap" class="${state.recurringForm.repeatType === "weekday" ? "" : "hidden"}">
+          <label>曜日選択</label>
+          <div class="option-group compact-options recurring-day-grid">${renderRecurringDayOptions()}</div>
+        </div>
+        <div>
+          <label>Googleカレンダー同期</label>
+          <div class="option-group compact-options">
+            <label class="option-item"><input type="radio" name="recurringGoogleSync" value="on" ${state.recurringForm.googleSync ? "checked" : ""} /><span>ON</span></label>
+            <label class="option-item"><input type="radio" name="recurringGoogleSync" value="off" ${!state.recurringForm.googleSync ? "checked" : ""} /><span>OFF</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="btn-row compact-stack">
+        <button id="saveRecurringBtn" class="btn-main" type="button">保存</button>
+        ${editing ? '<button id="deleteRecurringBtn" class="btn-danger" type="button">削除</button>' : ""}
+      </div>
+    </div>
+
+    <div class="btn-row compact-stack">
+      <button id="backToRecurringListBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  bindRecurringEditEvents();
+}
+
+function renderRecurringMinutePresetButtons() {
+  return MINUTE_OPTIONS.map((m) => `<button type="button" class="btn-mini btn-quiet" data-recurring-minute="${m}">${m}</button>`).join("");
+}
+
+function renderRecurringDayOptions() {
+  return ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((key) => {
+    const checked = state.recurringForm.days.includes(key) ? "checked" : "";
+    return `<label class="option-item recurring-day-item"><input type="checkbox" name="recurringDay" value="${key}" ${checked} /><span>${RECURRING_DAY_LABELS[key]}</span></label>`;
+  }).join("");
+}
+
+function renderRecurringListRows() {
+  const list = document.getElementById("recurringList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (state.recurringPlans.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "task-card compact-empty";
+    empty.innerHTML = "<p>定期予定はまだありません。</p>";
+    list.appendChild(empty);
+    return;
+  }
+
+  state.recurringPlans.forEach((plan) => {
+    const li = document.createElement("li");
+    li.className = "task-card recurring-list-row";
+    li.setAttribute("role", "button");
+    li.setAttribute("tabindex", "0");
+    li.dataset.id = plan.id;
+    li.innerHTML = `
+      <div class="recurring-list-main">${escapeHtml(plan.name)}</div>
+      <div class="recurring-list-days">${escapeHtml(formatRecurringRepeat(plan))}</div>
+      <div class="recurring-list-minutes">${plan.plannedMinutes}分</div>
+      <div class="recurring-list-arrow" aria-hidden="true">＞</div>
+    `;
+    li.addEventListener("click", () => {
+      loadRecurringIntoForm(plan.id);
+      changePhase("recurringEdit");
+    });
+    li.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      li.click();
+    });
+    list.appendChild(li);
+  });
+}
+
+  function bindRecurringListEvents() {
+    document.getElementById("addRecurringBtn").addEventListener("click", () => {
+      state.recurringForm = createRecurringForm();
+      saveState();
+      changePhase("recurringEdit");
+    });
+    document.getElementById("backToSettingsBtn").addEventListener("click", () => changePhase("settings"));
+  }
+
+  function bindRecurringEditEvents() {
+    document.getElementById("recurringName").addEventListener("input", (e) => {
+      state.recurringForm.name = e.target.value;
+      saveState();
+    });
+    document.getElementById("recurringMinutes").addEventListener("input", (e) => {
+      state.recurringForm.minutes = e.target.value;
+      saveState();
+    });
+    document.querySelectorAll("button[data-recurring-minute]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const minutes = String(btn.dataset.recurringMinute || "");
+        if (!minutes) return;
+        state.recurringForm.minutes = minutes;
+        const input = document.getElementById("recurringMinutes");
+        if (input) input.value = minutes;
+        saveState();
+      });
+    });
+    document.getElementById("recurringContent").addEventListener("input", (e) => {
+      state.recurringForm.content = e.target.value;
+      saveState();
+    });
+    document.querySelectorAll("input[name='recurringRepeatType']").forEach((radio) => {
+      radio.addEventListener("change", (e) => {
+        state.recurringForm.repeatType = normalizeRecurringRepeatType(e.target.value);
+        if (state.recurringForm.repeatType === "daily") state.recurringForm.days = [];
+        saveState();
+        renderRecurringEditScreen();
+      });
+    });
+    document.querySelectorAll("input[name='recurringDay']").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const selected = Array.from(document.querySelectorAll("input[name='recurringDay']:checked")).map((x) => x.value);
+        state.recurringForm.days = normalizeRepeatDays(selected);
+        saveState();
+      });
+    });
+    document.querySelectorAll("input[name='recurringGoogleSync']").forEach((radio) => {
+      radio.addEventListener("change", (e) => {
+        state.recurringForm.googleSync = e.target.value === "on";
+        saveState();
+      });
+    });
+
+    document.getElementById("saveRecurringBtn").addEventListener("click", saveRecurringPlan);
+    document.getElementById("deleteRecurringBtn")?.addEventListener("click", deleteRecurringPlanFromEdit);
+    document.getElementById("backToRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
+  }
+
+  function loadRecurringIntoForm(id) {
+    const plan = state.recurringPlans.find((p) => p.id === id);
+    if (!plan) return;
+    state.recurringForm = {
+      mode: "edit",
+      targetId: plan.id,
+      name: plan.name,
+      minutes: String(plan.plannedMinutes),
+      content: plan.content,
+      repeatType: normalizeRecurringRepeatType(plan.repeatType),
+      days: [...plan.days],
+      googleSync: Boolean(plan.googleSync)
+    };
+    saveState();
+  }
+
+  function deleteRecurringPlanFromEdit() {
+    const id = state.recurringForm.targetId;
+    const plan = state.recurringPlans.find((p) => p.id === id);
+    if (!id || !plan) return;
+    if (!window.confirm(`「${plan.name}」を削除しますか？`)) return;
+    state.recurringPlans = state.recurringPlans.filter((p) => p.id !== id);
+    state.recurringForm = createRecurringForm();
+    saveState();
+    changePhase("recurringList");
+  }
+
+  function saveRecurringPlan() {
+    const name = state.recurringForm.name.trim();
+    const minutes = sanitizeMinutes(state.recurringForm.minutes);
+    const content = state.recurringForm.content.trim();
+    const repeatType = normalizeRecurringRepeatType(state.recurringForm.repeatType);
+    const days = normalizeRepeatDays(state.recurringForm.days);
+    const googleSync = Boolean(state.recurringForm.googleSync);
+    if (!name) return alert("予定名を入力してください。");
+    if (!minutes) return alert("予定時間（分）を入力してください。");
+    if (!content) return alert("内容を入力してください。");
+    if (repeatType === "weekday" && days.length === 0) return alert("曜日を1つ以上選択してください。");
+
+    if (state.recurringForm.mode === "edit") {
+      const plan = state.recurringPlans.find((p) => p.id === state.recurringForm.targetId);
+      if (!plan) return;
+      plan.name = name;
+      plan.plannedMinutes = minutes;
+      plan.content = content;
+      plan.repeatType = repeatType;
+      plan.days = repeatType === "daily" ? [] : days;
+      plan.googleSync = googleSync;
+    } else {
+      state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync));
+    }
+
+    state.recurringForm = createRecurringForm();
+    saveState();
+    changePhase("recurringList");
+  }
+
+  function formatRecurringRepeat(plan) {
+    if (plan.repeatType === "daily") return "毎日";
+    const days = Array.isArray(plan.days) ? plan.days : [];
+    return days.map((d) => `${RECURRING_DAY_LABELS[d] || d}曜`).join("・");
+  }
+
+function renderHomeworkListScreen() {
+  renderScreen(`
+    <h2>宿題・課題一覧</h2>
+    <ul id="homeworkList" class="task-list recurring-list"></ul>
+    <div class="btn-row compact-stack">
+      <button id="addHomeworkBtn" class="btn-main" type="button">＋ 宿題・課題を追加</button>
+      <button id="backToHomeFromHomeworkBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  renderHomeworkListRows();
+  bindHomeworkListEvents();
+}
+
+function renderHomeworkListRows() {
+  const list = document.getElementById("homeworkList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  const pending = getSortedPendingHomeworkTasks();
+  if (pending.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "task-card compact-empty";
+    empty.innerHTML = "<p>未完了の宿題・課題はありません。</p>";
+    list.appendChild(empty);
+    return;
+  }
+
+  pending.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "task-card recurring-list-row";
+    li.setAttribute("role", "button");
+    li.setAttribute("tabindex", "0");
+    li.dataset.id = item.id;
+    li.innerHTML = `
+      <div class="recurring-list-main">${escapeHtml(item.name)}</div>
+      <div class="recurring-list-days">${escapeHtml(formatHomeworkDeadlineLabel(item.deadlineDate))}</div>
+      <div class="recurring-list-minutes"></div>
+      <div class="recurring-list-arrow" aria-hidden="true">＞</div>
+    `;
+    li.addEventListener("click", () => {
+      loadHomeworkIntoForm(item.id);
+      changePhase("homeworkEdit");
+    });
+    li.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      li.click();
+    });
+    list.appendChild(li);
+  });
+}
+
+function bindHomeworkListEvents() {
+  document.getElementById("addHomeworkBtn").addEventListener("click", () => {
+    state.homeworkForm = createHomeworkForm();
+    saveState();
+    changePhase("homeworkEdit");
+  });
+  document.getElementById("backToHomeFromHomeworkBtn").addEventListener("click", goHome);
+}
+
+function renderHomeworkEditScreen() {
+  const editing = state.homeworkForm.mode === "edit";
+  renderScreen(`
+    <h2>${editing ? "宿題・課題を編集" : "宿題・課題を追加"}</h2>
+    <div class="task-form-box">
+      <div class="form-stack">
+        <div><label for="homeworkName">課題名</label><input id="homeworkName" type="text" value="${escapeHtml(state.homeworkForm.name)}" maxlength="60" placeholder="例: 理科レポート" /></div>
+        <div><label for="homeworkDeadline">締切</label><input id="homeworkDeadline" type="date" value="${escapeHtml(state.homeworkForm.deadlineDate)}" /></div>
+        <div><label for="homeworkContent">内容</label><input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="例: 実験レポートを提出" /></div>
+        <div>
+          <label>Googleカレンダー同期</label>
+          <div class="option-group compact-options">
+            <label class="option-item"><input type="radio" name="homeworkGoogleSync" value="on" ${state.homeworkForm.googleSync ? "checked" : ""} /><span>ON</span></label>
+            <label class="option-item"><input type="radio" name="homeworkGoogleSync" value="off" ${!state.homeworkForm.googleSync ? "checked" : ""} /><span>OFF</span></label>
+          </div>
+        </div>
+        <div>
+          <label>完了状態</label>
+          <div class="option-group compact-options">
+            <label class="option-item"><input type="radio" name="homeworkDone" value="pending" ${!state.homeworkForm.done ? "checked" : ""} /><span>未完了</span></label>
+            <label class="option-item"><input type="radio" name="homeworkDone" value="done" ${state.homeworkForm.done ? "checked" : ""} /><span>完了</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="btn-row compact-stack">
+        <button id="saveHomeworkBtn" class="btn-main" type="button">保存</button>
+        ${editing ? '<button id="deleteHomeworkBtn" class="btn-danger" type="button">削除</button>' : ""}
+      </div>
+    </div>
+    <div class="btn-row compact-stack">
+      <button id="backToHomeworkListBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  bindHomeworkEditEvents();
+}
+
+function bindHomeworkEditEvents() {
+  document.getElementById("homeworkName").addEventListener("input", (e) => {
+    state.homeworkForm.name = e.target.value;
+    saveState();
+  });
+  document.getElementById("homeworkDeadline").addEventListener("change", (e) => {
+    state.homeworkForm.deadlineDate = normalizeDeadlineDate(e.target.value);
+    saveState();
+  });
+  document.getElementById("homeworkContent").addEventListener("input", (e) => {
+    state.homeworkForm.content = e.target.value;
+    saveState();
+  });
+  document.querySelectorAll("input[name='homeworkGoogleSync']").forEach((radio) => {
+    radio.addEventListener("change", (e) => {
+      state.homeworkForm.googleSync = e.target.value === "on";
+      saveState();
+    });
+  });
+  document.querySelectorAll("input[name='homeworkDone']").forEach((radio) => {
+    radio.addEventListener("change", (e) => {
+      state.homeworkForm.done = e.target.value === "done";
+      saveState();
+    });
+  });
+  document.getElementById("saveHomeworkBtn").addEventListener("click", saveHomeworkItem);
+  document.getElementById("deleteHomeworkBtn")?.addEventListener("click", deleteHomeworkItemFromEdit);
+  document.getElementById("backToHomeworkListBtn").addEventListener("click", () => changePhase("homeworkList"));
+}
+
+function loadHomeworkIntoForm(id) {
+  const item = state.homeworkTasks.find((x) => x.id === id);
+  if (!item) return;
+  state.homeworkForm = {
+    mode: "edit",
+    targetId: item.id,
+    name: item.name,
+    deadlineDate: item.deadlineDate,
+    content: item.content,
+    googleSync: Boolean(item.googleSync),
+    done: Boolean(item.done)
+  };
+  saveState();
+}
+
+function deleteHomeworkItemFromEdit() {
+  const id = state.homeworkForm.targetId;
+  const item = state.homeworkTasks.find((x) => x.id === id);
+  if (!id || !item) return;
+  if (!window.confirm(`「${item.name}」を削除しますか？`)) return;
+  state.homeworkTasks = state.homeworkTasks.filter((x) => x.id !== id);
+  state.homeworkForm = createHomeworkForm();
+  saveState();
+  changePhase("homeworkList");
+}
+
+function saveHomeworkItem() {
+  const name = state.homeworkForm.name.trim();
+  const deadlineDate = normalizeDeadlineDate(state.homeworkForm.deadlineDate);
+  const content = state.homeworkForm.content.trim();
+  const googleSync = Boolean(state.homeworkForm.googleSync);
+  const done = Boolean(state.homeworkForm.done);
+  if (!name) return alert("課題名を入力してください。");
+  if (!deadlineDate) return alert("締切を入力してください。");
+  if (!content) return alert("内容を入力してください。");
+
+  if (state.homeworkForm.mode === "edit") {
+    const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
+    if (!item) return;
+    item.name = name;
+    item.deadlineDate = deadlineDate;
+    item.content = content;
+    item.googleSync = googleSync;
+    item.done = done;
+  } else {
+    state.homeworkTasks.push({
+      id: crypto.randomUUID(),
+      name,
+      deadlineDate,
+      content,
+      googleSync,
+      done
+    });
+  }
+
+  state.homeworkForm = createHomeworkForm();
+  saveState();
+  changePhase("homeworkList");
 }
 
 function getHomeStatusIcon(task) {
@@ -1650,15 +2273,18 @@ function renderScreen(content) {
 }
 
 function renderTopNav() {
+  const showSettings = state.phase === "home";
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button">ホーム</button>
+      ${showSettings ? '<button id="openSettingsBtn" class="btn-mini btn-quiet" type="button">⚙️設定</button>' : ""}
     </div>
   `;
 }
 
 function bindTopNav() {
   document.getElementById("homeBtn")?.addEventListener("click", goHome);
+  document.getElementById("openSettingsBtn")?.addEventListener("click", () => changePhase("settings", false));
 }
 
 function goHome() {
@@ -1683,6 +2309,65 @@ function changePhase(next, pushHistory = true) {
   if (next !== "home") state.homeReturnPhase = next;
   saveState();
   render();
+}
+
+function syncRecurringPlansForPlanningIfNeeded() {
+  const targetDateKey = getPlanningTargetDateKey();
+  if (!targetDateKey) return;
+  if (state.recurringSyncDateKey === targetDateKey) return;
+
+  const weekdayKey = getWeekdayKeyByDateKey(targetDateKey);
+  const applicable = state.recurringPlans.filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey));
+  applicable.forEach((plan) => {
+    state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content));
+  });
+
+  state.recurringSyncDateKey = targetDateKey;
+  saveState();
+}
+
+function isRecurringPlanForWeekday(plan, weekdayKey) {
+  if (!plan) return false;
+  if (plan.repeatType === "daily") return true;
+  if (!Array.isArray(plan.days)) return false;
+  return plan.days.includes(weekdayKey);
+}
+
+function getSortedPendingHomeworkTasks() {
+  return state.homeworkTasks
+    .filter((item) => !item.done)
+    .slice()
+    .sort((a, b) => {
+      if (a.deadlineDate === b.deadlineDate) return a.name.localeCompare(b.name, "ja");
+      return a.deadlineDate.localeCompare(b.deadlineDate);
+    });
+}
+
+function getHomeworkPendingCount() {
+  return state.homeworkTasks.filter((item) => !item.done).length;
+}
+
+function formatHomeworkDeadlineLabel(dateKey) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "締切未設定";
+  return `${Number(m[2])}/${Number(m[3])}締切`;
+}
+
+function getPlanningTargetDateKey() {
+  const dt = getNowInJst();
+  if (state.planFor === "tomorrow") dt.setDate(dt.getDate() + 1);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function getWeekdayKeyByDateKey(dateKey) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "sun";
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  return keys[dt.getDay()] || "sun";
 }
 
 function findTask(id) {
