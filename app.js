@@ -1544,10 +1544,6 @@ function renderExecution() {
   renderScreen(`
     <h2>タスク実行</h2>
     <h2>今やることを選んでください</h2>
-    <div class="btn-row split compact-stack">
-      <button id="testSoundBtn" class="btn-sub" type="button">音をテスト</button>
-      <button id="testVibrateBtn" class="btn-sub" type="button">バイブをテスト</button>
-    </div>
     <div id="runArea"></div>
     <hr class="sep" />
     <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
@@ -1616,13 +1612,6 @@ function renderExecution() {
     runArea.innerHTML = `<p class="notice warn">未完了タスクはありません。</p>`;
   }
 
-  document.getElementById("testSoundBtn").addEventListener("click", async () => {
-    await ensureNotificationAudioReady(true);
-    playNotificationSound();
-  });
-  document.getElementById("testVibrateBtn").addEventListener("click", () => {
-    runVibrationFeedback();
-  });
   document.getElementById("finishTodayBtn").addEventListener("click", startTodayFinishFlow);
 }
 
