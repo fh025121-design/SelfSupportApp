@@ -1,7 +1,6 @@
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const DEFAULT_MINUTES = 30;
 const TASK_NAME_NEW = "__new__";
-const MINUTES_OTHER = "other";
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
 const DEPARTURE_CHECK_ITEMS = [
   "テーブルに物は残っていないか",
@@ -74,7 +73,7 @@ function createPlanningForm() {
     taskNameChoice: TASK_NAME_NEW,
     customTaskName: "",
     minutesChoice: String(DEFAULT_MINUTES),
-    customMinutes: "",
+    customMinutes: String(DEFAULT_MINUTES),
     content: ""
   };
 }
@@ -281,7 +280,7 @@ function normalizePlanningForm(raw) {
   base.taskNameChoice = typeof base.taskNameChoice === "string" ? base.taskNameChoice : TASK_NAME_NEW;
   base.customTaskName = String(base.customTaskName || "");
   base.minutesChoice = typeof base.minutesChoice === "string" ? base.minutesChoice : String(DEFAULT_MINUTES);
-  base.customMinutes = String(base.customMinutes || "");
+  base.customMinutes = String(base.customMinutes || base.minutesChoice || DEFAULT_MINUTES);
   base.content = String(base.content || "");
   return base;
 }
@@ -483,7 +482,7 @@ function getHomeActualText(task) {
 function renderPlanning() {
   const editingTask = state.planningForm.mode === "edit" ? findTask(state.planningForm.targetId) : null;
   const showCustomName = state.planningForm.taskNameChoice === TASK_NAME_NEW;
-  const showCustomMinutes = state.planningForm.minutesChoice === MINUTES_OTHER;
+  const minutesValue = getPlanningFormMinutes() || DEFAULT_MINUTES;
   const wakeParts = getTimeParts(state.planTimes.wakeUp, "06:30");
   const depParts = getTimeParts(state.planTimes.departure === "none" ? "07:30" : state.planTimes.departure, "07:30");
   const returnParts = getTimeParts(state.planTimes.returnHome === "none" ? "18:30" : state.planTimes.returnHome, "18:30");
@@ -544,8 +543,11 @@ function renderPlanning() {
       <div class="form-stack">
         <div><label for="taskNameSelect">タスク名</label><select id="taskNameSelect">${renderTaskNameOptions()}</select></div>
         <div id="customTaskNameWrap" class="${showCustomName ? "" : "hidden"}"><label for="customTaskName">新しいタスク名</label><input id="customTaskName" type="text" value="${escapeHtml(state.planningForm.customTaskName)}" maxlength="40" placeholder="例: 原田先生" /></div>
-        <div><label for="minutesSelect">予定時間</label><select id="minutesSelect">${renderMinuteOptions()}</select></div>
-        <div id="customMinutesWrap" class="${showCustomMinutes ? "" : "hidden"}"><label for="customMinutes">その他の分数</label><input id="customMinutes" type="number" min="1" max="600" value="${escapeHtml(state.planningForm.customMinutes)}" /></div>
+        <div>
+          <label>予定時間（分）</label>
+          <div class="btn-row" id="minutePresetRow">${renderMinutePresetButtons()}</div>
+        </div>
+        <div><label for="minutesInput">自分で入力（分）</label><input id="minutesInput" type="number" min="1" max="600" step="1" value="${escapeHtml(String(minutesValue))}" /></div>
         <div><label for="taskContent">内容</label><input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="例: 新中学問題集 p54" /></div>
       </div>
       <div class="btn-row compact-stack"><button id="saveTaskBtn" class="btn-sub" type="button">${editingTask ? "修正を保存" : "追加"}</button></div>
@@ -599,10 +601,8 @@ function renderTaskNameOptions() {
   return options.join("");
 }
 
-function renderMinuteOptions() {
-  const opts = MINUTE_OPTIONS.map((m) => `<option value="${m}" ${state.planningForm.minutesChoice === String(m) ? "selected" : ""}>${m}分</option>`);
-  opts.push(`<option value="${MINUTES_OTHER}" ${state.planningForm.minutesChoice === MINUTES_OTHER ? "selected" : ""}>その他</option>`);
-  return opts.join("");
+function renderMinutePresetButtons() {
+  return MINUTE_OPTIONS.map((m) => `<button type="button" class="btn-mini btn-quiet" data-minute-preset="${m}">${m}</button>`).join("");
 }
 
 function bindPlanningEvents() {
@@ -627,14 +627,21 @@ function bindPlanningEvents() {
     state.planningForm.customTaskName = e.target.value;
     saveState();
   });
-  document.getElementById("minutesSelect").addEventListener("change", (e) => {
+  document.getElementById("minutesInput").addEventListener("input", (e) => {
+    state.planningForm.customMinutes = e.target.value;
     state.planningForm.minutesChoice = e.target.value;
     saveState();
-    renderPlanning();
   });
-  document.getElementById("customMinutes")?.addEventListener("input", (e) => {
-    state.planningForm.customMinutes = e.target.value;
-    saveState();
+  document.querySelectorAll("button[data-minute-preset]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const minutes = btn.dataset.minutePreset;
+      if (!minutes) return;
+      state.planningForm.customMinutes = minutes;
+      state.planningForm.minutesChoice = minutes;
+      const input = document.getElementById("minutesInput");
+      if (input) input.value = minutes;
+      saveState();
+    });
   });
   document.getElementById("taskContent").addEventListener("input", (e) => {
     state.planningForm.content = e.target.value;
@@ -709,14 +716,13 @@ function loadTaskIntoForm(taskId) {
   if (!task || task.status === "done") return;
 
   const knownName = getSortedTaskNameOptions().find((o) => o.name === task.name);
-  const knownMinutes = MINUTE_OPTIONS.includes(task.plannedMinutes);
   state.planningForm = {
     mode: "edit",
     targetId: task.id,
     taskNameChoice: knownName ? task.name : TASK_NAME_NEW,
     customTaskName: knownName ? "" : task.name,
-    minutesChoice: knownMinutes ? String(task.plannedMinutes) : MINUTES_OTHER,
-    customMinutes: knownMinutes ? "" : String(task.plannedMinutes),
+    minutesChoice: String(task.plannedMinutes),
+    customMinutes: String(task.plannedMinutes),
     content: task.content
   };
 }
@@ -1596,8 +1602,7 @@ function getPlanningFormTaskName() {
 }
 
 function getPlanningFormMinutes() {
-  if (state.planningForm.minutesChoice === MINUTES_OTHER) return sanitizeMinutes(state.planningForm.customMinutes);
-  return sanitizeMinutes(state.planningForm.minutesChoice);
+  return sanitizeMinutes(state.planningForm.customMinutes || state.planningForm.minutesChoice);
 }
 
 function getSortedTaskNameOptions() {

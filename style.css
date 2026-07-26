@@ -207,6 +207,21 @@ button {
   font-weight: 800;
 }
 
+#minutePresetRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#minutePresetRow .btn-mini {
+  width: 1cm;
+  min-width: 1cm;
+  padding: 6px 0;
+  text-align: center;
+}
+
 .btn-main {
   background: var(--accent);
   color: #fff;
