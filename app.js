@@ -1300,11 +1300,54 @@ function renderSettings() {
       <button id="logoutBtn" class="btn-danger" type="button">ログアウト</button>
       <button id="backToHomeFromSettingsBtn" class="btn-quiet" type="button">戻る</button>
     </div>
+    <div class="btn-row compact-stack">
+      <button id="devAlertTestBtn" class="btn-sub" type="button">🔔 アラートテスト</button>
+    </div>
   `);
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
   document.getElementById("logoutBtn").addEventListener("click", performLogout);
   document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
+  document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
+}
+
+function runDevAlertTest() {
+  let runningTask = getRunningTask();
+
+  if (!runningTask) {
+    const firstPending = state.tasks.find((t) => t.status === "pending");
+    if (!firstPending) {
+      alert("アラートテストには未完了タスクが1件以上必要です。まず予定を作成してください。");
+      return;
+    }
+    startTask(firstPending.id);
+    runningTask = getRunningTask();
+  } else if (state.running.isPaused) {
+    resumePausedTask();
+    runningTask = getRunningTask();
+  }
+
+  if (!runningTask) {
+    alert("アラートテストを開始できませんでした。タスク状態を確認してください。");
+    return;
+  }
+
+  const elapsed = getRunningElapsedSeconds();
+  state.running.alertAtSeconds = elapsed;
+  state.running.lastAlertTarget = null;
+  saveState();
+
+  if (state.phase !== "execution") {
+    changePhase("execution", false);
+  } else {
+    renderExecution();
+  }
+
+  // Development-only: call the same production alert path directly (no timer wait).
+  checkOverrunNotification(elapsed);
+  if (state.phase === "execution") {
+    renderExecution();
+  }
 }
 
 function renderRecurringListScreen() {
