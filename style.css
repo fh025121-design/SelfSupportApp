@@ -309,6 +309,14 @@ button {
   gap: 6px;
 }
 
+.status-chip {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #6b7280;
+}
+
 .compact-stack {
   margin-top: 10px;
 }
@@ -346,6 +354,18 @@ button {
 
 .confirm-box p {
   margin: 0 0 8px;
+}
+
+.checklist-card {
+  background: #fff7f2;
+  border-color: #ffd7cf;
+}
+
+.checklist-card p {
+  margin: 0;
+  font-size: 1.08rem;
+  color: #7a331f;
+  font-weight: 800;
 }
 
 .elapsed {
