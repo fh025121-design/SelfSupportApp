@@ -195,6 +195,8 @@ function createRecurringForm() {
     name: "",
     minutes: String(DEFAULT_MINUTES),
     content: "",
+    belongings: [],
+    belongingInput: "",
     repeatType: "daily",
     days: [],
     googleSync: false
@@ -240,6 +242,7 @@ function createDepartureCheckState() {
   return {
     remainingIndices: [],
     completedIndices: [],
+    belongingChecked: {},
     lastAutoPromptAt: 0,
     done: false
   };
@@ -272,6 +275,8 @@ function createInitialState(dateKey, tasks = []) {
     recurringPlans: [],
     recurringForm: createRecurringForm(),
     recurringSyncDateKey: null,
+    dailySpecialBelongingsByDate: {},
+    planningDailyBelongingInput: "",
     homeworkTasks: [],
     homeworkForm: createHomeworkForm(),
     confirmedPlan: null,
@@ -286,12 +291,13 @@ function createInitialState(dateKey, tasks = []) {
   };
 }
 
-function createRecurringPlan(name, plannedMinutes, content, repeatType, days, googleSync) {
+function createRecurringPlan(name, plannedMinutes, content, repeatType, days, googleSync, belongings = []) {
   return {
     id: crypto.randomUUID(),
     name,
     plannedMinutes,
     content,
+    belongings: normalizeBelongingsList(belongings),
     repeatType: normalizeRecurringRepeatType(repeatType),
     days: normalizeRepeatDays(days),
     googleSync: Boolean(googleSync)
@@ -378,6 +384,34 @@ function normalizeDeadlineDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
+function normalizeBelongingName(value) {
+  return String(value || "").trim();
+}
+
+function normalizeBelongingsList(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  raw.forEach((item) => {
+    const name = normalizeBelongingName(item);
+    if (!name) return;
+    if (!out.includes(name)) out.push(name);
+  });
+  return out;
+}
+
+function normalizeDailySpecialBelongingsMap(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  Object.entries(raw).forEach(([dateKey, list]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+    const normalized = normalizeBelongingsList(list);
+    if (normalized.length > 0) {
+      out[dateKey] = normalized;
+    }
+  });
+  return out;
+}
+
 function normalizeRecurringPlan(item) {
   const normalizedDays = normalizeRecurringDays(item?.days);
   const migratedType = normalizedDays.includes("daily") ? "daily" : "weekday";
@@ -386,6 +420,7 @@ function normalizeRecurringPlan(item) {
     name: String(item?.name || "").trim(),
     plannedMinutes: sanitizeMinutes(item?.plannedMinutes || DEFAULT_MINUTES),
     content: String(item?.content || "").trim(),
+    belongings: normalizeBelongingsList(item?.belongings),
     repeatType: normalizeRecurringRepeatType(item?.repeatType || migratedType),
     days: normalizeRepeatDays(normalizedDays),
     googleSync: Boolean(item?.googleSync)
@@ -478,6 +513,8 @@ function loadState() {
     safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
     safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
     safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
+    safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
+    safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
     safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
     safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
     safe.running = { ...createRunningState(), ...(safe.running || {}) };
@@ -555,6 +592,8 @@ function normalizeRecurringForm(raw) {
   base.name = String(base.name || "");
   base.minutes = String(base.minutes || DEFAULT_MINUTES);
   base.content = String(base.content || "");
+  base.belongings = normalizeBelongingsList(base.belongings);
+  base.belongingInput = String(base.belongingInput || "");
   base.repeatType = normalizeRecurringRepeatType(base.repeatType);
   base.days = normalizeRepeatDays(base.days);
   if (base.repeatType === "daily") base.days = [];
@@ -858,6 +897,8 @@ function normalizeLoadedState(rawState) {
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
   safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
+  safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
+  safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
   safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
   safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
   safe.running = { ...createRunningState(), ...(safe.running || {}) };
@@ -1442,6 +1483,14 @@ function renderRecurringEditScreen() {
         <div><label for="recurringMinutes">自分で入力（分）</label><input id="recurringMinutes" type="number" min="1" max="600" step="1" value="${escapeHtml(String(sanitizeMinutes(state.recurringForm.minutes) || DEFAULT_MINUTES))}" /></div>
         <div><label for="recurringContent">内容</label><input id="recurringContent" type="text" value="${escapeHtml(state.recurringForm.content)}" maxlength="120" placeholder="例: 宿題 p54" /></div>
         <div>
+          <label>持ち物</label>
+          <div class="btn-row split compact-stack">
+            <input id="recurringBelongingInput" type="text" value="${escapeHtml(state.recurringForm.belongingInput)}" maxlength="60" placeholder="例: グローブ" />
+            <button id="addRecurringBelongingBtn" class="btn-sub" type="button">追加</button>
+          </div>
+          <ul id="recurringBelongingList" class="confirm-list">${renderRecurringBelongingList()}</ul>
+        </div>
+        <div>
           <label>繰り返し</label>
           <div class="option-group compact-options">
             <label class="option-item"><input type="radio" name="recurringRepeatType" value="daily" ${state.recurringForm.repeatType === "daily" ? "checked" : ""} /><span>毎日</span></label>
@@ -1483,6 +1532,15 @@ function renderRecurringDayOptions() {
     const checked = state.recurringForm.days.includes(key) ? "checked" : "";
     return `<label class="option-item recurring-day-item"><input type="checkbox" name="recurringDay" value="${key}" ${checked} /><span>${RECURRING_DAY_LABELS[key]}</span></label>`;
   }).join("");
+}
+
+function renderRecurringBelongingList() {
+  if (!Array.isArray(state.recurringForm.belongings) || state.recurringForm.belongings.length === 0) {
+    return "<li>持ち物は未登録です。</li>";
+  }
+  return state.recurringForm.belongings
+    .map((name, idx) => `<li>${escapeHtml(name)} <button type="button" class="btn-mini btn-danger" data-recurring-belonging-remove="${idx}">削除</button></li>`)
+    .join("");
 }
 
 function renderRecurringListRows() {
@@ -1555,6 +1613,29 @@ function renderRecurringListRows() {
       state.recurringForm.content = e.target.value;
       saveState();
     });
+    document.getElementById("recurringBelongingInput")?.addEventListener("input", (e) => {
+      state.recurringForm.belongingInput = e.target.value;
+      saveState();
+    });
+    document.getElementById("addRecurringBelongingBtn")?.addEventListener("click", () => {
+      const name = normalizeBelongingName(state.recurringForm.belongingInput);
+      if (!name) return;
+      if (!state.recurringForm.belongings.includes(name)) {
+        state.recurringForm.belongings.push(name);
+      }
+      state.recurringForm.belongingInput = "";
+      saveState();
+      renderRecurringEditScreen();
+    });
+    document.querySelectorAll("button[data-recurring-belonging-remove]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.dataset.recurringBelongingRemove);
+        if (!Number.isInteger(idx) || idx < 0) return;
+        state.recurringForm.belongings = state.recurringForm.belongings.filter((_, i) => i !== idx);
+        saveState();
+        renderRecurringEditScreen();
+      });
+    });
     document.querySelectorAll("input[name='recurringRepeatType']").forEach((radio) => {
       radio.addEventListener("change", (e) => {
         state.recurringForm.repeatType = normalizeRecurringRepeatType(e.target.value);
@@ -1591,6 +1672,8 @@ function renderRecurringListRows() {
       name: plan.name,
       minutes: String(plan.plannedMinutes),
       content: plan.content,
+      belongings: [...(plan.belongings || [])],
+      belongingInput: "",
       repeatType: normalizeRecurringRepeatType(plan.repeatType),
       days: [...plan.days],
       googleSync: Boolean(plan.googleSync)
@@ -1613,6 +1696,7 @@ function renderRecurringListRows() {
     const name = state.recurringForm.name.trim();
     const minutes = sanitizeMinutes(state.recurringForm.minutes);
     const content = state.recurringForm.content.trim();
+    const belongings = normalizeBelongingsList(state.recurringForm.belongings);
     const repeatType = normalizeRecurringRepeatType(state.recurringForm.repeatType);
     const days = normalizeRepeatDays(state.recurringForm.days);
     const googleSync = Boolean(state.recurringForm.googleSync);
@@ -1627,11 +1711,12 @@ function renderRecurringListRows() {
       plan.name = name;
       plan.plannedMinutes = minutes;
       plan.content = content;
+      plan.belongings = belongings;
       plan.repeatType = repeatType;
       plan.days = repeatType === "daily" ? [] : days;
       plan.googleSync = googleSync;
     } else {
-      state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync));
+      state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync, belongings));
     }
 
     state.recurringForm = createRecurringForm();
@@ -1860,6 +1945,9 @@ function renderPlanning() {
   const depParts = getTimeParts(state.planTimes.departure === "none" ? "07:30" : state.planTimes.departure, "07:30");
   const returnParts = getTimeParts(state.planTimes.returnHome === "none" ? "18:30" : state.planTimes.returnHome, "18:30");
   const studyParts = getTimeParts(state.planTimes.studyStart, "19:00");
+  const belongingsDateKey = getPlanningTargetDateKey();
+  const belongingsSummary = getBelongingsSummaryForDate(belongingsDateKey);
+  const belongingsLabel = state.planFor === "tomorrow" ? "明日" : "今日";
 
   renderScreen(`
     <h2>予定入力</h2>
@@ -1905,6 +1993,18 @@ function renderPlanning() {
           <span>:</span>
           <select id="studyStartMinute">${renderMinute5Options(studyParts.minute)}</select>
         </div>
+      </div>
+    </div>
+
+    <h3>🎒 ${belongingsLabel}の持ち物</h3>
+    <div class="task-card">
+      <p class="helper">【自動】</p>
+      <ul class="confirm-list">${renderPlanningAutoBelongings(belongingsSummary.autoItems)}</ul>
+      <p class="helper">【今日だけ追加】</p>
+      <ul class="confirm-list">${renderPlanningManualBelongings(belongingsSummary.manualItems)}</ul>
+      <div class="btn-row split compact-stack">
+        <input id="dailyBelongingInput" type="text" value="${escapeHtml(state.planningDailyBelongingInput || "")}" maxlength="60" placeholder="例: 絵の具セット" />
+        <button id="addDailyBelongingBtn" class="btn-sub" type="button">追加</button>
       </div>
     </div>
 
@@ -1983,6 +2083,7 @@ function bindPlanningEvents() {
     radio.addEventListener("change", (e) => {
       state.planFor = e.target.value === "today" ? "today" : "tomorrow";
       saveState();
+      renderPlanning();
     });
   });
 
@@ -2019,6 +2120,30 @@ function bindPlanningEvents() {
   document.getElementById("taskContent").addEventListener("input", (e) => {
     state.planningForm.content = e.target.value;
     saveState();
+  });
+
+  document.getElementById("dailyBelongingInput")?.addEventListener("input", (e) => {
+    state.planningDailyBelongingInput = e.target.value;
+    saveState();
+  });
+  document.getElementById("addDailyBelongingBtn")?.addEventListener("click", () => {
+    const name = normalizeBelongingName(state.planningDailyBelongingInput);
+    if (!name) return;
+    const dateKey = getPlanningTargetDateKey();
+    addDailySpecialBelonging(dateKey, name);
+    state.planningDailyBelongingInput = "";
+    saveState();
+    renderPlanning();
+  });
+  document.querySelectorAll("button[data-daily-belonging-name]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const encoded = String(btn.dataset.dailyBelongingName || "");
+      const name = decodeURIComponent(encoded);
+      const dateKey = getPlanningTargetDateKey();
+      removeDailySpecialBelonging(dateKey, name);
+      saveState();
+      renderPlanning();
+    });
   });
 
   document.getElementById("saveTaskBtn").addEventListener("click", savePlanningTask);
@@ -2133,11 +2258,13 @@ function onGoToPlanConfirm() {
 
 function renderPlanConfirm() {
   const report = buildPlanReportText();
+  const targetDateKey = getPlanningTargetDateKey();
+  const confirmBelongings = buildConfirmBelongingsSummary(targetDateKey);
   renderScreen(`
     <h2>${state.planFor === "today" ? "今日" : "明日"}の予定を確認してください</h2>
     <div class="summary confirm-summary">
       <p>起床　　　　${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
-      <p>出発　　　　${formatTimeForDisplay(state.planTimes.departure)}</p>
+      <p class="confirm-time-row"><span>出発　　　　${formatTimeForDisplay(state.planTimes.departure)}</span>${renderConfirmBelongingsSide(confirmBelongings)}</p>
       <p>帰宅　　　　${formatTimeForDisplay(state.planTimes.returnHome)}</p>
       <p>勉強開始　　${formatTimeForDisplay(state.planTimes.studyStart)}</p>
     </div>
@@ -2168,6 +2295,31 @@ function renderPlanConfirm() {
     const ok = await copyToClipboard(report);
     document.getElementById("copyPlanConfirmMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
   });
+}
+
+function buildConfirmBelongingsSummary(dateKey) {
+  const summary = getBelongingsSummaryForDate(dateKey);
+  const autoText = Array.isArray(summary.autoItems)
+    ? summary.autoItems
+      .map((item) => (item.tagText ? `${item.name}（${item.tagText}）` : item.name))
+      .join(" / ")
+    : "";
+  const manualText = Array.isArray(summary.manualItems) ? summary.manualItems.join(" / ") : "";
+  return { autoText, manualText };
+}
+
+function renderConfirmBelongingsSide(confirmBelongings) {
+  const parts = [];
+  if (confirmBelongings.autoText) {
+    parts.push(`<span class="confirm-side-chip">自動持ち物: ${escapeHtml(confirmBelongings.autoText)}</span>`);
+  }
+  if (confirmBelongings.manualText) {
+    parts.push(`<span class="confirm-side-chip">今日だけ追加: ${escapeHtml(confirmBelongings.manualText)}</span>`);
+  }
+  if (parts.length === 0) {
+    return "";
+  }
+  return `<span class="confirm-time-side">${parts.join("")}</span>`;
 }
 
 function confirmPlan() {
@@ -2249,6 +2401,8 @@ function buildPlanReportText() {
   lines.push(`出発　　　　${formatTimeForDisplay(state.planTimes.departure)}`);
   lines.push(`帰宅　　　　${formatTimeForDisplay(state.planTimes.returnHome)}`);
   lines.push(`勉強開始　　${formatTimeForDisplay(state.planTimes.studyStart)}`);
+  const belongingsLines = buildPlanReportBelongingsLines(getPlanningTargetDateKey());
+  belongingsLines.forEach((line) => lines.push(line));
   lines.push("");
   lines.push(`合計時間　${formatMinutesAsHourMinute(sumPlanned())}`);
   lines.push("");
@@ -2259,6 +2413,24 @@ function buildPlanReportText() {
   });
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
+}
+
+function buildPlanReportBelongingsLines(dateKey) {
+  const summary = getBelongingsSummaryForDate(dateKey);
+  const autoText = Array.isArray(summary.autoItems)
+    ? summary.autoItems
+      .map((item) => (item.tagText ? `${item.name}（${item.tagText}）` : item.name))
+      .join(" / ")
+    : "";
+  const manualText = Array.isArray(summary.manualItems) ? summary.manualItems.join(" / ") : "";
+  const lines = [];
+  if (autoText) {
+    lines.push(`自動持ち物　${autoText}`);
+  }
+  if (manualText) {
+    lines.push(`追加持ち物　${manualText}`);
+  }
+  return lines;
 }
 
 function renderPlanReport() {
@@ -3157,9 +3329,20 @@ function renderDepartureCheck() {
     const status = Array.isArray(state.departureCheck.completedIndices) && state.departureCheck.completedIndices.includes(itemIndex) ? "済" : "未";
     return `<li>${item} <span class="status-chip">${status}</span></li>`;
   }).join("");
+  const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
+  const belongingsRows = renderDepartureBelongingsChecklist(belongingsSummary.mergedItems);
 
   renderScreen(`
     <h2>出発前チェック</h2>
+    <div class="task-card">
+      <p>📅 今日の予定</p>
+      <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
+      <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
+    </div>
+    <div class="task-card">
+      <p>🎒 今日の持ち物</p>
+      <ul class="confirm-list">${belongingsRows}</ul>
+    </div>
     <div class="task-card checklist-card">
       <p>${currentIndex + 1}. ${DEPARTURE_CHECK_ITEMS[currentIndex]}</p>
       <div class="btn-row split compact-stack">
@@ -3186,6 +3369,14 @@ function renderDepartureCheck() {
     saveState();
     renderDepartureCheck();
   });
+  document.querySelectorAll("input[data-belonging-check]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const name = decodeURIComponent(String(input.dataset.belongingCheck || ""));
+      if (!name) return;
+      state.departureCheck.belongingChecked[name] = Boolean(input.checked);
+      saveState();
+    });
+  });
   document.getElementById("backHomeFromDepartureBtn").addEventListener("click", goHome);
 }
 
@@ -3208,10 +3399,92 @@ function normalizeDepartureCheckState(raw) {
   base.completedIndices = Array.isArray(base.completedIndices)
     ? Array.from(new Set(base.completedIndices.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < DEPARTURE_CHECK_ITEMS.length)))
     : [];
+  base.belongingChecked = base.belongingChecked && typeof base.belongingChecked === "object" ? { ...base.belongingChecked } : {};
   base.lastAutoPromptAt = typeof base.lastAutoPromptAt === "number" ? base.lastAutoPromptAt : 0;
   base.done = Boolean(base.done) && base.remainingIndices.length === 0;
   delete base.index;
   return base;
+}
+
+function renderPlanningAutoBelongings(autoItems) {
+  if (!Array.isArray(autoItems) || autoItems.length === 0) {
+    return "<li>自動取得はありません。</li>";
+  }
+  return autoItems
+    .map((item) => `<li>${escapeHtml(item.name)}${item.tagText ? `（${escapeHtml(item.tagText)}）` : ""}</li>`)
+    .join("");
+}
+
+function renderPlanningManualBelongings(manualItems) {
+  if (!Array.isArray(manualItems) || manualItems.length === 0) {
+    return "<li>追加はありません。</li>";
+  }
+  return manualItems
+    .map((name) => `<li>${escapeHtml(name)} <button type=\"button\" class=\"btn-mini btn-danger\" data-daily-belonging-name=\"${encodeURIComponent(name)}\">削除</button></li>`)
+    .join("");
+}
+
+function addDailySpecialBelonging(dateKey, name) {
+  const key = String(dateKey || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+  const current = normalizeBelongingsList(state.dailySpecialBelongingsByDate[key] || []);
+  if (!current.includes(name)) current.push(name);
+  state.dailySpecialBelongingsByDate[key] = current;
+}
+
+function removeDailySpecialBelonging(dateKey, name) {
+  const key = String(dateKey || "");
+  if (!state.dailySpecialBelongingsByDate[key]) return;
+  state.dailySpecialBelongingsByDate[key] = normalizeBelongingsList(state.dailySpecialBelongingsByDate[key]).filter((item) => item !== name);
+  if (state.dailySpecialBelongingsByDate[key].length === 0) {
+    delete state.dailySpecialBelongingsByDate[key];
+  }
+}
+
+function getBelongingsSummaryForDate(dateKey) {
+  const autoMap = new Map();
+  const addAuto = (name, tag) => {
+    const normalizedName = normalizeBelongingName(name);
+    if (!normalizedName) return;
+    const key = normalizedName.toLowerCase();
+    const current = autoMap.get(key) || { name: normalizedName, tags: new Set() };
+    if (tag) current.tags.add(tag);
+    autoMap.set(key, current);
+  };
+
+  const dueHomework = state.homeworkTasks.filter((item) => item.deadlineDate === dateKey);
+  dueHomework.forEach((item) => addAuto(item.name, "提出"));
+
+  const weekdayKey = getWeekdayKeyByDateKey(dateKey);
+  state.recurringPlans
+    .filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey))
+    .forEach((plan) => {
+      normalizeBelongingsList(plan.belongings).forEach((name) => addAuto(name, plan.name));
+    });
+
+  const autoItems = Array.from(autoMap.values()).map((item) => ({
+    name: item.name,
+    tagText: Array.from(item.tags).join("・")
+  }));
+
+  const autoNameSet = new Set(autoItems.map((item) => item.name.toLowerCase()));
+  const manualRaw = normalizeBelongingsList(state.dailySpecialBelongingsByDate?.[dateKey] || []);
+  const manualItems = manualRaw.filter((name) => !autoNameSet.has(name.toLowerCase()));
+  const mergedItems = Array.from(new Set([...autoItems.map((item) => item.name), ...manualItems]));
+  return { autoItems, manualItems, mergedItems };
+}
+
+function renderDepartureBelongingsChecklist(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "<li>持ち物はありません。</li>";
+  }
+  const checkedMap = state.departureCheck.belongingChecked || {};
+  return items
+    .map((name) => {
+      const checked = checkedMap[name] ? "checked" : "";
+      return `<li><label><input type=\"checkbox\" data-belonging-check=\"${encodeURIComponent(name)}\" ${checked} /> ${escapeHtml(name)}</label></li>`;
+    })
+    .join("");
 }
 
 function normalizeDepartureCheckQueue() {
@@ -3297,7 +3570,8 @@ function renderScreen(content) {
 
 function renderTopNav() {
   const showSettings = state.phase === "home";
-  const primaryLabel = state.phase === "home" ? "ログアウト" : "ホーム";
+  const isPlanReport = state.phase === "planReport";
+  const primaryLabel = state.phase === "home" ? "ログアウト" : isPlanReport ? "戻る" : "ホーム";
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button">${primaryLabel}</button>
@@ -3310,6 +3584,8 @@ function bindTopNav() {
   const homeBtn = document.getElementById("homeBtn");
   if (state.phase === "home") {
     homeBtn?.addEventListener("click", performLogout);
+  } else if (state.phase === "planReport") {
+    homeBtn?.addEventListener("click", goBack);
   } else {
     homeBtn?.addEventListener("click", goHome);
   }

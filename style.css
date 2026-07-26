@@ -609,6 +609,31 @@ button {
   margin: 4px 0;
 }
 
+.confirm-time-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.confirm-time-side {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 0.88rem;
+  color: var(--sub);
+  font-weight: 700;
+  text-align: right;
+}
+
+.confirm-side-chip {
+  display: block;
+  color: #b91c1c;
+  font-weight: 900;
+}
+
 .confirm-list {
   list-style: decimal;
   padding-left: 20px;
