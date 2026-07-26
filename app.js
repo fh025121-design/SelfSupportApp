@@ -57,6 +57,10 @@ const todayLabel = document.getElementById("todayLabel");
 let tickTimer = null;
 let phaseRefreshTimer = null;
 let notificationAudioCtx = null;
+let secondAlertTimeoutId = null;
+let secondAlertScheduledKey = "";
+let secondAlertActiveOscillators = [];
+let secondAlertActiveGains = [];
 let authReady = false;
 let authErrorMessage = "";
 let authLoading = false;
@@ -83,6 +87,9 @@ let devAlertTestConfig = {
   toneType: "type1",
   durationSeconds: 5
 };
+
+const SECOND_ALERT_DELAY_MS = 30 * 1000;
+const SECOND_ALERT_DURATION_SECONDS = 10;
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
@@ -1431,16 +1438,20 @@ function runDevAlertTest() {
 }
 
 function resetDailyStatus() {
-  const ok = window.confirm("当日の予定の進行状態、完了事項、出発前チェック、帰宅後チェックのステータスを初期化しますか？");
+  const ok = window.confirm("当日の状態をクリーンにします。今日の予定・完了タスクを削除し、出発前/帰宅後チェックを初期化します。宿題・課題（締切管理）は削除しません。実行しますか？");
   if (!ok) return;
 
-  state.tasks = state.tasks.map((task) => ({
-    ...task,
-    status: "pending",
-    actualSeconds: null,
-    memo: "",
-    closeAction: ""
-  }));
+  state.tasks = [];
+  state.planTimes = {
+    wakeUp: "",
+    departure: "",
+    returnHome: "",
+    studyStart: ""
+  };
+  state.planningForm = createPlanningForm();
+  state.recurringSyncDateKey = null;
+  delete state.dailySpecialBelongingsByDate[state.dateKey];
+  state.planningDailyBelongingInput = "";
   state.running = createRunningState();
   state.review = createReviewState();
   state.departureCheck = createDepartureCheckState();
@@ -2593,11 +2604,13 @@ function bindExecutionButtons() {
   }
 
   document.getElementById("stopNotifyBtn")?.addEventListener("click", () => {
+    cancelSecondAlertFollowup();
     state.running.alerting = false;
     saveState();
     renderExecution();
   });
   document.getElementById("setOneMinuteTestBtn")?.addEventListener("click", () => {
+    cancelSecondAlertFollowup();
     const task = getRunningTask();
     if (task) task.plannedMinutes = 1;
     state.running.alertAtSeconds = 60;
@@ -2621,6 +2634,7 @@ function bindExecutionButtons() {
 }
 
 function extendRunningTask(min) {
+  cancelSecondAlertFollowup();
   state.running.alertAtSeconds = (state.running.alertAtSeconds || 0) + min * 60;
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
@@ -2641,6 +2655,7 @@ function checkOverrunNotification(elapsed) {
     state.running.lastAlertTarget = target;
     console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
     triggerAlertFeedback();
+    scheduleSecondAlertFollowup();
   }
 }
 
@@ -2872,6 +2887,97 @@ function triggerAlertFeedback(stage = "first", options = {}) {
   runVibrationFeedback(stage);
 }
 
+function getCurrentAlertScheduleKey() {
+  const task = getRunningTask();
+  if (!task) return "";
+  const target = Number(state.running?.alertAtSeconds);
+  if (!Number.isFinite(target)) return "";
+  return `${task.id}:${target}`;
+}
+
+function clearSecondAlertReservation() {
+  if (secondAlertTimeoutId != null) {
+    clearTimeout(secondAlertTimeoutId);
+    secondAlertTimeoutId = null;
+  }
+  secondAlertScheduledKey = "";
+}
+
+function stopSecondAlertSoundNow() {
+  secondAlertActiveOscillators.forEach((osc) => {
+    try {
+      osc.stop();
+    } catch (_) {
+      // Oscillator may already be stopped.
+    }
+  });
+  secondAlertActiveOscillators = [];
+  secondAlertActiveGains.forEach((gain) => {
+    try {
+      gain.disconnect();
+    } catch (_) {
+      // Gain may already be disconnected.
+    }
+  });
+  secondAlertActiveGains = [];
+}
+
+function cancelSecondAlertFollowup() {
+  clearSecondAlertReservation();
+  stopSecondAlertSoundNow();
+}
+
+function scheduleSecondAlertFollowup() {
+  const scheduleKey = getCurrentAlertScheduleKey();
+  if (!scheduleKey) return;
+  if (secondAlertTimeoutId != null && secondAlertScheduledKey === scheduleKey) return;
+
+  cancelSecondAlertFollowup();
+  secondAlertScheduledKey = scheduleKey;
+  secondAlertTimeoutId = setTimeout(() => {
+    secondAlertTimeoutId = null;
+    if (getCurrentAlertScheduleKey() !== scheduleKey) return;
+    triggerSecondAlertFeedback();
+  }, SECOND_ALERT_DELAY_MS);
+}
+
+function triggerSecondAlertFeedback() {
+  if (!notificationAudioCtx || notificationAudioCtx.state !== "running") return;
+
+  stopSecondAlertSoundNow();
+  const now = notificationAudioCtx.currentTime;
+  const interval = 0.08;
+  const beepLength = 0.045;
+  const cycle = 0.9;
+  const gainPeak = 0.55;
+
+  for (let t = 0; t < SECOND_ALERT_DURATION_SECONDS; t += interval) {
+    const cyclePos = t % cycle;
+    const inBurst = cyclePos < 0.32 || (cyclePos >= 0.45 && cyclePos < 0.77);
+    if (!inBurst) continue;
+
+    const start = now + t;
+    const stop = Math.min(now + SECOND_ALERT_DURATION_SECONDS, start + beepLength);
+    const osc = notificationAudioCtx.createOscillator();
+    const gain = notificationAudioCtx.createGain();
+
+    osc.type = "square";
+    osc.frequency.setValueAtTime(Math.floor(t / interval) % 2 === 0 ? 1320 : 1760, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(gainPeak, start + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, stop);
+    osc.connect(gain);
+    gain.connect(notificationAudioCtx.destination);
+    osc.start(start);
+    osc.stop(stop);
+
+    secondAlertActiveOscillators.push(osc);
+    secondAlertActiveGains.push(gain);
+  }
+
+  runVibrationFeedback("second");
+}
+
 function startAudioWarmupFromUserAction() {
   ensureNotificationAudioReady(true).catch((error) => {
     console.error("[Audio] Warmup failed", error);
@@ -2881,6 +2987,7 @@ function startAudioWarmupFromUserAction() {
 function startTask(taskId) {
   const task = findTask(taskId);
   if (!task || task.status !== "pending") return;
+  cancelSecondAlertFollowup();
   startAudioWarmupFromUserAction();
   state.running = {
     taskId,
@@ -2913,6 +3020,7 @@ function getRunningElapsedSeconds() {
 function interruptRunningTask() {
   const task = getRunningTask();
   if (!task) return;
+  cancelSecondAlertFollowup();
   const elapsed = Math.max(1, getRunningElapsedSeconds());
   task.actualSeconds = elapsed;
   state.running.baseSeconds = elapsed;
@@ -2937,6 +3045,7 @@ function resumePausedTask() {
 function finalizeTaskCompletion() {
   const task = getRunningTask();
   if (!task) return;
+  cancelSecondAlertFollowup();
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
   state.running = createRunningState();
@@ -2952,6 +3061,7 @@ function formatElapsedSmart(sec) {
 }
 
 function startTodayFinishFlow() {
+  cancelSecondAlertFollowup();
   const runningTask = getRunningTask();
   if (runningTask) runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   state.running = createRunningState();
