@@ -5,6 +5,14 @@ import {
   signInWithEmailAndPassword,
   signOut
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCQjvGNR-C_vSTlihkuFn9WIx31eQrjS_Q",
@@ -17,8 +25,10 @@ const firebaseConfig = {
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
 
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
+const STORAGE_OWNER_UID_KEY = "selfSupportAppTrialStateV3_ownerUid";
 const DEFAULT_MINUTES = 30;
 const TASK_NAME_NEW = "__new__";
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
@@ -50,15 +60,57 @@ let authReady = false;
 let authErrorMessage = "";
 let authLoading = false;
 let currentUser = null;
+let syncStatus = "syncing";
+let syncReady = false;
+let syncOwnerUid = null;
+let syncUnsubscribe = null;
+let syncSaveTimer = null;
+let syncSaveInFlight = false;
+let isApplyingRemoteState = false;
+let lastSavedStateHash = "";
+let localBootHasValidData = false;
+let localBootRawExisted = false;
+let localBootOwnerUid = "";
+
+const SYNC_SCHEMA_VERSION = 1;
+const SYNC_SAVE_DEBOUNCE_MS = 700;
 
 const state = loadState();
 render();
 
-onAuthStateChanged(auth, (user) => {
-  currentUser = user;
+window.addEventListener("online", () => {
+  if (syncStatus === "offline") {
+    syncStatus = syncReady ? "synced" : "syncing";
+    render();
+  }
+});
+
+window.addEventListener("offline", () => {
+  syncStatus = "offline";
+  render();
+});
+
+onAuthStateChanged(auth, async (user) => {
   authReady = true;
   authLoading = false;
   authErrorMessage = "";
+
+  if (!user) {
+    currentUser = null;
+    teardownSyncSession();
+    render();
+    return;
+  }
+
+  currentUser = user;
+  try {
+    await startSyncSessionForUser(user);
+  } catch (error) {
+    console.error("[Sync] Failed to initialize sync session", error);
+    syncStatus = navigator.onLine ? "error" : "offline";
+    syncOwnerUid = user.uid;
+    syncReady = true;
+  }
   render();
 });
 
@@ -366,10 +418,13 @@ function loadState() {
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
+    localBootRawExisted = Boolean(raw);
+    localBootOwnerUid = String(localStorage.getItem(STORAGE_OWNER_UID_KEY) || "");
     if (!raw) return createInitialState(todayKey);
 
     const parsed = JSON.parse(raw);
     if (!parsed) return createInitialState(todayKey);
+    localBootHasValidData = true;
 
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildCarryoverTasks(parsed));
@@ -427,6 +482,7 @@ function loadState() {
 
     return safe;
   } catch (_) {
+    localBootHasValidData = false;
     return createInitialState(todayKey);
   }
 }
@@ -502,8 +558,14 @@ function normalizeHomeworkForm(raw) {
   return base;
 }
 
-function saveState() {
+function saveState(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (currentUser?.uid) {
+    localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
+  }
+
+  if (options.skipRemote) return;
+  scheduleFirestoreSave();
 }
 
 function render() {
@@ -511,6 +573,7 @@ function render() {
 
   if (!authReady) return renderAuthChecking();
   if (!currentUser) return renderLogin();
+  if (!syncReady) return renderAuthSyncing();
 
   enforcePriorityPhase();
 
@@ -535,6 +598,15 @@ function render() {
   if (state.phase === "homeworkList") return renderHomeworkListScreen();
   if (state.phase === "homeworkEdit") return renderHomeworkEditScreen();
   return renderResult();
+}
+
+function renderAuthSyncing() {
+  app.innerHTML = `
+    <div class="task-card auth-card">
+      <h2>同期中</h2>
+      <p class="helper">データを読み込んでいます。</p>
+    </div>
+  `;
 }
 
 function renderAuthChecking() {
@@ -611,6 +683,273 @@ function mapAuthError(error) {
   return "ログインに失敗しました。入力内容を確認してください。";
 }
 
+function getAppStateDocRef(uid) {
+  return doc(db, "users", uid, "appState", "main");
+}
+
+function hashStateObject(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+function cloneStateForSync() {
+  return JSON.parse(JSON.stringify(state));
+}
+
+function replaceState(nextState) {
+  Object.keys(state).forEach((key) => {
+    delete state[key];
+  });
+  Object.assign(state, nextState);
+}
+
+function isValidSyncPayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  if (!payload.state || typeof payload.state !== "object") return false;
+  return true;
+}
+
+function hasMeaningfulState(candidate) {
+  if (!candidate || typeof candidate !== "object") return false;
+  if (Array.isArray(candidate.tasks) && candidate.tasks.length > 0) return true;
+  if (Array.isArray(candidate.recurringPlans) && candidate.recurringPlans.length > 0) return true;
+  if (Array.isArray(candidate.homeworkTasks) && candidate.homeworkTasks.length > 0) return true;
+  if (candidate.confirmedPlan) return true;
+  if (candidate.goPressedAt) return true;
+  return false;
+}
+
+function normalizeLoadedState(rawState) {
+  const todayKey = getTodayKeyJst();
+  const fallback = createInitialState(todayKey);
+  if (!rawState || typeof rawState !== "object") return fallback;
+
+  const parsed = rawState;
+  if (parsed.dateKey !== todayKey) {
+    const nextState = createInitialState(todayKey, buildCarryoverTasks(parsed));
+    nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
+    nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
+    if (parsed.goPressedAt && !parsed.dayClosed) {
+      nextState.previousDayPending = {
+        dateKey: parsed.dateKey,
+        summary: buildPastDaySummary(parsed)
+      };
+      nextState.phase = "previousDayEnd";
+    }
+    return nextState;
+  }
+
+  const safe = {
+    ...fallback,
+    ...parsed,
+    dateKey: todayKey
+  };
+
+  safe.phase = [
+    "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
+    "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit"
+  ].includes(safe.phase) ? safe.phase : "planning";
+  safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
+  safe.homeReturnPhase = [
+    "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd"
+  ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
+  safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
+  safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
+  safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map(normalizeTask) : [];
+  safe.planningForm = normalizePlanningForm(safe.planningForm);
+  safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
+  safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
+  safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
+  safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
+  safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
+  safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
+  safe.running = { ...createRunningState(), ...(safe.running || {}) };
+  safe.review = { ...createReviewState(), ...(safe.review || {}) };
+  safe.departureCheck = { ...createDepartureCheckState(), ...(safe.departureCheck || {}) };
+  safe.returnCheck = {
+    ...createReturnCheckState(),
+    ...(safe.returnCheck || {}),
+    answers: {
+      ...createReturnCheckState().answers,
+      ...((safe.returnCheck && safe.returnCheck.answers) || {})
+    }
+  };
+  safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
+  safe.previousDayPending = safe.previousDayPending || null;
+  safe.dayClosed = Boolean(safe.dayClosed);
+  safe.lastResultReportText = String(safe.lastResultReportText || "");
+
+  return safe;
+}
+
+function teardownSyncSession() {
+  if (syncUnsubscribe) {
+    syncUnsubscribe();
+    syncUnsubscribe = null;
+  }
+  if (syncSaveTimer) {
+    clearTimeout(syncSaveTimer);
+    syncSaveTimer = null;
+  }
+  syncSaveInFlight = false;
+  syncReady = false;
+  syncOwnerUid = null;
+  isApplyingRemoteState = false;
+  lastSavedStateHash = "";
+  syncStatus = "syncing";
+}
+
+async function startSyncSessionForUser(user) {
+  const uid = String(user?.uid || "");
+  if (!uid) return;
+
+  teardownSyncSession();
+  syncOwnerUid = uid;
+  syncStatus = navigator.onLine ? "syncing" : "offline";
+  render();
+
+  const appStateRef = getAppStateDocRef(uid);
+  const snapshot = await getDoc(appStateRef);
+
+  if (snapshot.exists() && isValidSyncPayload(snapshot.data())) {
+    const payload = snapshot.data();
+    const remoteState = normalizeLoadedState(payload.state);
+    isApplyingRemoteState = true;
+    replaceState(remoteState);
+    saveState({ skipRemote: true });
+    isApplyingRemoteState = false;
+    lastSavedStateHash = hashStateObject(payload.state);
+  } else {
+    const canSeedFromLocal = localBootHasValidData && (!localBootOwnerUid || localBootOwnerUid === uid);
+    const seedState = canSeedFromLocal ? cloneStateForSync() : createInitialState(getTodayKeyJst());
+    await setDoc(appStateRef, {
+      state: seedState,
+      schemaVersion: SYNC_SCHEMA_VERSION,
+      updatedBy: uid,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    lastSavedStateHash = hashStateObject(seedState);
+    if (!canSeedFromLocal && !localBootRawExisted) {
+      isApplyingRemoteState = true;
+      replaceState(seedState);
+      saveState({ skipRemote: true });
+      isApplyingRemoteState = false;
+    }
+  }
+
+  syncUnsubscribe = onSnapshot(appStateRef, (docSnap) => {
+    if (!docSnap.exists()) return;
+    const payload = docSnap.data();
+    if (!isValidSyncPayload(payload)) return;
+    const remoteHash = hashStateObject(payload.state);
+    if (!remoteHash) return;
+
+    if (payload.updatedBy === uid && remoteHash === lastSavedStateHash) {
+      if (syncStatus !== "offline") syncStatus = "synced";
+      return;
+    }
+
+    const currentHash = hashStateObject(state);
+    if (remoteHash === currentHash) {
+      lastSavedStateHash = remoteHash;
+      if (syncStatus !== "offline") syncStatus = "synced";
+      return;
+    }
+
+    const nextState = normalizeLoadedState(payload.state);
+    isApplyingRemoteState = true;
+    replaceState(nextState);
+    saveState({ skipRemote: true });
+    isApplyingRemoteState = false;
+    lastSavedStateHash = remoteHash;
+    if (syncStatus !== "offline") syncStatus = "synced";
+    render();
+  }, (error) => {
+    console.error("[Sync] Snapshot listener error", error);
+    syncStatus = navigator.onLine ? "error" : "offline";
+    render();
+  });
+
+  syncReady = true;
+  syncStatus = navigator.onLine ? "synced" : "offline";
+  localStorage.setItem(STORAGE_OWNER_UID_KEY, uid);
+}
+
+function shouldSyncToFirestore() {
+  if (isApplyingRemoteState) return false;
+  if (!currentUser?.uid) return false;
+  if (!syncReady) return false;
+  if (syncOwnerUid !== currentUser.uid) return false;
+  return true;
+}
+
+function scheduleFirestoreSave() {
+  if (!shouldSyncToFirestore()) return;
+
+  const nextHash = hashStateObject(state);
+  if (!nextHash || nextHash === lastSavedStateHash) return;
+
+  if (syncSaveTimer) {
+    clearTimeout(syncSaveTimer);
+  }
+
+  if (syncStatus !== "offline") {
+    syncStatus = "saving";
+    render();
+  }
+
+  syncSaveTimer = setTimeout(() => {
+    syncSaveTimer = null;
+    flushFirestoreSave(nextHash);
+  }, SYNC_SAVE_DEBOUNCE_MS);
+}
+
+async function flushFirestoreSave(expectedHash) {
+  if (!shouldSyncToFirestore()) return;
+  if (syncSaveInFlight) return;
+  if (!expectedHash || expectedHash === lastSavedStateHash) return;
+
+  syncSaveInFlight = true;
+  const uid = currentUser.uid;
+  try {
+    const payloadState = cloneStateForSync();
+    const latestHash = hashStateObject(payloadState);
+    if (!latestHash || latestHash === lastSavedStateHash) {
+      syncSaveInFlight = false;
+      if (syncStatus !== "offline") syncStatus = "synced";
+      return;
+    }
+
+    await setDoc(getAppStateDocRef(uid), {
+      state: payloadState,
+      schemaVersion: SYNC_SCHEMA_VERSION,
+      updatedBy: uid,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+
+    lastSavedStateHash = latestHash;
+    if (syncStatus !== "offline") syncStatus = "synced";
+  } catch (error) {
+    console.error("[Sync] Firestore save failed", error);
+    syncStatus = navigator.onLine ? "error" : "offline";
+  } finally {
+    syncSaveInFlight = false;
+    render();
+  }
+}
+
+function getSyncStatusText() {
+  if (!currentUser) return "";
+  if (!syncReady) return "同期中";
+  if (syncStatus === "saving") return "保存中";
+  if (syncStatus === "offline") return "オフライン";
+  if (syncStatus === "error") return "同期エラー";
+  return "同期済み";
+}
+
 function enforcePriorityPhase() {
   if (state.previousDayPending) {
     state.phase = "previousDayEnd";
@@ -677,9 +1016,11 @@ function renderHome() {
   const departureWarn = needsDepartureCheck();
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
+  const syncText = getSyncStatusText();
 
   renderScreen(`
     <h2>今日の予定</h2>
+    <p class="sync-indicator">同期: ${escapeHtml(syncText)}</p>
     ${departureWarn ? '<p class="notice warn">出発前チェック未完了</p>' : ""}
     <div class="home-overview">
       <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>

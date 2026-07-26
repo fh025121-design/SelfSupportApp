@@ -62,6 +62,13 @@ h1 {
   font-weight: 700;
 }
 
+.sync-indicator {
+  margin: 0 0 10px;
+  font-size: 0.86rem;
+  color: var(--muted);
+  text-align: right;
+}
+
 .panel {
   background: var(--card);
   border-radius: var(--radius);

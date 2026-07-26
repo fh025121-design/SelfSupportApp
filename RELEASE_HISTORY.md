@@ -1,5 +1,13 @@
 # Release History
 
+## 2026-07-26 20:17 JST
+- Cloud Firestore SDKを追加し、Authentication維持のまま users/{uid}/appState/main へアプリ状態を同期する基盤を実装。
+- localStorage即時保存を維持しつつ、ログイン済み時のみFirestoreへ700msデバウンス保存する2段保存に対応。
+- ログイン直後の初回同期を追加し、Firestore優先復元・Firestore空時のlocalStorage初期登録・両方空時の初期状態登録を実装。
+- onSnapshotのリアルタイム監視を追加し、別端末更新の反映、受信時の検証・localStorage保存・再描画を実装。
+- 無限保存ループ防止（ハッシュ比較・skipRemote保存・同一状態書き込み抑止）と、ログアウト時の監視解除/タイマー解除を実装。
+- ホーム画面に小さい同期状態表示（同期中/保存中/同期済み/オフライン/同期エラー）を追加。
+
 ## 2026-07-26 19:57 JST
 - Firebase Authentication（Email/Password）を導入し、ログイン状態監視（onAuthStateChanged）で画面表示を切り替えるよう変更。
 - 未ログイン時はログイン画面（メールアドレス・パスワード・ログインボタン）のみ表示、ログイン済み時のみ既存アプリ画面を表示する制御を追加。
