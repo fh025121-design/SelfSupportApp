@@ -56,6 +56,7 @@ const todayLabel = document.getElementById("todayLabel");
 
 let tickTimer = null;
 let notificationAudioCtx = null;
+let audioUnlockHandlersBound = false;
 let overrunSecondAlertTimer = null;
 let overrunAlertReactionObserved = false;
 let overrunAlertSequenceId = 0;
@@ -86,6 +87,7 @@ const FIRST_ALERT_TOTAL_MS = 5_000;
 const SECOND_ALERT_TOTAL_MS = 10_000;
 
 const state = loadState();
+bindAudioUnlockHandlers();
 render();
 
 window.addEventListener("online", () => {
@@ -2312,16 +2314,45 @@ async function ensureNotificationAudioReady(fromUserAction = false) {
     }
   }
 
-  if (notificationAudioCtx.state === "suspended" && fromUserAction) {
+  if (notificationAudioCtx.state === "suspended") {
     try {
       await notificationAudioCtx.resume();
-      console.log("[Audio] AudioContext resumed by user action");
+      if (fromUserAction) {
+        console.log("[Audio] AudioContext resumed by user action");
+      } else {
+        console.log("[Audio] AudioContext resumed");
+      }
     } catch (error) {
-      console.error("[Audio] Failed to resume AudioContext", error);
+      if (fromUserAction) {
+        console.error("[Audio] Failed to resume AudioContext", error);
+      }
     }
   }
 
   return notificationAudioCtx;
+}
+
+function bindAudioUnlockHandlers() {
+  if (audioUnlockHandlersBound) return;
+  audioUnlockHandlersBound = true;
+
+  const events = ["pointerdown", "touchstart", "mousedown", "keydown"];
+  const unlock = () => {
+    ensureNotificationAudioReady(true).then((ctx) => {
+      if (!ctx || ctx.state !== "running") return;
+      events.forEach((eventName) => {
+        window.removeEventListener(eventName, unlock, true);
+      });
+      audioUnlockHandlersBound = false;
+      console.log("[Audio] Global unlock handlers detached after successful resume.");
+    }).catch((error) => {
+      console.error("[Audio] Global unlock failed", error);
+    });
+  };
+
+  events.forEach((eventName) => {
+    window.addEventListener(eventName, unlock, { capture: true, passive: true });
+  });
 }
 
 function playAlertToneBurst(startAtSec, frequencyHz, durationSec, gainPeak, oscType = "square") {
@@ -2436,26 +2467,28 @@ function runVibrationFeedback(stage = "first") {
 }
 
 function triggerAlertFeedback(stage = "first") {
-  clearOverrunAlertFeedback();
-  if (stage === "second") {
-    playSecondAlertPattern();
-    runVibrationFeedback("second");
-    return;
-  }
+  ensureNotificationAudioReady(false).finally(() => {
+    clearOverrunAlertFeedback();
+    if (stage === "second") {
+      playSecondAlertPattern();
+      runVibrationFeedback("second");
+      return;
+    }
 
-  overrunAlertReactionObserved = false;
-  const sequenceId = ++overrunAlertSequenceId;
-  playFirstAlertPattern();
-  runVibrationFeedback("first");
-  overrunSecondAlertTimer = window.setTimeout(() => {
-    overrunSecondAlertTimer = null;
-    if (sequenceId !== overrunAlertSequenceId) return;
-    if (overrunAlertReactionObserved) return;
-    if (!getRunningTask() || state.running.isPaused) return;
-    if (!state.running.alertAtSeconds) return;
-    if (getRunningElapsedSeconds() < state.running.alertAtSeconds) return;
-    triggerAlertFeedback("second");
-  }, FIRST_ALERT_DELAY_TO_ESCALATE_MS);
+    overrunAlertReactionObserved = false;
+    const sequenceId = ++overrunAlertSequenceId;
+    playFirstAlertPattern();
+    runVibrationFeedback("first");
+    overrunSecondAlertTimer = window.setTimeout(() => {
+      overrunSecondAlertTimer = null;
+      if (sequenceId !== overrunAlertSequenceId) return;
+      if (overrunAlertReactionObserved) return;
+      if (!getRunningTask() || state.running.isPaused) return;
+      if (!state.running.alertAtSeconds) return;
+      if (getRunningElapsedSeconds() < state.running.alertAtSeconds) return;
+      triggerAlertFeedback("second");
+    }, FIRST_ALERT_DELAY_TO_ESCALATE_MS);
+  });
 }
 
 function acknowledgeOverrunAlertReaction() {
