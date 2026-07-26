@@ -347,6 +347,81 @@ button {
   padding: 8px 2px;
 }
 
+.result-summary-compact {
+  padding: 10px 12px;
+}
+
+.result-inline-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.result-inline-row p {
+  margin: 4px 0;
+}
+
+.result-card-compact {
+  padding: 10px;
+}
+
+.result-item-head {
+  margin: 0;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.result-item-meta {
+  margin: 4px 0 0;
+  font-weight: 700;
+  color: var(--sub);
+}
+
+.result-item-content {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.result-report-box {
+  min-height: 140px;
+  white-space: normal;
+}
+
+.result-report-lines p {
+  margin: 4px 0;
+}
+
+.result-report-gap {
+  height: 10px;
+}
+
+.result-report-task {
+  margin-top: 10px;
+}
+
+.result-report-task:first-of-type {
+  margin-top: 0;
+}
+
+.task-content-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 4px;
+}
+
+.task-content-label {
+  white-space: nowrap;
+}
+
+.task-content-text {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.6;
+}
+
 .timer-box {
   border: 2px solid #ffd7cf;
   border-radius: 14px;

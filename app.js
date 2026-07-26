@@ -509,7 +509,7 @@ function renderPlanning() {
       <div>
         <label>出発時間</label>
         <div class="time-select-row">
-          <select id="departureMode"><option value="time" ${state.planTimes.departure !== "none" ? "selected" : ""}>時刻を設定</option><option value="none" ${state.planTimes.departure === "none" ? "selected" : ""}>外出なし</option></select>
+          <select id="departureMode"><option value="time" ${state.planTimes.departure !== "none" ? "selected" : ""}>時刻設定</option><option value="none" ${state.planTimes.departure === "none" ? "selected" : ""}>外出なし</option></select>
           <select id="departureHour" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderHourOptions(depParts.hour)}</select>
           <span>:</span>
           <select id="departureMinute" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderMinute5Options(depParts.minute)}</select>
@@ -518,7 +518,7 @@ function renderPlanning() {
       <div>
         <label>帰宅時間</label>
         <div class="time-select-row">
-          <select id="returnHomeMode"><option value="time" ${state.planTimes.returnHome !== "none" ? "selected" : ""}>時刻を設定</option><option value="none" ${state.planTimes.returnHome === "none" ? "selected" : ""}>帰宅なし</option></select>
+          <select id="returnHomeMode"><option value="time" ${state.planTimes.returnHome !== "none" ? "selected" : ""}>時刻設定</option><option value="none" ${state.planTimes.returnHome === "none" ? "selected" : ""}>帰宅なし</option></select>
           <select id="returnHomeHour" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderHourOptions(returnParts.hour)}</select>
           <span>:</span>
           <select id="returnHomeMinute" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderMinute5Options(returnParts.minute)}</select>
@@ -570,7 +570,7 @@ function renderTaskListForPlanning() {
     return;
   }
 
-  state.tasks.forEach((task, idx) => {
+  state.tasks.forEach((task) => {
     const done = task.status === "done";
     const li = document.createElement("li");
     li.className = `task-card compact-task-row${state.planningForm.targetId === task.id ? " editing-row" : ""}`;
@@ -774,7 +774,7 @@ function renderPlanConfirm() {
     li.className = "confirm-item";
     li.innerHTML = `
       <p class="confirm-head">${escapeHtml(task.name)}　${task.plannedMinutes}分</p>
-      <p class="confirm-body">内容：${escapeHtml(task.content)}</p>
+      <div class="task-content-row confirm-body"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content)}</span></div>
     `;
     list.appendChild(li);
   });
@@ -894,7 +894,7 @@ function renderExecution() {
         <p class="helper">実行中</p>
         <h3>${escapeHtml(runningTask.name)}</h3>
         <p>予定時間: ${runningTask.plannedMinutes}分</p>
-        <p class="helper">内容: ${escapeHtml(runningTask.content)}</p>
+        <div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(runningTask.content)}</span></div>
         <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
         <div class="btn-row split compact-stack">
           <button id="completeBtn" class="btn-ok" type="button">完了</button>
@@ -923,7 +923,7 @@ function renderExecution() {
       li.dataset.taskId = task.id;
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", "0");
-      li.innerHTML = `<h3>${escapeHtml(task.name)}</h3><p>予定時間: ${task.plannedMinutes}分</p><p class="helper">内容: ${escapeHtml(task.content)}</p>`;
+      li.innerHTML = `<h3>${escapeHtml(task.name)}</h3><p>予定時間: ${task.plannedMinutes}分</p><div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content)}</span></div>`;
       list.appendChild(li);
     });
     list.querySelectorAll("li[data-task-id]").forEach((card) => {
@@ -1155,7 +1155,7 @@ function renderReview() {
     <div class="task-card">
       <h3>${escapeHtml(task.name)}</h3>
       <p>予定時間: ${task.plannedMinutes}分</p>
-      <p>内容: ${escapeHtml(task.content)}</p>
+      <div class="task-content-row"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content)}</span></div>
     </div>
     <div class="btn-row triple compact-stack">
       <button id="doTodayBtn" class="btn-main" type="button">今日やる</button>
@@ -1289,44 +1289,47 @@ function renderResult() {
   const deferred = state.tasks.filter((t) => t.status === "deferred");
   const discarded = state.tasks.filter((t) => t.status === "discarded");
   const unfinished = state.tasks.length - done.length;
+  const totalPlanned = sumPlanned();
   const totalActual = sumActualMinutes();
   const report = buildResultReportText(done, deferred, discarded, unfinished, totalActual);
 
   renderScreen(`
-    <h2>今日の結果</h2>
-    <div class="summary">
-      <p>今日の予定タスク数: ${state.tasks.length}件</p>
-      <p>完了数: ${done.length}件</p>
-      <p>未完了数: ${unfinished}件</p>
-      <p>合計予定時間: ${sumPlanned()}分</p>
-      <p>合計実績時間: ${totalActual}分</p>
-    </div>
-    <h3>各タスク</h3>
-    <ul class="result-list" id="taskResultList"></ul>
     <h3>保護者への報告文</h3>
-    <div id="resultReportText" class="report-box"></div>
+    <div id="resultReportText" class="report-box result-report-box"></div>
     <div class="btn-row compact-stack">
       <button id="copyResultBtn" class="btn-main" type="button">報告文をコピー</button>
       <button id="endDayBtn" class="btn-danger" type="button">1日の終了へ</button>
     </div>
     <p id="copyResultMessage" class="helper"></p>
+
+    <div class="summary result-summary-compact">
+      <div class="result-inline-row">
+        <p>完了数 ${done.length}件</p>
+        <p>未完了数 ${unfinished}件</p>
+      </div>
+      <div class="result-inline-row">
+        <p>予定 ${formatMinutesAsHourMinute(totalPlanned)}</p>
+        <p>実績 ${formatMinutesAsHourMinute(totalActual)}</p>
+      </div>
+    </div>
+    <h3>保護者への報告事項（各タスク）</h3>
+    <ul class="result-list" id="taskResultList"></ul>
   `);
 
   const list = document.getElementById("taskResultList");
   state.tasks.forEach((task) => {
     const li = document.createElement("li");
-    li.className = "result-card";
+    li.className = "result-card result-card-compact";
     li.innerHTML = `
-      <h3>${escapeHtml(task.name)}</h3>
-      <p>予定時間: ${task.plannedMinutes}分</p>
-      <p>実績時間: ${secondsToMinutes(task.actualSeconds)}分</p>
-      <p>状態: ${getTaskStatusLabel(task.status)}</p>
-      ${(task.status === "deferred" || task.status === "discarded") ? `<p>メモ: ${escapeHtml(task.memo || "(未入力)")}</p>` : ""}
+      <p class="result-item-head">項目：${escapeHtml(task.name)}（${getTaskStatusLabel(task.status)}）</p>
+      <p class="result-item-meta">${escapeHtml(task.name)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分</p>
+      <div class="task-content-row result-item-content"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content || "(未入力)")}</span></div>
+      ${(task.status === "deferred" || task.status === "discarded") ? `<p class="result-item-content">メモ：${escapeHtml(task.memo || "(未入力)")}</p>` : ""}
     `;
     list.appendChild(li);
   });
 
-  document.getElementById("resultReportText").textContent = report;
+  document.getElementById("resultReportText").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
   document.getElementById("copyResultBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(report);
     document.getElementById("copyResultMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
@@ -1335,13 +1338,12 @@ function renderResult() {
 }
 
 function renderDayEnd() {
-  const report = buildResultReportText(
-    state.tasks.filter((t) => t.status === "done"),
-    state.tasks.filter((t) => t.status === "deferred"),
-    state.tasks.filter((t) => t.status === "discarded"),
-    state.tasks.filter((t) => t.status !== "done").length,
-    sumActualMinutes()
-  );
+  const done = state.tasks.filter((t) => t.status === "done");
+  const deferred = state.tasks.filter((t) => t.status === "deferred");
+  const discarded = state.tasks.filter((t) => t.status === "discarded");
+  const unfinished = state.tasks.filter((t) => t.status !== "done").length;
+  const totalActual = sumActualMinutes();
+  const report = buildResultReportText(done, deferred, discarded, unfinished, totalActual);
 
   renderScreen(`
     <h2>1日の終了</h2>
@@ -1353,7 +1355,7 @@ function renderDayEnd() {
     <p id="dayEndMsg" class="helper"></p>
   `);
 
-  document.getElementById("dayEndReport").textContent = report;
+  document.getElementById("dayEndReport").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
   document.getElementById("copyDayEndBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(report);
     document.getElementById("dayEndMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
@@ -1370,43 +1372,78 @@ function renderDayEnd() {
 }
 
 function buildResultReportText(done, deferred, discarded, unfinished, totalActual) {
+  const now = getNowInJst();
+  const title = `${now.getMonth() + 1}月${now.getDate()}日結果`;
+  const unfinishedNames = state.tasks
+    .filter((task) => task.status !== "done")
+    .map((task) => task.name)
+    .join("、");
+  const unfinishedLine = unfinishedNames
+    ? `未完了：${unfinished}件（${unfinishedNames}）`
+    : `未完了：${unfinished}件`;
   const lines = [
-    "【今日の結果】",
+    `【${title}】`,
     "",
     `予定：${state.tasks.length}件`,
     `完了：${done.length}件`,
-    `未完了：${unfinished}件`,
+    unfinishedLine,
     "",
-    `予定時間：${sumPlanned()}分`,
-    `実績時間：${totalActual}分`,
+    `予定時間：${formatMinutesAsHourMinute(sumPlanned())}`,
+    `実績時間：${formatMinutesAsHourMinute(totalActual)}`,
     ""
   ];
 
-  if (done.length > 0) {
-    lines.push("完了");
-    done.forEach((task) => lines.push(`・${task.name}　予定${task.plannedMinutes}分／実績${secondsToMinutes(task.actualSeconds)}分`));
+  state.tasks.forEach((task, index) => {
+    const contentWrapPrefix = `\t${"　".repeat(3)}`;
+    lines.push(`${toCircledNumber(index + 1)}\t${task.name}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分`);
+    const contentParts = splitReportContent(task.content || "(未入力)", 30);
+    lines.push(`\t内容：${contentParts[0] || "(未入力)"}`);
+    for (let i = 1; i < contentParts.length; i += 1) {
+      lines.push(`${contentWrapPrefix}${contentParts[i]}`);
+    }
+    if (task.status === "deferred" || task.status === "discarded") {
+      lines.push(`メモ：${task.memo || "(未入力)"}`);
+    }
     lines.push("");
-  }
-
-  if (deferred.length > 0) {
-    lines.push("明日に回す");
-    deferred.forEach((task) => {
-      lines.push(`・${task.name}`);
-      lines.push(`　理由：${task.memo || "(未入力)"}`);
-    });
-    lines.push("");
-  }
-
-  if (discarded.length > 0) {
-    lines.push("不要になった");
-    discarded.forEach((task) => {
-      lines.push(`・${task.name}`);
-      lines.push(`　理由：${task.memo || "(未入力)"}`);
-    });
-  }
+  });
 
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
+}
+
+function buildResultReportHtml(doneCount, unfinishedCount, totalActual) {
+  const now = getNowInJst();
+  const title = `${now.getMonth() + 1}月${now.getDate()}日結果`;
+  const unfinishedNames = state.tasks
+    .filter((task) => task.status !== "done")
+    .map((task) => task.name)
+    .join("、");
+  const unfinishedLine = unfinishedNames
+    ? `未完了：${unfinishedCount}件（${unfinishedNames}）`
+    : `未完了：${unfinishedCount}件`;
+
+  const lines = [
+    `<p>【${escapeHtml(title)}】</p>`,
+    `<p>予定：${state.tasks.length}件</p>`,
+    `<p>完了：${doneCount}件</p>`,
+    `<p>${escapeHtml(unfinishedLine)}</p>`,
+    `<p>予定時間：${formatMinutesAsHourMinute(sumPlanned())}</p>`,
+    `<p>実績時間：${formatMinutesAsHourMinute(totalActual)}</p>`
+  ];
+
+  lines.push('<div class="result-report-gap"></div>');
+
+  state.tasks.forEach((task, index) => {
+    lines.push('<div class="result-report-task">');
+    lines.push(`<p>${toCircledNumber(index + 1)} ${escapeHtml(task.name)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分</p>`);
+    lines.push(`<div class="task-content-row"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content || "(未入力)")}</span></div>`);
+    if (task.status === "deferred" || task.status === "discarded") {
+      lines.push(`<div class="task-content-row"><span class="task-content-label">メモ：</span><span class="task-content-text">${escapeHtml(task.memo || "(未入力)")}</span></div>`);
+    }
+    lines.push('</div>');
+  });
+
+  return `<div class="result-report-lines">${lines.join("")}</div>`;
 }
 
 function renderDepartureCheck() {
@@ -1554,6 +1591,43 @@ function sumActualMinutes() {
 function secondsToMinutes(sec) {
   if (typeof sec !== "number" || sec <= 0) return 0;
   return Math.ceil(sec / 60);
+}
+
+function formatMinutesAsHourMinute(minutes) {
+  const total = sanitizeMinutesOrZero(minutes);
+  const hour = Math.floor(total / 60);
+  const minute = total % 60;
+  return `${hour}時間${minute}分`;
+}
+
+function toCircledNumber(n) {
+  const circled = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳"];
+  if (n >= 1 && n <= circled.length) return circled[n - 1];
+  return `${n}`;
+}
+
+function splitReportContent(text, chunkSize) {
+  const source = String(text || "").trim();
+  if (!source) return ["(未入力)"];
+  const out = [];
+  const minTail = Math.max(8, Math.floor(chunkSize * 0.4));
+  for (let i = 0; i < source.length;) {
+    const remaining = source.length - i;
+    if (remaining <= chunkSize) {
+      out.push(source.slice(i));
+      break;
+    }
+
+    let take = chunkSize;
+    if (remaining - chunkSize < minTail) {
+      // Avoid a tiny trailing line by balancing the current/next lines.
+      take = Math.ceil(remaining / 2);
+    }
+
+    out.push(source.slice(i, i + take));
+    i += take;
+  }
+  return out;
 }
 
 function sanitizeMinutes(value) {
