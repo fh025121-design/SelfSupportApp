@@ -3,11 +3,6 @@ const DEFAULT_MINUTES = 30;
 const TASK_NAME_NEW = "__new__";
 const MINUTES_OTHER = "other";
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
-const TASK_KIND_OPTIONS = [
-  { value: "study", label: "学習" },
-  { value: "outing", label: "外出予定" },
-  { value: "medicine", label: "薬" }
-];
 const DEPARTURE_CHECK_ITEMS = [
   "テーブルに物は残っていないか",
   "コンタクトのゴミを捨てたか",
@@ -80,9 +75,7 @@ function createPlanningForm() {
     customTaskName: "",
     minutesChoice: String(DEFAULT_MINUTES),
     customMinutes: "",
-    content: "",
-    kind: "study",
-    eventTime: ""
+    content: ""
   };
 }
 
@@ -111,9 +104,8 @@ function createReviewState() {
 
 function createDepartureCheckState() {
   return {
-    outingId: null,
     index: 0,
-    completedByOuting: {}
+    done: false
   };
 }
 
@@ -152,14 +144,12 @@ function createInitialState(dateKey, tasks = []) {
   };
 }
 
-function createTask(name, plannedMinutes, content, kind = "study", eventTime = "") {
+function createTask(name, plannedMinutes, content) {
   return {
     id: crypto.randomUUID(),
     name,
     plannedMinutes,
     content,
-    kind,
-    eventTime,
     status: "pending",
     actualSeconds: null,
     memo: "",
@@ -173,8 +163,6 @@ function normalizeTask(task) {
     name: String(task.name || ""),
     plannedMinutes: sanitizeMinutes(task.plannedMinutes || DEFAULT_MINUTES),
     content: String(task.content || ""),
-    kind: ["study", "outing", "medicine"].includes(task.kind) ? task.kind : "study",
-    eventTime: String(task.eventTime || ""),
     status: ["pending", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
     actualSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : null,
     memo: String(task.memo || ""),
@@ -200,9 +188,7 @@ function buildCarryoverTasks(previousState) {
     .map((task) => createTask(
       String(task.name || "").trim(),
       sanitizeMinutes(task.plannedMinutes),
-      String(task.content || "").trim(),
-      task.kind || "study",
-      String(task.eventTime || "")
+      String(task.content || "").trim()
     ));
 }
 
@@ -295,8 +281,6 @@ function normalizePlanningForm(raw) {
   base.minutesChoice = typeof base.minutesChoice === "string" ? base.minutesChoice : String(DEFAULT_MINUTES);
   base.customMinutes = String(base.customMinutes || "");
   base.content = String(base.content || "");
-  base.kind = ["study", "outing", "medicine"].includes(base.kind) ? base.kind : "study";
-  base.eventTime = String(base.eventTime || "");
   return base;
 }
 
@@ -344,12 +328,10 @@ function enforcePriorityPhase() {
     return;
   }
 
-  const dueOuting = getDueOutingForDepartureCheck();
-  if (dueOuting) {
+  if (needsDepartureCheck()) {
     if (state.phase !== "departureCheck") {
       state.phase = "departureCheck";
-      state.departureCheck.outingId = dueOuting.id;
-      state.departureCheck.index = state.departureCheck.completedByOuting[dueOuting.id] ? DEPARTURE_CHECK_ITEMS.length : 0;
+      state.departureCheck.index = 0;
     }
     return;
   }
@@ -397,7 +379,7 @@ function renderPreviousDayEnd() {
 function renderHome() {
   const runningTask = getRunningTask();
   const counts = getCounts();
-  const departureWarn = isAnyDepartureCheckIncomplete();
+  const departureWarn = needsDepartureCheck();
 
   renderScreen(`
     <h2>今日の予定</h2>
@@ -457,7 +439,10 @@ function renderPlanning() {
   const editingTask = state.planningForm.mode === "edit" ? findTask(state.planningForm.targetId) : null;
   const showCustomName = state.planningForm.taskNameChoice === TASK_NAME_NEW;
   const showCustomMinutes = state.planningForm.minutesChoice === MINUTES_OTHER;
-  const showEventTime = state.planningForm.kind === "outing" || state.planningForm.kind === "medicine";
+  const wakeParts = getTimeParts(state.planTimes.wakeUp, "06:30");
+  const depParts = getTimeParts(state.planTimes.departure === "none" ? "07:30" : state.planTimes.departure, "07:30");
+  const returnParts = getTimeParts(state.planTimes.returnHome === "none" ? "18:30" : state.planTimes.returnHome, "18:30");
+  const studyParts = getTimeParts(state.planTimes.studyStart, "19:00");
 
   renderScreen(`
     <h2>予定入力</h2>
@@ -470,10 +455,40 @@ function renderPlanning() {
     </div>
 
     <div class="time-grid">
-      <div><label for="wakeUpTime">起床時間</label><input id="wakeUpTime" type="time" value="${state.planTimes.wakeUp}" /></div>
-      <div><label for="departureTime">出発時間</label><input id="departureTime" type="time" value="${state.planTimes.departure}" /></div>
-      <div><label for="returnHomeTime">帰宅時間</label><input id="returnHomeTime" type="time" value="${state.planTimes.returnHome}" /></div>
-      <div><label for="studyStartTime">勉強開始時間</label><input id="studyStartTime" type="time" value="${state.planTimes.studyStart}" /></div>
+      <div>
+        <label>起床時間</label>
+        <div class="time-select-row">
+          <select id="wakeUpHour">${renderHourOptions(wakeParts.hour)}</select>
+          <span>:</span>
+          <select id="wakeUpMinute">${renderMinute5Options(wakeParts.minute)}</select>
+        </div>
+      </div>
+      <div>
+        <label>出発時間</label>
+        <div class="time-select-row">
+          <select id="departureMode"><option value="time" ${state.planTimes.departure !== "none" ? "selected" : ""}>時刻を設定</option><option value="none" ${state.planTimes.departure === "none" ? "selected" : ""}>外出なし</option></select>
+          <select id="departureHour" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderHourOptions(depParts.hour)}</select>
+          <span>:</span>
+          <select id="departureMinute" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderMinute5Options(depParts.minute)}</select>
+        </div>
+      </div>
+      <div>
+        <label>帰宅時間</label>
+        <div class="time-select-row">
+          <select id="returnHomeMode"><option value="time" ${state.planTimes.returnHome !== "none" ? "selected" : ""}>時刻を設定</option><option value="none" ${state.planTimes.returnHome === "none" ? "selected" : ""}>帰宅なし</option></select>
+          <select id="returnHomeHour" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderHourOptions(returnParts.hour)}</select>
+          <span>:</span>
+          <select id="returnHomeMinute" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderMinute5Options(returnParts.minute)}</select>
+        </div>
+      </div>
+      <div>
+        <label>勉強開始時間</label>
+        <div class="time-select-row">
+          <select id="studyStartHour">${renderHourOptions(studyParts.hour)}</select>
+          <span>:</span>
+          <select id="studyStartMinute">${renderMinute5Options(studyParts.minute)}</select>
+        </div>
+      </div>
     </div>
 
     <h3>登録済みタスク</h3>
@@ -482,12 +497,10 @@ function renderPlanning() {
     <div class="task-form-box">
       <p class="helper">${editingTask ? "修正内容を入力してください。" : "次の1件を入力してください。"}</p>
       <div class="form-stack">
-        <div><label for="taskKind">種類</label><select id="taskKind">${TASK_KIND_OPTIONS.map((k) => `<option value="${k.value}" ${state.planningForm.kind === k.value ? "selected" : ""}>${k.label}</option>`).join("")}</select></div>
         <div><label for="taskNameSelect">タスク名</label><select id="taskNameSelect">${renderTaskNameOptions()}</select></div>
         <div id="customTaskNameWrap" class="${showCustomName ? "" : "hidden"}"><label for="customTaskName">新しいタスク名</label><input id="customTaskName" type="text" value="${escapeHtml(state.planningForm.customTaskName)}" maxlength="40" placeholder="例: 原田先生" /></div>
         <div><label for="minutesSelect">予定時間</label><select id="minutesSelect">${renderMinuteOptions()}</select></div>
         <div id="customMinutesWrap" class="${showCustomMinutes ? "" : "hidden"}"><label for="customMinutes">その他の分数</label><input id="customMinutes" type="number" min="1" max="600" value="${escapeHtml(state.planningForm.customMinutes)}" /></div>
-        <div id="eventTimeWrap" class="${showEventTime ? "" : "hidden"}"><label for="eventTime">${state.planningForm.kind === "medicine" ? "飲む時刻" : "出発時刻"}</label><input id="eventTime" type="time" value="${state.planningForm.eventTime || (state.planningForm.kind === "outing" ? state.planTimes.departure : "")}" /></div>
         <div><label for="taskContent">内容</label><input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="例: 新中学問題集 p54" /></div>
       </div>
       <div class="btn-row compact-stack"><button id="saveTaskBtn" class="btn-sub" type="button">${editingTask ? "修正を保存" : "追加"}</button></div>
@@ -555,16 +568,11 @@ function bindPlanningEvents() {
     });
   });
 
-  bindPlanTimeInput("wakeUpTime", "wakeUp");
-  bindPlanTimeInput("departureTime", "departure");
-  bindPlanTimeInput("returnHomeTime", "returnHome");
-  bindPlanTimeInput("studyStartTime", "studyStart");
+  bindTimeSelectInput("wakeUp");
+  bindTimeSelectInput("studyStart");
+  bindTimeSelectInput("departure", true, "departureMode");
+  bindTimeSelectInput("returnHome", true, "returnHomeMode");
 
-  document.getElementById("taskKind").addEventListener("change", (e) => {
-    state.planningForm.kind = e.target.value;
-    saveState();
-    renderPlanning();
-  });
   document.getElementById("taskNameSelect").addEventListener("change", (e) => {
     state.planningForm.taskNameChoice = e.target.value;
     saveState();
@@ -581,10 +589,6 @@ function bindPlanningEvents() {
   });
   document.getElementById("customMinutes")?.addEventListener("input", (e) => {
     state.planningForm.customMinutes = e.target.value;
-    saveState();
-  });
-  document.getElementById("eventTime")?.addEventListener("input", (e) => {
-    state.planningForm.eventTime = e.target.value;
     saveState();
   });
   document.getElementById("taskContent").addEventListener("input", (e) => {
@@ -628,11 +632,31 @@ function movePendingTask(taskId, dir) {
   state.tasks[target] = tmp;
 }
 
-function bindPlanTimeInput(elementId, key) {
-  document.getElementById(elementId).addEventListener("input", (e) => {
-    state.planTimes[key] = sanitizeTimeValue(e.target.value, createDefaultPlanTimes()[key]);
+function bindTimeSelectInput(key, hasNone = false, modeId = "") {
+  const hourEl = document.getElementById(`${key}Hour`);
+  const minuteEl = document.getElementById(`${key}Minute`);
+  const update = () => {
+    if (hasNone) {
+      const mode = document.getElementById(modeId).value;
+      if (mode === "none") {
+        state.planTimes[key] = "none";
+        hourEl.disabled = true;
+        minuteEl.disabled = true;
+        saveState();
+        return;
+      }
+      hourEl.disabled = false;
+      minuteEl.disabled = false;
+    }
+    state.planTimes[key] = formatHHMM(Number(hourEl.value), Number(minuteEl.value));
     saveState();
-  });
+  };
+
+  hourEl.addEventListener("change", update);
+  minuteEl.addEventListener("change", update);
+  if (hasNone) {
+    document.getElementById(modeId).addEventListener("change", update);
+  }
 }
 
 function loadTaskIntoForm(taskId) {
@@ -648,9 +672,7 @@ function loadTaskIntoForm(taskId) {
     customTaskName: knownName ? "" : task.name,
     minutesChoice: knownMinutes ? String(task.plannedMinutes) : MINUTES_OTHER,
     customMinutes: knownMinutes ? "" : String(task.plannedMinutes),
-    content: task.content,
-    kind: task.kind,
-    eventTime: task.eventTime || ""
+    content: task.content
   };
 }
 
@@ -658,9 +680,6 @@ function savePlanningTask() {
   const name = getPlanningFormTaskName();
   const minutes = getPlanningFormMinutes();
   const content = state.planningForm.content.trim();
-  const kind = state.planningForm.kind;
-  const eventTime = (kind === "outing" || kind === "medicine") ? sanitizeTimeValue(state.planningForm.eventTime, kind === "outing" ? state.planTimes.departure : "06:30") : "";
-
   if (!name) return alert("タスク名を入力してください。");
   if (!minutes) return alert("予定時間を入力してください。");
   if (!content) return alert("内容を入力してください。");
@@ -671,10 +690,8 @@ function savePlanningTask() {
     task.name = name;
     task.plannedMinutes = minutes;
     task.content = content;
-    task.kind = kind;
-    task.eventTime = eventTime;
   } else {
-    state.tasks.push(createTask(name, minutes, content, kind, eventTime));
+    state.tasks.push(createTask(name, minutes, content));
   }
 
   state.planningForm = createPlanningForm();
@@ -780,8 +797,6 @@ function buildPlanReportText() {
   state.tasks.forEach((task) => {
     lines.push(`・${task.name}　${task.plannedMinutes}分`);
     lines.push(`　${task.content}`);
-    if (task.kind === "medicine" && task.eventTime) lines.push(`　服用時刻: ${formatTimeForDisplay(task.eventTime)}`);
-    if (task.kind === "outing" && task.eventTime) lines.push(`　出発時刻: ${formatTimeForDisplay(task.eventTime)}`);
     lines.push("");
   });
   lines.push(`合計${sumPlanned()}分`);
@@ -811,32 +826,15 @@ function renderPlanReport() {
 
 function renderExecution() {
   const runningTask = getRunningTask();
-  const pending = state.tasks.filter((t) => t.status === "pending" && t.kind !== "medicine");
-  const medicineDue = getDueMedicineTasks();
+  const pending = state.tasks.filter((t) => t.status === "pending");
 
   renderScreen(`
     <h2>タスク実行</h2>
     <h2>今やることを選んでください</h2>
-    ${medicineDue.length > 0 ? '<div class="notice warn" id="medicineArea"></div>' : ""}
     <div id="runArea"></div>
     <hr class="sep" />
     <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
   `);
-
-  if (medicineDue.length > 0) {
-    const medArea = document.getElementById("medicineArea");
-    medArea.innerHTML = medicineDue.map((t) => `${escapeHtml(t.name)}（${formatTimeForDisplay(t.eventTime)}） <button class="btn-mini btn-main" data-med-id="${t.id}" type="button">飲んだ</button>`).join("<br>");
-    document.querySelectorAll("button[data-med-id]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const task = findTask(btn.dataset.medId);
-        if (!task) return;
-        task.status = "done";
-        task.actualSeconds = Math.max(1, task.actualSeconds || 1);
-        saveState();
-        renderExecution();
-      });
-    });
-  }
 
   const runArea = document.getElementById("runArea");
 
@@ -1082,15 +1080,6 @@ function formatElapsedSmart(sec) {
   return `${m}分${s}秒`;
 }
 
-function getDueMedicineTasks() {
-  const now = getNowInJst();
-  return state.tasks.filter((task) => {
-    if (task.kind !== "medicine" || task.status !== "pending" || !task.eventTime) return false;
-    const t = getDateTimeToday(task.eventTime);
-    return t && now >= t;
-  });
-}
-
 function startTodayFinishFlow() {
   const runningTask = getRunningTask();
   if (runningTask) runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
@@ -1187,8 +1176,7 @@ function showMemoPanel(action, restore = false) {
 }
 
 function needsReturnCheck() {
-  const hasOuting = state.tasks.some((t) => t.kind === "outing");
-  if (!hasOuting || state.returnCheck.done) return false;
+  if (state.planTimes.returnHome === "none" || state.returnCheck.done) return false;
   const now = getNowInJst();
   const rt = getDateTimeToday(state.planTimes.returnHome);
   return rt && now >= rt;
@@ -1378,22 +1366,8 @@ function buildResultReportText(done, deferred, discarded, unfinished, totalActua
   return lines.join("\n");
 }
 
-function getDueOutingForDepartureCheck() {
-  const now = getNowInJst();
-  for (const task of state.tasks) {
-    if (task.kind !== "outing" || !task.eventTime) continue;
-    const dep = getDateTimeToday(task.eventTime);
-    if (!dep) continue;
-    const start = new Date(dep.getTime() - 30 * 60 * 1000);
-    const completed = Boolean(state.departureCheck.completedByOuting[task.id]);
-    if (now >= start && !completed) return task;
-  }
-  return null;
-}
-
 function renderDepartureCheck() {
-  const outing = findTask(state.departureCheck.outingId) || getDueOutingForDepartureCheck();
-  if (!outing) {
+  if (!needsDepartureCheck()) {
     state.phase = "home";
     saveState();
     return renderHome();
@@ -1403,7 +1377,7 @@ function renderDepartureCheck() {
   const done = idx >= DEPARTURE_CHECK_ITEMS.length;
 
   if (done) {
-    state.departureCheck.completedByOuting[outing.id] = true;
+    state.departureCheck.done = true;
     state.phase = "home";
     saveState();
     return renderHome();
@@ -1431,10 +1405,15 @@ function renderDepartureCheck() {
 }
 
 function isAnyDepartureCheckIncomplete() {
-  return Boolean(getDueOutingForDepartureCheck());
+  return needsDepartureCheck();
+}
+
+function needsDepartureCheck() {
+  return state.planTimes.departure !== "none" && !state.departureCheck.done;
 }
 
 function getDateTimeToday(hhmm) {
+  if (hhmm === "none") return null;
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return null;
   const now = getNowInJst();
   const [h, m] = hhmm.split(":").map(Number);
@@ -1548,9 +1527,35 @@ function sanitizeTimeValue(value, fallback) {
 }
 
 function formatTimeForDisplay(value) {
+  if (value === "none") return "なし";
   if (!value) return "--:--";
   const [h, m] = value.split(":");
   return `${Number(h)}:${m}`;
+}
+
+function renderHourOptions(selected) {
+  const h = Number.isFinite(selected) ? selected : 7;
+  return Array.from({ length: 24 }, (_, i) => `<option value="${i}" ${i === h ? "selected" : ""}>${String(i).padStart(2, "0")}</option>`).join("");
+}
+
+function renderMinute5Options(selected) {
+  const m = Number.isFinite(selected) ? selected : 0;
+  const list = [];
+  for (let i = 0; i < 60; i += 5) {
+    list.push(`<option value="${i}" ${i === m ? "selected" : ""}>${String(i).padStart(2, "0")}</option>`);
+  }
+  return list.join("");
+}
+
+function getTimeParts(value, fallback) {
+  const base = /^\d{2}:\d{2}$/.test(value) ? value : fallback;
+  const [h, m] = base.split(":").map(Number);
+  const minute = Math.floor(m / 5) * 5;
+  return { hour: h, minute };
+}
+
+function formatHHMM(hour, minute) {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function getTaskStatusLabel(status) {

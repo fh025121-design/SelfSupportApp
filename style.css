@@ -167,6 +167,23 @@ textarea {
   gap: 10px;
 }
 
+.time-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.time-select-row select {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.time-select-row span {
+  font-weight: 800;
+  color: var(--muted);
+}
+
 .btn-row {
   display: grid;
   grid-template-columns: 1fr;
