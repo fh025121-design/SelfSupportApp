@@ -140,7 +140,8 @@ function createInitialState(dateKey, tasks = []) {
     returnCheck: createReturnCheckState(),
     goPressedAt: null,
     dayClosed: false,
-    previousDayPending: null
+    previousDayPending: null,
+    lastResultReportText: ""
   };
 }
 
@@ -249,6 +250,7 @@ function loadState() {
     safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
     safe.previousDayPending = safe.previousDayPending || null;
     safe.dayClosed = Boolean(safe.dayClosed);
+    safe.lastResultReportText = String(safe.lastResultReportText || "");
 
     return safe;
   } catch (_) {
@@ -752,6 +754,7 @@ function onGoToPlanConfirm() {
 }
 
 function renderPlanConfirm() {
+  const report = buildPlanReportText();
   renderScreen(`
     <h2>${state.planFor === "today" ? "今日" : "明日"}の予定を確認してください</h2>
     <div class="summary confirm-summary">
@@ -765,7 +768,9 @@ function renderPlanConfirm() {
     <div class="btn-row compact-stack">
       <button id="confirmPlanBtn" class="btn-main" type="button">この予定で決定</button>
       <button id="backToPlanningBtn" class="btn-quiet" type="button">戻って修正</button>
+      <button id="copyPlanConfirmBtn" class="btn-sub" type="button">この画面をコピー</button>
     </div>
+    <p id="copyPlanConfirmMsg" class="helper" aria-live="polite"></p>
   `);
 
   const list = document.getElementById("confirmTaskList");
@@ -781,6 +786,10 @@ function renderPlanConfirm() {
 
   document.getElementById("confirmPlanBtn").addEventListener("click", confirmPlan);
   document.getElementById("backToPlanningBtn").addEventListener("click", () => changePhase("planning"));
+  document.getElementById("copyPlanConfirmBtn").addEventListener("click", async () => {
+    const ok = await copyToClipboard(report);
+    document.getElementById("copyPlanConfirmMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
+  });
 }
 
 function confirmPlan() {
@@ -828,41 +837,69 @@ function updateTaskNameStats() {
 }
 
 function buildPlanReportText() {
+  const now = getNowInJst();
+  const targetDate = new Date(now);
+  if (state.planFor === "tomorrow") {
+    targetDate.setDate(targetDate.getDate() + 1);
+  }
+  const dateFmt = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    month: "numeric",
+    day: "numeric",
+    weekday: "short"
+  });
+  const parts = dateFmt.formatToParts(targetDate);
+  const month = parts.find((p) => p.type === "month")?.value || String(targetDate.getMonth() + 1);
+  const day = parts.find((p) => p.type === "day")?.value || String(targetDate.getDate());
+  const weekday = parts.find((p) => p.type === "weekday")?.value || "";
+
   const lines = [];
-  const label = state.planFor === "today" ? "今日" : "明日";
-  lines.push(`【${label}の予定】`);
+  lines.push(`【${month}月${day}日（${weekday}）の予定】`);
   lines.push("");
   lines.push(`起床　　　　${formatTimeForDisplay(state.planTimes.wakeUp)}`);
   lines.push(`出発　　　　${formatTimeForDisplay(state.planTimes.departure)}`);
   lines.push(`帰宅　　　　${formatTimeForDisplay(state.planTimes.returnHome)}`);
   lines.push(`勉強開始　　${formatTimeForDisplay(state.planTimes.studyStart)}`);
   lines.push("");
-  state.tasks.forEach((task) => {
-    lines.push(`・${task.name}　${task.plannedMinutes}分`);
-    lines.push(`　${task.content}`);
+  lines.push(`合計時間　${formatMinutesAsHourMinute(sumPlanned())}`);
+  lines.push("");
+  state.tasks.forEach((task, index) => {
+    lines.push(`${toCircledNumber(index + 1)} ${task.name}　予定 ${task.plannedMinutes}分`);
+    lines.push(` 内容：${task.content}`);
     lines.push("");
   });
-  lines.push(`合計${sumPlanned()}分`);
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
 }
 
 function renderPlanReport() {
-  const report = state.confirmedPlan?.reportText || buildPlanReportText();
+  const report = buildPlanReportText();
+  const canComposeDailyMail = Boolean(state.lastResultReportText && state.lastResultReportText.trim());
   renderScreen(`
     <h2>親への予定報告</h2>
     <div id="planReportText" class="report-box"></div>
     <div class="btn-row compact-stack">
       <button id="copyPlanBtn" class="btn-main" type="button">予定をコピー</button>
+      <button id="composeDailyMailBtn" class="btn-sub" type="button" ${canComposeDailyMail ? "" : "disabled"}>実績+次の日予定をメール作成</button>
       <button id="startExecutionBtn" class="btn-quiet" type="button">タスク実行へ進む</button>
     </div>
-    <p id="copyPlanMessage" class="helper" aria-live="polite"></p>
+    <p id="copyPlanMessage" class="helper" aria-live="polite">${canComposeDailyMail ? "" : "先に「1日の終了」で当日の実績報告を確定するとメール作成できます。"}</p>
   `);
 
   document.getElementById("planReportText").textContent = report;
   document.getElementById("copyPlanBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(report);
     document.getElementById("copyPlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
+  });
+  document.getElementById("composeDailyMailBtn")?.addEventListener("click", () => {
+    const body = [
+      state.lastResultReportText.trim(),
+      "",
+      report
+    ].join("\n");
+    const now = getNowInJst();
+    const subject = `${now.getMonth() + 1}/${now.getDate()} 実績と次の日予定`;
+    window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   });
   document.getElementById("startExecutionBtn").addEventListener("click", () => changePhase("execution"));
 }
@@ -1360,6 +1397,7 @@ function renderDayEnd() {
     const ok = await copyToClipboard(report);
     document.getElementById("dayEndMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
     if (ok) {
+      state.lastResultReportText = report;
       state.dayClosed = true;
       state.phase = "planning";
       state.goPressedAt = null;
