@@ -77,6 +77,11 @@ let isComposingText = false;
 let pendingRemoteState = null;
 let pendingRemoteHash = "";
 let pendingPassiveRender = false;
+let devAlertTestConfig = {
+  volume: 5,
+  toneType: "type1",
+  durationSeconds: 1
+};
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
@@ -1301,53 +1306,78 @@ function renderSettings() {
       <button id="backToHomeFromSettingsBtn" class="btn-quiet" type="button">戻る</button>
     </div>
     <div class="btn-row compact-stack">
+      <div class="task-card">
+        <h3>アラートテスト設定（開発用）</h3>
+        <div class="form-stack">
+          <div>
+            <label for="devAlertVolume">テスト音量（1〜10）</label>
+            <input id="devAlertVolume" type="range" min="1" max="10" step="1" value="${escapeHtml(String(devAlertTestConfig.volume))}" />
+            <p id="devAlertVolumeLabel" class="helper">現在: ${escapeHtml(String(devAlertTestConfig.volume))}</p>
+          </div>
+          <div>
+            <label for="devAlertToneType">テスト音の種類（1〜5）</label>
+            <select id="devAlertToneType">
+              <option value="type1" ${devAlertTestConfig.toneType === "type1" ? "selected" : ""}>1: 電子音（標準）</option>
+              <option value="type2" ${devAlertTestConfig.toneType === "type2" ? "selected" : ""}>2: 時計のアラーム</option>
+              <option value="type3" ${devAlertTestConfig.toneType === "type3" ? "selected" : ""}>3: 鳥の鳴き声</option>
+              <option value="type4" ${devAlertTestConfig.toneType === "type4" ? "selected" : ""}>4: クラクション</option>
+              <option value="type5" ${devAlertTestConfig.toneType === "type5" ? "selected" : ""}>5: ブザー音</option>
+            </select>
+          </div>
+          <div>
+            <label for="devAlertDuration">テスト鳴動秒数（1〜10秒）</label>
+            <input id="devAlertDuration" type="range" min="1" max="10" step="1" value="${escapeHtml(String(devAlertTestConfig.durationSeconds))}" />
+            <p id="devAlertDurationLabel" class="helper">現在: ${escapeHtml(String(devAlertTestConfig.durationSeconds))}秒</p>
+          </div>
+        </div>
+      </div>
       <button id="devAlertTestBtn" class="btn-sub" type="button">🔔 アラートテスト</button>
+    </div>
+    <div id="devAlertFeedbackArea" class="notice warn hidden">
+      <p>予定時間を超えました。</p>
     </div>
   `);
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
   document.getElementById("logoutBtn").addEventListener("click", performLogout);
   document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
+  const volumeInput = document.getElementById("devAlertVolume");
+  const volumeLabel = document.getElementById("devAlertVolumeLabel");
+  const toneTypeInput = document.getElementById("devAlertToneType");
+  const durationInput = document.getElementById("devAlertDuration");
+  const durationLabel = document.getElementById("devAlertDurationLabel");
+  volumeInput?.addEventListener("input", () => {
+    const n = Number(volumeInput.value);
+    if (Number.isFinite(n)) {
+      devAlertTestConfig.volume = Math.min(10, Math.max(1, Math.round(n)));
+      if (volumeLabel) volumeLabel.textContent = `現在: ${devAlertTestConfig.volume}`;
+    }
+  });
+  toneTypeInput?.addEventListener("change", () => {
+    const value = String(toneTypeInput.value || "type1");
+    devAlertTestConfig.toneType = ["type1", "type2", "type3", "type4", "type5"].includes(value) ? value : "type1";
+  });
+  durationInput?.addEventListener("input", () => {
+    const n = Number(durationInput.value);
+    if (Number.isFinite(n)) {
+      devAlertTestConfig.durationSeconds = Math.min(10, Math.max(1, Math.round(n)));
+      if (durationLabel) durationLabel.textContent = `現在: ${devAlertTestConfig.durationSeconds}秒`;
+    }
+  });
   document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
 }
 
 function runDevAlertTest() {
-  let runningTask = getRunningTask();
-
-  if (!runningTask) {
-    const firstPending = state.tasks.find((t) => t.status === "pending");
-    if (!firstPending) {
-      alert("アラートテストには未完了タスクが1件以上必要です。まず予定を作成してください。");
-      return;
-    }
-    startTask(firstPending.id);
-    runningTask = getRunningTask();
-  } else if (state.running.isPaused) {
-    resumePausedTask();
-    runningTask = getRunningTask();
-  }
-
-  if (!runningTask) {
-    alert("アラートテストを開始できませんでした。タスク状態を確認してください。");
-    return;
-  }
-
-  const elapsed = getRunningElapsedSeconds();
-  state.running.alertAtSeconds = elapsed;
-  state.running.lastAlertTarget = null;
-  saveState();
-
-  if (state.phase !== "execution") {
-    changePhase("execution", false);
-  } else {
-    renderExecution();
-  }
-
-  // Development-only: call the same production alert path directly (no timer wait).
-  checkOverrunNotification(elapsed);
-  if (state.phase === "execution") {
-    renderExecution();
-  }
+  const feedback = document.getElementById("devAlertFeedbackArea");
+  ensureNotificationAudioReady(true).finally(() => {
+    // Development-only: directly call the same production alert start function.
+    triggerAlertFeedback("first", {
+      overrideVolume: devAlertTestConfig.volume,
+      overrideToneType: devAlertTestConfig.toneType,
+      overrideDurationSeconds: devAlertTestConfig.durationSeconds
+    });
+    feedback?.classList.remove("hidden");
+  });
 }
 
 function renderRecurringListScreen() {
@@ -2439,7 +2469,15 @@ async function ensureNotificationAudioReady(fromUserAction = false) {
   return notificationAudioCtx;
 }
 
-function playNotificationSound() {
+function getAlertTonePreset(toneType = "type1") {
+  if (toneType === "type2") return { kind: "alarm", oscType: "square", frequencies: [900.0, 1150.0] };
+  if (toneType === "type3") return { kind: "bird", oscType: "triangle", frequency: 1500.0 };
+  if (toneType === "type4") return { kind: "klaxon", oscType: "sawtooth", frequencies: [440.0, 554.4] };
+  if (toneType === "type5") return { kind: "buzzer", oscType: "square", frequency: 220.0 };
+  return { kind: "single", oscType: "square", frequency: 1046.5 };
+}
+
+function playNotificationSound(options = {}) {
   if (!notificationAudioCtx) {
     console.error("[Audio] Notification sound skipped because AudioContext is not initialized.");
     return;
@@ -2451,18 +2489,149 @@ function playNotificationSound() {
   }
 
   try {
+    const volumeInput = Number(options.overrideVolume);
+    const volume = Number.isFinite(volumeInput) ? Math.min(10, Math.max(1, Math.round(volumeInput))) : 5;
+    const peakGain = 0.06 + volume * 0.07;
+    const tone = getAlertTonePreset(String(options.overrideToneType || "type1"));
+    const durationInput = Number(options.overrideDurationSeconds);
+    const durationSeconds = Number.isFinite(durationInput) ? Math.min(10, Math.max(0.2, durationInput)) : 0.25;
     const now = notificationAudioCtx.currentTime;
+
+    if (tone.kind === "pattern") {
+      const notes = Array.isArray(tone.frequencies) ? tone.frequencies : [1046.5];
+      const step = Math.max(0.12, durationSeconds / notes.length);
+      notes.forEach((freq, idx) => {
+        const start = now + idx * step;
+        const osc = notificationAudioCtx.createOscillator();
+        const gain = notificationAudioCtx.createGain();
+        osc.type = tone.oscType;
+        osc.frequency.setValueAtTime(freq, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(peakGain * 0.8, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + Math.max(0.08, step - 0.02));
+        osc.connect(gain);
+        gain.connect(notificationAudioCtx.destination);
+        osc.start(start);
+        osc.stop(start + Math.max(0.08, step - 0.01));
+      });
+      return;
+    }
+
+    if (tone.kind === "alarm") {
+      const notes = Array.isArray(tone.frequencies) ? tone.frequencies : [900.0, 1150.0];
+      const half = Math.max(0.08, durationSeconds / Math.max(2, notes.length * 2));
+      for (let t = 0; t < durationSeconds; t += half) {
+        const idx = Math.floor(t / half) % notes.length;
+        const start = now + t;
+        const stop = Math.min(now + durationSeconds, start + half);
+        const osc = notificationAudioCtx.createOscillator();
+        const gain = notificationAudioCtx.createGain();
+        osc.type = tone.oscType;
+        osc.frequency.setValueAtTime(notes[idx], start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(peakGain, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, stop);
+        osc.connect(gain);
+        gain.connect(notificationAudioCtx.destination);
+        osc.start(start);
+        osc.stop(stop);
+      }
+      return;
+    }
+
+    if (tone.kind === "bird") {
+      const chirpLen = 0.14;
+      for (let t = 0; t < durationSeconds; t += 0.2) {
+        const start = now + t;
+        const end = Math.min(now + durationSeconds, start + chirpLen);
+        const osc = notificationAudioCtx.createOscillator();
+        const gain = notificationAudioCtx.createGain();
+        osc.type = tone.oscType;
+        osc.frequency.setValueAtTime(tone.frequency * 0.75, start);
+        osc.frequency.exponentialRampToValueAtTime(tone.frequency * 1.45, end);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(peakGain * 0.7, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(gain);
+        gain.connect(notificationAudioCtx.destination);
+        osc.start(start);
+        osc.stop(end);
+      }
+      return;
+    }
+
+    if (tone.kind === "klaxon") {
+      const notes = Array.isArray(tone.frequencies) ? tone.frequencies : [440.0, 554.4];
+      const period = 0.18;
+      const osc = notificationAudioCtx.createOscillator();
+      const gain = notificationAudioCtx.createGain();
+      osc.type = tone.oscType;
+      for (let t = 0; t < durationSeconds; t += period) {
+        const idx = Math.floor(t / period) % notes.length;
+        osc.frequency.setValueAtTime(notes[idx], now + t);
+      }
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peakGain * 0.85, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
+      osc.connect(gain);
+      gain.connect(notificationAudioCtx.destination);
+      osc.start(now);
+      osc.stop(now + durationSeconds);
+      return;
+    }
+
+    if (tone.kind === "buzzer") {
+      const osc = notificationAudioCtx.createOscillator();
+      const gain = notificationAudioCtx.createGain();
+      osc.type = tone.oscType;
+      osc.frequency.setValueAtTime(tone.frequency, now);
+      const pulse = 0.1;
+      for (let t = 0; t < durationSeconds; t += pulse) {
+        const on = now + t;
+        const off = Math.min(now + durationSeconds, on + pulse * 0.55);
+        gain.gain.setValueAtTime(0.0001, on);
+        gain.gain.exponentialRampToValueAtTime(peakGain * 0.95, on + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, off);
+      }
+      osc.connect(gain);
+      gain.connect(notificationAudioCtx.destination);
+      osc.start(now);
+      osc.stop(now + durationSeconds);
+      return;
+    }
+
+    if (tone.kind === "bell") {
+      const baseOsc = notificationAudioCtx.createOscillator();
+      const harmOsc = notificationAudioCtx.createOscillator();
+      const gain = notificationAudioCtx.createGain();
+      baseOsc.type = tone.oscType;
+      harmOsc.type = "triangle";
+      baseOsc.frequency.setValueAtTime(tone.frequency, now);
+      harmOsc.frequency.setValueAtTime(tone.frequency * 2, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peakGain * 0.75, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
+      baseOsc.connect(gain);
+      harmOsc.connect(gain);
+      gain.connect(notificationAudioCtx.destination);
+      baseOsc.start(now);
+      harmOsc.start(now);
+      baseOsc.stop(now + durationSeconds);
+      harmOsc.stop(now + durationSeconds);
+      return;
+    }
+
     const osc = notificationAudioCtx.createOscillator();
     const gain = notificationAudioCtx.createGain();
-    osc.type = "square";
-    osc.frequency.setValueAtTime(1046.5, now);
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+    osc.type = tone.oscType;
+    osc.frequency.setValueAtTime(tone.frequency, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSeconds);
     osc.connect(gain);
     gain.connect(notificationAudioCtx.destination);
     osc.start(now);
-    osc.stop(now + 0.25);
+    osc.stop(now + durationSeconds);
   } catch (error) {
     console.error("[Audio] Failed to play notification sound", error);
   }
@@ -2482,8 +2651,8 @@ function runVibrationFeedback(stage = "first") {
   }
 }
 
-function triggerAlertFeedback(stage = "first") {
-  playNotificationSound();
+function triggerAlertFeedback(stage = "first", options = {}) {
+  playNotificationSound(options);
   runVibrationFeedback(stage);
 }
 
