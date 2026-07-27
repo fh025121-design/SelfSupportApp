@@ -311,12 +311,14 @@ function createRecurringPlan(name, plannedMinutes, content, repeatType, days, go
   };
 }
 
-function createTask(name, plannedMinutes, content) {
+function createTask(name, plannedMinutes, content, meta = {}) {
   return {
     id: crypto.randomUUID(),
     name,
     plannedMinutes,
     content,
+    recurringPlanId: typeof meta.recurringPlanId === "string" ? meta.recurringPlanId : null,
+    recurringDateKey: typeof meta.recurringDateKey === "string" ? meta.recurringDateKey : null,
     status: "pending",
     actualSeconds: null,
     memo: "",
@@ -330,6 +332,8 @@ function normalizeTask(task) {
     name: String(task.name || ""),
     plannedMinutes: sanitizeMinutes(task.plannedMinutes || DEFAULT_MINUTES),
     content: String(task.content || ""),
+    recurringPlanId: typeof task.recurringPlanId === "string" ? task.recurringPlanId : null,
+    recurringDateKey: typeof task.recurringDateKey === "string" ? task.recurringDateKey : null,
     status: ["pending", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
     actualSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : null,
     memo: String(task.memo || ""),
@@ -3774,8 +3778,15 @@ function syncRecurringPlansForPlanningIfNeeded() {
 
   const weekdayKey = getWeekdayKeyByDateKey(targetDateKey);
   const applicable = state.recurringPlans.filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey));
+  const hasRecurringTaskForDate = (planId, dateKey) => state.tasks.some(
+    (task) => task.recurringPlanId === planId && task.recurringDateKey === dateKey
+  );
   applicable.forEach((plan) => {
-    state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content));
+    if (hasRecurringTaskForDate(plan.id, targetDateKey)) return;
+    state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content, {
+      recurringPlanId: plan.id,
+      recurringDateKey: targetDateKey
+    }));
   });
 
   state.recurringSyncDateKey = targetDateKey;
