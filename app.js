@@ -434,6 +434,17 @@ function normalizeRecurringPlansAppliedByDate(raw) {
   return out;
 }
 
+function collectAppliedRecurringDatesFromTasks(tasks) {
+  if (!Array.isArray(tasks)) return {};
+  const out = {};
+  tasks.forEach((task) => {
+    const dateKey = String(task?.recurringDateKey || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+    out[dateKey] = true;
+  });
+  return out;
+}
+
 function normalizeRecurringPlan(item) {
   const normalizedDays = normalizeRecurringDays(item?.days);
   const migratedType = normalizedDays.includes("daily") ? "daily" : "weekday";
@@ -534,7 +545,10 @@ function loadState() {
     safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
     safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
     safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
-    safe.recurringPlansAppliedByDate = normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate);
+    safe.recurringPlansAppliedByDate = {
+      ...normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate),
+      ...collectAppliedRecurringDatesFromTasks(safe.tasks)
+    };
     if (typeof safe.recurringSyncDateKey === "string" && !safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey]) {
       safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey] = true;
     }
@@ -927,7 +941,10 @@ function normalizeLoadedState(rawState) {
   safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
-  safe.recurringPlansAppliedByDate = normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate);
+  safe.recurringPlansAppliedByDate = {
+    ...normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate),
+    ...collectAppliedRecurringDatesFromTasks(safe.tasks)
+  };
   if (typeof safe.recurringSyncDateKey === "string" && !safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey]) {
     safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey] = true;
   }
@@ -3809,11 +3826,24 @@ function applyRecurringPlansForSelectedDateIfNeeded() {
 
   const weekdayKey = getWeekdayKeyByDateKey(targetDateKey);
   const applicable = state.recurringPlans.filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey));
+  const existingPairs = new Set(
+    state.tasks
+      .map((task) => {
+        const planId = String(task?.recurringPlanId || "");
+        const dateKey = String(task?.recurringDateKey || "");
+        if (!planId || !dateKey) return "";
+        return `${dateKey}::${planId}`;
+      })
+      .filter(Boolean)
+  );
   applicable.forEach((plan) => {
+    const pairKey = `${targetDateKey}::${plan.id}`;
+    if (existingPairs.has(pairKey)) return;
     state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content, {
       recurringPlanId: plan.id,
       recurringDateKey: targetDateKey
     }));
+    existingPairs.add(pairKey);
   });
 
   state.recurringPlansAppliedByDate[targetDateKey] = true;
