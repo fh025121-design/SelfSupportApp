@@ -1494,6 +1494,7 @@ function resetDailyStatus() {
     studyStart: ""
   };
   state.planningForm = createPlanningForm();
+  state.recurringPlansAppliedByDate = {};
   state.recurringSyncDateKey = null;
   delete state.dailySpecialBelongingsByDate[state.dateKey];
   state.planningDailyBelongingInput = "";
