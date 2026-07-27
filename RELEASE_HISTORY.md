@@ -1,5 +1,12 @@
 # Release History
 
+## 2026-07-27 20:42 JST
+- Capacitor依存のバージョン指定を固定化し、`package.json` の `@capacitor/android` / `@capacitor/core` / `@capacitor/local-notifications` / `@capacitor/cli` を v8系の整合する実バージョンへ更新（`@capacitor/cli` は `devDependencies` へ移動）。
+- `index.html` から `capacitor.js` の手動scriptタグを削除し、表示バージョンを `0.29` から `0.30` へ更新（+0.01）。
+- Local Notifications 呼び出しを、非推奨の `Plugins` 直参照依存を減らすため `registerPlugin("LocalNotifications")` 優先へ更新し、通知チャンネル定義から不適切な `sound: "default"` を除去。
+- `scripts/sync-web-assets.ps1` を改善し、同期元に存在しない対象ファイルが `www` に残存しないよう安全な削除処理を追加（staleファイル混入を抑止）。
+- 実行確認: `npm install` 成功、`npm run sync:web` 成功、`npx cap add android` 成功（`android/` 生成）、`npx cap sync android` 成功（Local Notifications プラグイン検出・同期完了）。
+
 ## 2026-07-27 10:40 JST
 - SelfSupportApp を Capacitor Android 試作版へ拡張するため、`package.json`、`capacitor.config.json`、`scripts/sync-web-assets.ps1` を追加し、静的HTML/CSS/JSを `www` へ同期して利用する構成を追加。
 - 設定画面に独立した試験用「10秒後に通知」ボタンを追加し、Capacitor Local Notifications 経由で通知権限確認、Android 8+ 通知チャンネル作成、10秒後のローカル通知予約を行う試験コードを追加。

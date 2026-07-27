@@ -98,6 +98,7 @@ const SYNC_SAVE_DEBOUNCE_MS = 700;
 const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 let localNotificationTestMessage = "";
+let localNotificationsPluginRef = null;
 
 const state = loadState();
 setupInputGuard();
@@ -1496,7 +1497,13 @@ function getCapacitorBridge() {
 }
 
 function getLocalNotificationsPlugin() {
-  return getCapacitorBridge()?.Plugins?.LocalNotifications || null;
+  const bridge = getCapacitorBridge();
+  if (!bridge) return null;
+  if (!localNotificationsPluginRef && typeof bridge.registerPlugin === "function") {
+    // Prefer the modern plugin registration API over legacy Plugins object access.
+    localNotificationsPluginRef = bridge.registerPlugin("LocalNotifications");
+  }
+  return localNotificationsPluginRef || bridge.Plugins?.LocalNotifications || null;
 }
 
 async function initializeLocalNotificationTrial() {
@@ -1515,8 +1522,7 @@ async function ensureLocalNotificationChannel() {
       description: "10-second local notification trial for Android testing",
       importance: 5,
       visibility: 1,
-      vibration: true,
-      sound: "default"
+      vibration: true
     });
     return true;
   } catch (error) {

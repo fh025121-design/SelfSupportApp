@@ -1,6 +1,6 @@
 {
   "name": "selfsupportapp",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "private": true,
   "description": "SelfSupportApp Capacitor Android local notification trial",
   "scripts": {
@@ -9,9 +9,11 @@
     "cap:open:android": "npx cap open android"
   },
   "dependencies": {
-    "@capacitor/android": "latest",
-    "@capacitor/cli": "latest",
-    "@capacitor/core": "latest",
-    "@capacitor/local-notifications": "latest"
+    "@capacitor/android": "8.4.2",
+    "@capacitor/core": "8.4.2",
+    "@capacitor/local-notifications": "8.2.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.4.2"
   }
 }

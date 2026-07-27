@@ -14,5 +14,15 @@ $filesToCopy = @(
 )
 
 foreach ($name in $filesToCopy) {
-    Copy-Item (Join-Path $projectRoot $name) (Join-Path $wwwDir $name) -Force
+    $sourcePath = Join-Path $projectRoot $name
+    $targetPath = Join-Path $wwwDir $name
+
+    if (-not (Test-Path $sourcePath)) {
+        if (Test-Path $targetPath) {
+            Remove-Item $targetPath -Force
+        }
+        continue
+    }
+
+    Copy-Item $sourcePath $targetPath -Force
 }
