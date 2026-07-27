@@ -3831,7 +3831,14 @@ function applyRecurringPlansForSelectedDateIfNeeded() {
   if (!state.recurringPlansAppliedByDate || typeof state.recurringPlansAppliedByDate !== "object") {
     state.recurringPlansAppliedByDate = {};
   }
-  if (state.recurringPlansAppliedByDate[targetDateKey] === true) return;
+  if (state.recurringPlansAppliedByDate[targetDateKey] === true) {
+    // Recovery for stale synced flags: if no tasks exist at all, allow rebuilding recurring tasks once.
+    if (Array.isArray(state.tasks) && state.tasks.length === 0) {
+      delete state.recurringPlansAppliedByDate[targetDateKey];
+    } else {
+      return;
+    }
+  }
 
   const weekdayKey = getWeekdayKeyByDateKey(targetDateKey);
   const applicable = state.recurringPlans.filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey));
