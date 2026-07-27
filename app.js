@@ -3591,6 +3591,10 @@ function normalizeDepartureCheckState(raw) {
   base.completedIndices = Array.isArray(base.completedIndices)
     ? Array.from(new Set(base.completedIndices.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < DEPARTURE_CHECK_ITEMS.length)))
     : [];
+
+  // Keep progress status consistent: any item still in the queue must be treated as pending.
+  const remainingSet = new Set(base.remainingIndices);
+  base.completedIndices = base.completedIndices.filter((idx) => !remainingSet.has(idx));
   base.belongingChecked = base.belongingChecked && typeof base.belongingChecked === "object" ? { ...base.belongingChecked } : {};
   base.lastAutoPromptAt = typeof base.lastAutoPromptAt === "number" ? base.lastAutoPromptAt : 0;
   base.done = Boolean(base.done) && base.remainingIndices.length === 0;
@@ -3687,9 +3691,13 @@ function markDepartureItemDone(itemIndex) {
   normalizeDepartureCheckQueue();
   const queue = state.departureCheck.remainingIndices || [];
   const current = queue[0];
-  if (current !== itemIndex) return;
-  if (!state.departureCheck.completedIndices.includes(itemIndex)) {
-    state.departureCheck.completedIndices.push(itemIndex);
+  if (typeof current !== "number") {
+    state.departureCheck.done = true;
+    state.departureCheck.lastAutoPromptAt = 0;
+    return;
+  }
+  if (!state.departureCheck.completedIndices.includes(current)) {
+    state.departureCheck.completedIndices.push(current);
   }
   state.departureCheck.remainingIndices = queue.slice(1);
   state.departureCheck.done = state.departureCheck.remainingIndices.length === 0;
@@ -3702,7 +3710,7 @@ function rotateDepartureItem(itemIndex) {
   normalizeDepartureCheckQueue();
   const queue = state.departureCheck.remainingIndices || [];
   const current = queue[0];
-  if (current !== itemIndex) return;
+  if (typeof current !== "number") return;
   if (queue.length <= 1) return;
   state.departureCheck.remainingIndices = [...queue.slice(1), current];
 }
