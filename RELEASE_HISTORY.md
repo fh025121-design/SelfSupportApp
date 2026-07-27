@@ -1,5 +1,12 @@
 # Release History
 
+## 2026-07-27 10:40 JST
+- SelfSupportApp を Capacitor Android 試作版へ拡張するため、`package.json`、`capacitor.config.json`、`scripts/sync-web-assets.ps1` を追加し、静的HTML/CSS/JSを `www` へ同期して利用する構成を追加。
+- 設定画面に独立した試験用「10秒後に通知」ボタンを追加し、Capacitor Local Notifications 経由で通知権限確認、Android 8+ 通知チャンネル作成、10秒後のローカル通知予約を行う試験コードを追加。
+- 通知内容は「タスク終了 / 数学の終了時間です」とし、通知音・振動付きチャンネルを利用する実装を追加。Webブラウザ上では非対応メッセージのみ表示。
+- この環境では Node.js / npm 未導入のため、依存インストール、`npx cap add android`、`android/` 生成、実機ビルドは未実行。
+- 表示バージョンを `0.28` から `0.29` へ更新（+0.01）。
+
 ## 2026-07-27 10:36 JST
 - 予定入力の定期予定適用で、`recurringPlansAppliedByDate` が true のままでもタスクが0件の場合は stale フラグとみなして当日フラグを解除し、1回だけ再適用できる回復処理を追加。
 - これにより、同期で古い適用済みフラグが戻ってしまった場合でも、今日/明日切替で定期予定が全く出ない状態から復帰可能に。

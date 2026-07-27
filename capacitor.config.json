@@ -1,0 +1,6 @@
+{
+  "appId": "com.selfsupportapp.trial",
+  "appName": "SelfSupportApp",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
