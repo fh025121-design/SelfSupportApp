@@ -281,6 +281,7 @@ function createInitialState(dateKey, tasks = []) {
     taskNameStats: [],
     recurringPlans: [],
     recurringForm: createRecurringForm(),
+    recurringPlansAppliedByDate: {},
     recurringSyncDateKey: null,
     dailySpecialBelongingsByDate: {},
     planningDailyBelongingInput: "",
@@ -423,6 +424,16 @@ function normalizeDailySpecialBelongingsMap(raw) {
   return out;
 }
 
+function normalizeRecurringPlansAppliedByDate(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  Object.entries(raw).forEach(([dateKey, applied]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+    if (applied === true) out[dateKey] = true;
+  });
+  return out;
+}
+
 function normalizeRecurringPlan(item) {
   const normalizedDays = normalizeRecurringDays(item?.days);
   const migratedType = normalizedDays.includes("daily") ? "daily" : "weekday";
@@ -523,6 +534,10 @@ function loadState() {
     safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
     safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
     safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
+    safe.recurringPlansAppliedByDate = normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate);
+    if (typeof safe.recurringSyncDateKey === "string" && !safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey]) {
+      safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey] = true;
+    }
     safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
     safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
     safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
@@ -730,10 +745,6 @@ function render() {
   ensurePhaseRefreshTimer();
   enforcePriorityPhase();
 
-  if (state.phase === "planning") {
-    syncRecurringPlansForPlanningIfNeeded();
-  }
-
   if (state.phase === "previousDayEnd") return renderPreviousDayEnd();
   if (state.phase === "departureCheck") return renderDepartureCheck();
   if (state.phase === "home") return renderHome();
@@ -916,6 +927,10 @@ function normalizeLoadedState(rawState) {
   safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
+  safe.recurringPlansAppliedByDate = normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate);
+  if (typeof safe.recurringSyncDateKey === "string" && !safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey]) {
+    safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey] = true;
+  }
   safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
   safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
   safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
@@ -2111,6 +2126,7 @@ function bindPlanningEvents() {
   document.querySelectorAll("input[name='planFor']").forEach((radio) => {
     radio.addEventListener("change", (e) => {
       state.planFor = e.target.value === "today" ? "today" : "tomorrow";
+      applyRecurringPlansForSelectedDateIfNeeded();
       saveState();
       renderPlanning();
     });
@@ -3771,26 +3787,25 @@ function changePhase(next, pushHistory = true) {
   render();
 }
 
-function syncRecurringPlansForPlanningIfNeeded() {
+function applyRecurringPlansForSelectedDateIfNeeded() {
   const targetDateKey = getPlanningTargetDateKey();
   if (!targetDateKey) return;
-  if (state.recurringSyncDateKey === targetDateKey) return;
+  if (!state.recurringPlansAppliedByDate || typeof state.recurringPlansAppliedByDate !== "object") {
+    state.recurringPlansAppliedByDate = {};
+  }
+  if (state.recurringPlansAppliedByDate[targetDateKey] === true) return;
 
   const weekdayKey = getWeekdayKeyByDateKey(targetDateKey);
   const applicable = state.recurringPlans.filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey));
-  const hasRecurringTaskForDate = (planId, dateKey) => state.tasks.some(
-    (task) => task.recurringPlanId === planId && task.recurringDateKey === dateKey
-  );
   applicable.forEach((plan) => {
-    if (hasRecurringTaskForDate(plan.id, targetDateKey)) return;
     state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content, {
       recurringPlanId: plan.id,
       recurringDateKey: targetDateKey
     }));
   });
 
+  state.recurringPlansAppliedByDate[targetDateKey] = true;
   state.recurringSyncDateKey = targetDateKey;
-  saveState();
 }
 
 function isRecurringPlanForWeekday(plan, weekdayKey) {
