@@ -92,6 +92,8 @@ const SECOND_ALERT_DELAY_MS = 30 * 1000;
 const SECOND_ALERT_DURATION_SECONDS = 10;
 const LOCAL_NOTIFICATION_TEST_CHANNEL_ID = "task-finish-test";
 const LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID = 10001;
+const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
+const TASK_FINISH_NOTIFICATION_ID_RANGE = 60000;
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
@@ -1562,6 +1564,117 @@ async function ensureLocalNotificationPermission() {
   }
 }
 
+function hashStringToPositiveInt(text) {
+  let hash = 0;
+  const source = String(text || "");
+  for (let i = 0; i < source.length; i += 1) {
+    hash = ((hash << 5) - hash) + source.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function getTaskFinishNotificationId(taskId) {
+  const hashed = hashStringToPositiveInt(taskId) % TASK_FINISH_NOTIFICATION_ID_RANGE;
+  return TASK_FINISH_NOTIFICATION_ID_BASE + hashed;
+}
+
+async function cancelLocalNotificationsByIds(notificationIds) {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.cancel) return false;
+
+  const ids = Array.from(new Set(
+    (Array.isArray(notificationIds) ? notificationIds : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  ));
+  if (ids.length === 0) return false;
+
+  try {
+    await plugin.cancel({ notifications: ids.map((id) => ({ id })) });
+    return true;
+  } catch (error) {
+    console.error("[LocalNotification] Failed to cancel notifications", error);
+    return false;
+  }
+}
+
+async function scheduleLocalNotification({ id, title, body, notifyAt, channelId, extra }) {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.schedule) {
+    return { ok: false, reason: "unsupported" };
+  }
+
+  await ensureLocalNotificationChannel();
+  const permission = await ensureLocalNotificationPermission();
+  if (!permission.ok) {
+    return { ok: false, reason: permission.reason || "permission" };
+  }
+
+  await plugin.schedule({
+    notifications: [{
+      id,
+      title,
+      body,
+      schedule: {
+        at: notifyAt,
+        allowWhileIdle: true
+      },
+      channelId,
+      sound: "default",
+      extra: extra || {}
+    }]
+  });
+  return { ok: true };
+}
+
+function buildTaskFinishNotificationBody(task) {
+  const content = String(task?.content || "").trim();
+  return content || "予定時間が終了しました";
+}
+
+function scheduleTaskFinishNotificationForRunningTask(task) {
+  const target = Number(state.running?.alertAtSeconds);
+  if (!task || !Number.isFinite(target)) return;
+
+  const baseSeconds = Math.max(0, Number(state.running?.baseSeconds || 0));
+  const remainingSeconds = Math.max(1, Math.ceil(target - baseSeconds));
+  const notifyAt = new Date(Date.now() + remainingSeconds * 1000);
+  const notificationId = getTaskFinishNotificationId(task.id);
+
+  (async () => {
+    await cancelLocalNotificationsByIds([notificationId]);
+    try {
+      const result = await scheduleLocalNotification({
+        id: notificationId,
+        title: "時間になりました",
+        body: buildTaskFinishNotificationBody(task),
+        notifyAt,
+        channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+        extra: {
+          source: "task-finish",
+          taskId: task.id
+        }
+      });
+      if (!result.ok && result.reason !== "unsupported") {
+        console.warn("[TaskFinishNotification] Notification was not scheduled", result.reason);
+      }
+    } catch (error) {
+      console.error("[TaskFinishNotification] Failed to schedule notification", error);
+    }
+  })();
+}
+
+function cancelTaskFinishNotification(taskId) {
+  if (!taskId) return;
+  const notificationId = getTaskFinishNotificationId(taskId);
+  cancelLocalNotificationsByIds([notificationId]).catch((error) => {
+    console.error("[TaskFinishNotification] Failed to cancel notification", error);
+  });
+}
+
 async function runLocalNotificationTest() {
   const bridge = getCapacitorBridge();
   const plugin = getLocalNotificationsPlugin();
@@ -1580,22 +1693,19 @@ async function runLocalNotificationTest() {
 
   const notifyAt = new Date(Date.now() + 10 * 1000);
   try {
-    await plugin.schedule({
-      notifications: [{
-        id: LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID,
-        title: "タスク終了",
-        body: "数学の終了時間です",
-        schedule: {
-          at: notifyAt,
-          allowWhileIdle: true
-        },
-        channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
-        sound: "default",
-        extra: {
-          source: "local-notification-test"
-        }
-      }]
+    const result = await scheduleLocalNotification({
+      id: LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID,
+      title: "タスク終了",
+      body: "数学の終了時間です",
+      notifyAt,
+      channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+      extra: {
+        source: "local-notification-test"
+      }
     });
+    if (!result.ok) {
+      throw new Error(`schedule failed: ${result.reason || "unknown"}`);
+    }
     setLocalNotificationTestMessage(`10秒後の通知を予約しました（${notifyAt.toLocaleTimeString("ja-JP")})`);
   } catch (error) {
     console.error("[LocalNotificationTest] Failed to schedule notification", error);
@@ -3182,6 +3292,7 @@ function startTask(taskId) {
   const task = findTask(taskId);
   if (!task || task.status !== "pending") return;
   cancelSecondAlertFollowup();
+  cancelTaskFinishNotification(task.id);
   startAudioWarmupFromUserAction();
   state.running = {
     taskId,
@@ -3195,6 +3306,7 @@ function startTask(taskId) {
     customExtendMinutes: ""
   };
   saveState();
+  scheduleTaskFinishNotificationForRunningTask(task);
   if (state.phase !== "execution") return changePhase("execution");
   renderExecution();
 }
@@ -3215,6 +3327,7 @@ function interruptRunningTask() {
   const task = getRunningTask();
   if (!task) return;
   cancelSecondAlertFollowup();
+  cancelTaskFinishNotification(task.id);
   const elapsed = Math.max(1, getRunningElapsedSeconds());
   task.actualSeconds = elapsed;
   state.running.baseSeconds = elapsed;
@@ -3233,6 +3346,7 @@ function resumePausedTask() {
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
   state.running.isPaused = false;
   state.running.confirmingComplete = false;
+  scheduleTaskFinishNotificationForRunningTask(task);
   changePhase("execution", false);
 }
 
@@ -3240,6 +3354,7 @@ function finalizeTaskCompletion() {
   const task = getRunningTask();
   if (!task) return;
   cancelSecondAlertFollowup();
+  cancelTaskFinishNotification(task.id);
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
   state.running = createRunningState();
@@ -3257,7 +3372,10 @@ function formatElapsedSmart(sec) {
 function startTodayFinishFlow() {
   cancelSecondAlertFollowup();
   const runningTask = getRunningTask();
-  if (runningTask) runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
+  if (runningTask) {
+    cancelTaskFinishNotification(runningTask.id);
+    runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
+  }
   state.running = createRunningState();
   state.review = {
     pendingIds: state.tasks.filter((t) => t.status === "pending").map((t) => t.id),

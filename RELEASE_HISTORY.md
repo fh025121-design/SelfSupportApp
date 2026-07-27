@@ -1,5 +1,13 @@
 # Release History
 
+## 2026-07-28 01:21 JST
+- タスク開始/再開時に、`alertAtSeconds` と経過秒数から終了予定時刻を計算し、Capacitor Local Notifications を終了時刻へ予約する実装を追加。
+- 通知予約処理を共通関数へ切り出し、通知テストボタンの既存機能（10秒後通知）は共通関数経由へ置き換えて挙動を維持。
+- タスク終了通知のIDをタスク単位で安定生成し、同じタスクの再開始/再開時に古い通知を先にキャンセルしてから再予約するよう変更。
+- タスクを予定前に中断/完了/今日は終了した場合、該当タスクの予約済み終了通知をキャンセルするよう変更。
+- 既存のWeb側アラート音・バイブ処理、手動完了フロー、画面/保存仕様は変更なし。
+- 表示バージョンを `0.30` から `0.31` へ更新（+0.01）。
+
 ## 2026-07-27 20:42 JST
 - Capacitor依存のバージョン指定を固定化し、`package.json` の `@capacitor/android` / `@capacitor/core` / `@capacitor/local-notifications` / `@capacitor/cli` を v8系の整合する実バージョンへ更新（`@capacitor/cli` は `devDependencies` へ移動）。
 - `index.html` から `capacitor.js` の手動scriptタグを削除し、表示バージョンを `0.29` から `0.30` へ更新（+0.01）。
