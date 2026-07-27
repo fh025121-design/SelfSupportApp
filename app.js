@@ -2125,7 +2125,12 @@ function renderMinutePresetButtons() {
 function bindPlanningEvents() {
   document.querySelectorAll("input[name='planFor']").forEach((radio) => {
     radio.addEventListener("change", (e) => {
-      state.planFor = e.target.value === "today" ? "today" : "tomorrow";
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (!target.checked) return;
+      const nextPlanFor = target.value === "today" ? "today" : "tomorrow";
+      if (state.planFor === nextPlanFor) return;
+      state.planFor = nextPlanFor;
       applyRecurringPlansForSelectedDateIfNeeded();
       saveState();
       renderPlanning();
@@ -3545,10 +3550,17 @@ function renderDepartureCheck() {
 
 function normalizeDepartureCheckState(raw) {
   const base = { ...createDepartureCheckState(), ...(raw || {}) };
-  if (Array.isArray(raw?.remainingIndices) && raw.remainingIndices.length > 0) {
-    base.remainingIndices = base.remainingIndices
+  if (Array.isArray(raw?.remainingIndices)) {
+    base.remainingIndices = raw.remainingIndices
       .map((n) => Number(n))
       .filter((n) => Number.isInteger(n) && n >= 0 && n < DEPARTURE_CHECK_ITEMS.length);
+
+    const hasCompleted = Array.isArray(raw?.completedIndices) && raw.completedIndices.length > 0;
+    const isMarkedDone = Boolean(raw?.done);
+    const looksLikeFreshUninitialized = base.remainingIndices.length === 0 && !hasCompleted && !isMarkedDone;
+    if (looksLikeFreshUninitialized) {
+      base.remainingIndices = Array.from({ length: DEPARTURE_CHECK_ITEMS.length }, (_, i) => i);
+    }
   } else if (typeof raw?.index === "number") {
     const idx = Math.max(0, Math.min(DEPARTURE_CHECK_ITEMS.length, Math.floor(base.index)));
     base.completedIndices = Array.isArray(raw?.completedIndices) && raw.completedIndices.length > 0
