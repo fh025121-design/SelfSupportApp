@@ -3232,9 +3232,6 @@ function renderExecution() {
         <div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(runningTask.content)}</span></div>
         <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
         ${renderExecutionCompleteControls()}
-        <div class="btn-row compact-stack">
-          <button id="setOneMinuteTestBtn" class="btn-quiet" type="button">1分テスト設定</button>
-        </div>
         ${renderOverrunControls(elapsed)}
       </div>
     `;
@@ -3375,19 +3372,6 @@ function bindExecutionButtons() {
     state.running.alerting = false;
     state.running.confirmingExtendSource = "";
     state.running.confirmingExtendMinutes = null;
-    saveState();
-    renderExecution();
-  });
-  document.getElementById("setOneMinuteTestBtn")?.addEventListener("click", () => {
-    cancelSecondAlertFollowup();
-    const task = getRunningTask();
-    if (task) task.plannedMinutes = 1;
-    state.running.alertAtSeconds = 60;
-    state.running.alerting = false;
-    state.running.lastAlertTarget = null;
-    state.running.confirmingExtendSource = "";
-    state.running.confirmingExtendMinutes = null;
-    console.log("[OverrunTest] plannedMinutes and alertAtSeconds set to 1 minute");
     saveState();
     renderExecution();
   });
