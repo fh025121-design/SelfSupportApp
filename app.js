@@ -313,6 +313,7 @@ function createDepartureCheckState() {
   return {
     remainingIndices: [],
     completedIndices: [],
+    activatedOnce: false,
     belongingChecked: {},
     lastAutoPromptAt: 0,
     done: false
@@ -1767,6 +1768,7 @@ function enforcePriorityPhase() {
 
   if (shouldAutoPromptDepartureCheck()) {
     if (state.phase !== "departureCheck") {
+      state.departureCheck.activatedOnce = true;
       state.departureCheck.lastAutoPromptAt = Date.now();
       state.phase = "departureCheck";
     }
@@ -1828,7 +1830,10 @@ function renderHome() {
   const homeContext = getHomeDisplayContext();
   const isPreviousView = homeContext.isPreviousView;
   const departureReminder = isPreviousView ? null : getDepartureReminderForHome();
-  const showReturnCheckHomeButton = !isPreviousView && state.planTimes.returnHome !== "none" && !state.returnCheck.done;
+  const showReturnCheckHomeButton = !isPreviousView
+    && hasDepartureCheckActivated()
+    && state.planTimes.returnHome !== "none"
+    && !state.returnCheck.done;
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const pendingHomework = isPreviousView ? [] : getSortedPendingHomeworkTasks();
@@ -4931,6 +4936,7 @@ function showMemoPanel(action, restore = false) {
 }
 
 function needsReturnCheck() {
+  if (!hasDepartureCheckActivated()) return false;
   if (state.planTimes.returnHome === "none" || state.returnCheck.done) return false;
   const now = getNowInJst();
   const rt = getDateTimeToday(state.planTimes.returnHome);
@@ -4938,6 +4944,7 @@ function needsReturnCheck() {
 }
 
 function getReturnCheckReminderStatus() {
+  if (!hasDepartureCheckActivated()) return "none";
   if (state.planTimes.returnHome === "none" || state.returnCheck.done) return "none";
   const returnAt = getDateTimeToday(state.planTimes.returnHome);
   if (!returnAt) return "none";
@@ -5488,11 +5495,16 @@ function normalizeDepartureCheckState(raw) {
   // Keep progress status consistent: any item still in the queue must be treated as pending.
   const remainingSet = new Set(base.remainingIndices);
   base.completedIndices = base.completedIndices.filter((idx) => !remainingSet.has(idx));
+  base.activatedOnce = Boolean(base.activatedOnce);
   base.belongingChecked = base.belongingChecked && typeof base.belongingChecked === "object" ? { ...base.belongingChecked } : {};
   base.lastAutoPromptAt = typeof base.lastAutoPromptAt === "number" ? base.lastAutoPromptAt : 0;
   base.done = Boolean(base.done) && base.remainingIndices.length === 0;
   delete base.index;
   return base;
+}
+
+function hasDepartureCheckActivated() {
+  return Boolean(state?.departureCheck?.activatedOnce);
 }
 
 function renderPlanningAutoBelongings(autoItems) {
@@ -5727,6 +5739,9 @@ function changePhase(next, pushHistory = true) {
   if (pushHistory && state.phase !== next) state.navHistory.push(state.phase);
   if (state.phase !== next && next === "execution") {
     state.executionTaskListExpanded = false;
+  }
+  if (next === "departureCheck") {
+    state.departureCheck.activatedOnce = true;
   }
   if (state.phase !== next) {
     removeSubmissionChecklistOverlay();
