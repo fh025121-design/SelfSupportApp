@@ -3276,20 +3276,21 @@ function renderExecution() {
 function renderOverrunControls(elapsed) {
   if (state.running.alertAtSeconds == null || elapsed < state.running.alertAtSeconds) return "";
   const confirmingSource = String(state.running.confirmingExtendSource || "");
+  const isPresetConfirming = confirmingSource === "extend10" || confirmingSource === "extend20";
   const customExtendActionHtml = confirmingSource === "extendCustom"
     ? '<button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button><button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>'
     : '<button id="extendCustomBtn" class="btn-sub" type="button">延長する</button>';
+  const presetExtendRowHtml = isPresetConfirming
+    ? renderInlineExtendConfirmButtons()
+    : '<button id="extend10Btn" class="btn-sub" type="button">10分延長</button><button id="extend20Btn" class="btn-sub" type="button">20分延長</button>';
   return `
     <div class="notice warn">
       <p>予定時間を超えました。</p>
-      <div class="btn-row split compact-stack">
+      <div class="btn-row split overrun-extend-row">
+        ${presetExtendRowHtml}
+      </div>
+      <div class="btn-row overrun-stop-row">
         <button id="stopNotifyBtn" class="btn-quiet" type="button">通知停止</button>
-        ${confirmingSource === "extend10"
-    ? renderInlineExtendConfirmButtons()
-    : '<button id="extend10Btn" class="btn-sub" type="button">10分延長</button>'}
-        ${confirmingSource === "extend20"
-    ? renderInlineExtendConfirmButtons()
-    : '<button id="extend20Btn" class="btn-sub" type="button">20分延長</button>'}
       </div>
       <div class="grid-2 custom-extend-grid">
         <div class="custom-extend-field">
@@ -3323,7 +3324,7 @@ function renderExecutionCompleteControls() {
     `;
   }
   return `
-    <div class="btn-row split compact-stack">
+    <div class="btn-row split compact-stack execution-main-actions">
       <button id="completeBtn" class="btn-ok" type="button">完了</button>
       <button id="interruptBtn" class="btn-quiet" type="button">中断</button>
     </div>

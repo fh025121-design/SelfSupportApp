@@ -209,27 +209,31 @@ textarea {
 }
 
 @media (max-width: 600px) {
-  .custom-extend-control.is-confirming {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-items: stretch;
+  .overrun-extend-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .custom-extend-control.is-confirming #extendCustom {
+  .overrun-extend-row .inline-confirm-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 0;
     grid-column: 1 / -1;
-    width: 100%;
-    min-width: 0;
-    border-right: none;
-    border-bottom: 1px solid #f0c892;
   }
 
-  .custom-extend-control.is-confirming > button {
-    width: 100%;
+  .overrun-extend-row .inline-confirm-row button {
     min-width: 0;
   }
 
-  .custom-extend-control.is-confirming > button + button {
-    border-left: 1px solid #d7e4e6;
+  #extendCustom {
+    flex: 0 1 96px;
+    width: 96px;
+    min-width: 72px;
+    max-width: 110px;
+  }
+
+  .custom-extend-control > button {
+    min-width: 0;
+    padding: 10px 12px;
+    font-size: 0.96rem;
   }
 }
 
@@ -766,6 +770,10 @@ button:disabled {
 
 .compact-stack {
   margin-top: 10px;
+}
+
+.execution-main-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .confirm-summary p {
