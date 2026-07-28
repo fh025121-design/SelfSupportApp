@@ -54,6 +54,7 @@ const DEPARTURE_CHECK_ITEMS = [
 const app = document.getElementById("app");
 const todayLabel = document.getElementById("todayLabel");
 const syncHeaderLabel = document.getElementById("syncHeaderLabel");
+const headerHomeActions = document.getElementById("headerHomeActions");
 
 let tickTimer = null;
 let phaseRefreshTimer = null;
@@ -1619,8 +1620,19 @@ function renderHome() {
   const pendingHomework = getSortedPendingHomeworkTasks();
   const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
   const syncText = getSyncStatusText();
+  if (todayLabel) {
+    todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
+  }
   if (syncHeaderLabel) {
     syncHeaderLabel.textContent = `同期：${syncText || "-"}`;
+  }
+  if (headerHomeActions) {
+    headerHomeActions.innerHTML = `
+      <button id="openSettingsTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>⚙ 設定</button>
+      <button id="logoutTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>🚪 ログアウト</button>
+    `;
+    document.getElementById("openSettingsTextBtn")?.addEventListener("click", () => changePhase("settings", false));
+    document.getElementById("logoutTextBtn")?.addEventListener("click", performLogout);
   }
   const belongingsItems = belongingsSummary.mergedItems;
   const belongingsHtml = belongingsItems.length === 0
@@ -4672,23 +4684,20 @@ function getDateTimeToday(hhmm) {
 }
 
 function renderScreen(content) {
+  if (state.phase !== "home") {
+    if (todayLabel) todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
+    if (syncHeaderLabel) syncHeaderLabel.textContent = "";
+    if (headerHomeActions) headerHomeActions.innerHTML = "";
+  }
   app.innerHTML = `${renderTopNav()}${renderUiNotice()}${content}`;
   bindTopNav();
   renderReturnCheckReminderOverlay();
 }
 
 function renderTopNav() {
-  const showSettings = state.phase === "home";
+  if (state.phase === "home") return "";
   const isPlanReport = state.phase === "planReport";
   const primaryLabel = isPlanReport ? "戻る" : "ホーム";
-  if (showSettings) {
-    return `
-      <div class="top-nav top-nav-home">
-        <button id="openSettingsTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>⚙ 設定</button>
-        <button id="logoutTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>🚪 ログアウト</button>
-      </div>
-    `;
-  }
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>${primaryLabel}</button>
@@ -4697,11 +4706,6 @@ function renderTopNav() {
 }
 
 function bindTopNav() {
-  if (state.phase === "home") {
-    document.getElementById("openSettingsTextBtn")?.addEventListener("click", () => changePhase("settings", false));
-    document.getElementById("logoutTextBtn")?.addEventListener("click", performLogout);
-    return;
-  }
   const homeBtn = document.getElementById("homeBtn");
   if (state.phase === "planReport") {
     homeBtn?.addEventListener("click", goBack);
