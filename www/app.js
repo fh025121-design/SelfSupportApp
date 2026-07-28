@@ -1626,7 +1626,7 @@ function renderHome() {
     <h2>今日の予定</h2>
     <p class="sync-indicator">同期: ${escapeHtml(syncText)}</p>
     ${departureReminder ? `<div class="notice warn"><p>🟡 出発前チェック（あと${departureReminder.minutesLeft}分）</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
-    ${showReturnCheckHomeButton ? `<div class="notice warn"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
+    ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
       <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
       <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
@@ -2030,7 +2030,7 @@ function runDevAlertTest() {
 }
 
 function resetDailyStatus() {
-  const ok = window.confirm("当日の状態をクリーンにします。今日の予定・完了タスクを削除し、出発前/帰宅後チェックを初期化します。宿題・課題（締切管理）は削除しません。実行しますか？");
+  const ok = window.confirm("当日の状態をクリーンにします。今日の予定・完了タスクを削除し、出発前/帰宅時チェックを初期化します。宿題・課題（締切管理）は削除しません。実行しますか？");
   if (!ok) return;
 
   state.tasks = [];
@@ -3962,7 +3962,7 @@ function getReturnCheckReminderStatus() {
 function getReturnCheckReminderContent(status) {
   if (status === "overdue") {
     return {
-      title: "帰宅後チェックが未完了です。",
+      title: "帰宅時チェックが未完了です。",
       body: "帰宅が遅れそうな場合は、保護者へ連絡してください。"
     };
   }
@@ -4036,7 +4036,7 @@ function renderReturnCheckReminderOverlay() {
       <p>${escapeHtml(content.body)}</p>
       <div class="btn-row split compact-stack app-modal-actions">
         <button id="returnReminderLaterBtn" class="btn-quiet" type="button">あとで</button>
-        <button id="goReturnCheckBtn" class="btn-main" type="button">帰宅後チェックへ</button>
+        <button id="goReturnCheckBtn" class="btn-main" type="button">帰宅時チェックへ</button>
       </div>
     </div>
   `;
@@ -4064,7 +4064,7 @@ function renderReturnCheckReminderOverlay() {
 
 function renderReturnCheck() {
   renderScreen(`
-    <h2>帰宅後チェック</h2>
+    <h2>帰宅時チェック</h2>
     <div class="task-form-box">
       <div class="form-stack">
         <div><label for="homeworkAnswer">宿題の有無</label><input id="homeworkAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.homework)}" placeholder="例: あり / なし" /></div>
@@ -4081,7 +4081,7 @@ function renderReturnCheck() {
       </div>
       <div class="btn-row split compact-stack">
         <button id="copyReturnCheckBtn" class="btn-sub" type="button">チェック内容をコピー</button>
-        <button id="finishReturnCheckBtn" class="btn-main" type="button">帰宅後に上記を対応し共有した</button>
+        <button id="finishReturnCheckBtn" class="btn-main" type="button">帰宅時に上記を対応し共有した</button>
       </div>
       <p id="returnCheckCopyMsg" class="helper" aria-live="polite"></p>
     </div>
@@ -4136,7 +4136,7 @@ function buildReturnCheckCopyText() {
         ? "該当なし"
         : "(未選択)";
   return [
-    "【帰宅後チェック】",
+    "【帰宅時チェック】",
     `宿題の有無: ${a.homework || "(未入力)"}`,
     `困ったことの有無: ${a.trouble || "(未入力)"}`,
     `家庭教師・親への返信: ${a.reply || "(未入力)"}`,
