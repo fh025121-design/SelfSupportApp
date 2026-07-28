@@ -298,6 +298,8 @@ function createInitialState(dateKey, tasks = []) {
     phase: "planning",
     navHistory: [],
     homeTaskListExpanded: false,
+    homeViewMode: "current",
+    previousDayArchive: null,
     homeReturnPhase: "planning",
     planFor: "tomorrow",
     planTimes: createDefaultPlanTimes(),
@@ -561,6 +563,8 @@ function loadState() {
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
+    safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
+    safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
       "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
@@ -1198,6 +1202,9 @@ function normalizeLoadedState(rawState) {
     "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit"
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
+  safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
+  safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
+  safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
     "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd"
   ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
@@ -1604,9 +1611,23 @@ function renderPreviousDayEnd() {
     const ok = await copyToClipboard(report);
     document.getElementById("prevEndMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
     if (ok) {
+      const prevDateKey = state.previousDayPending?.dateKey || state.previousDayPending?.summary?.dateKey || "";
+      const summary = state.previousDayPending?.summary || null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(prevDateKey)) {
+        state.previousDayArchive = {
+          dateKey: prevDateKey,
+          planTimes: { ...createDefaultPlanTimes() },
+          tasks: [],
+          belongingsItems: [],
+          totalPlanned: Number(summary?.planned) || 0,
+          totalActual: Number(summary?.actual) || 0
+        };
+      }
       state.previousDayPending = null;
       state.dayClosed = true;
-      state.phase = "planning";
+      state.homeViewMode = "current";
+      state.homeTaskListExpanded = false;
+      state.phase = "home";
       saveState();
       render();
     }
@@ -1614,16 +1635,16 @@ function renderPreviousDayEnd() {
 }
 
 function renderHome() {
-  const runningTask = getRunningTask();
-  const departureReminder = getDepartureReminderForHome();
-  const showReturnCheckHomeButton = state.planTimes.returnHome !== "none" && !state.returnCheck.done;
+  const homeContext = getHomeDisplayContext();
+  const isPreviousView = homeContext.isPreviousView;
+  const departureReminder = isPreviousView ? null : getDepartureReminderForHome();
+  const showReturnCheckHomeButton = !isPreviousView && state.planTimes.returnHome !== "none" && !state.returnCheck.done;
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
-  const pendingHomework = getSortedPendingHomeworkTasks();
-  const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
+  const pendingHomework = isPreviousView ? [] : getSortedPendingHomeworkTasks();
   const syncText = getSyncStatusText();
   if (todayLabel) {
-    todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
+    todayLabel.textContent = `表示日：${formatHomeDateHeading(homeContext.dateKey)}`;
   }
   if (syncHeaderLabel) {
     syncHeaderLabel.textContent = "";
@@ -1636,24 +1657,28 @@ function renderHome() {
     document.getElementById("openSettingsTextBtn")?.addEventListener("click", () => changePhase("settings", false));
     document.getElementById("logoutTextBtn")?.addEventListener("click", performLogout);
   }
-  const belongingsItems = belongingsSummary.mergedItems;
+  const belongingsItems = homeContext.belongingsItems;
   const belongingsHtml = belongingsItems.length === 0
     ? `<p class="home-overview-belongings-none">持ち物：なし</p>`
     : `<p class="home-overview-belongings-title">持ち物</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
+  const displayTasks = homeContext.tasks;
 
   renderScreen(`
     <div class="home-title-row">
-      <h2 class="home-title-item">今日の予定</h2>
-      <p id="openPlanningHeadingBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="予定入力へ">予定入力</p>
+      <h2 class="home-title-item">${escapeHtml(formatHomeDateHeading(homeContext.dateKey))}</h2>
+      ${isPreviousView
+        ? `<p id="backToNextDayBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="翌日の予定へ戻る">翌日の予定へ戻る</p>`
+        : `<p id="openPlanningHeadingBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="予定入力へ">予定入力</p>`}
     </div>
+    ${!isPreviousView && state.previousDayArchive ? `<div class="home-task-more-row"><button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button></div>` : ""}
     ${departureReminder ? `<div class="notice warn"><p>🟡 出発前チェック（あと${departureReminder.minutesLeft}分）</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
       <div class="home-overview-left">
-        <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
-        <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
-        <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
-        <p>勉強 ${formatTimeForDisplay(state.planTimes.studyStart)}</p>
+        <p>起床 ${formatTimeForDisplay(homeContext.planTimes.wakeUp)}</p>
+        <p>出発 ${formatTimeForDisplay(homeContext.planTimes.departure)}</p>
+        <p>帰宅 ${formatTimeForDisplay(homeContext.planTimes.returnHome)}</p>
+        <p>勉強 ${formatTimeForDisplay(homeContext.planTimes.studyStart)}</p>
       </div>
       <div class="home-overview-right">
         ${belongingsHtml}
@@ -1663,15 +1688,13 @@ function renderHome() {
 
     <ul class="home-task-list" id="homeTaskList"></ul>
 
-    ${state.tasks.length > 5 && !state.homeTaskListExpanded ? `<div class="home-task-more-row"><button id="showAllHomeTasksBtn" class="btn-quiet" type="button">すべて見る（全${state.tasks.length}件）</button></div>` : ""}
-
     <div class="btn-row">
-      <button id="openExecutionBtn" class="btn-main" type="button">タスク実行へ</button>
+      <button id="openExecutionBtn" class="btn-main" type="button" ${isPreviousView ? "disabled" : ""}>タスク実行へ</button>
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openHomeworkBtn" class="btn-quiet" type="button">${homeworkLabel}</button>
-      <button id="openDayEndBtn" class="btn-danger" type="button">1日の終了</button>
+      <button id="openHomeworkBtn" class="btn-quiet" type="button" ${isPreviousView ? "disabled" : ""}>${homeworkLabel}</button>
+      <button id="openDayEndBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>1日の終了</button>
     </div>
 
     ${renderHomeHomeworkSummary(pendingHomework)}
@@ -1680,8 +1703,6 @@ function renderHome() {
   `);
 
   const list = document.getElementById("homeTaskList");
-  const displayTasks = getHomeTaskDisplayTasks();
-  const visibleTasks = state.homeTaskListExpanded ? displayTasks : displayTasks.slice(0, 5);
   if (displayTasks.length === 0) {
     const empty = document.createElement("li");
     empty.className = "home-task-empty";
@@ -1689,14 +1710,20 @@ function renderHome() {
     list.appendChild(empty);
   }
 
-  visibleTasks.forEach((task) => {
+  displayTasks.forEach((task) => {
     const li = document.createElement("li");
     li.className = "home-task-row";
     const status = getHomeStatusIcon(task);
     const statusClass = status === "【再開】" ? " home-task-status-resume" : "";
-    li.setAttribute("role", "button");
-    li.setAttribute("tabindex", "0");
-    li.dataset.taskId = task.id;
+    if (isPreviousView) {
+      li.setAttribute("aria-disabled", "true");
+      li.removeAttribute("tabindex");
+      li.removeAttribute("role");
+    } else {
+      li.setAttribute("role", "button");
+      li.setAttribute("tabindex", "0");
+      li.dataset.taskId = task.id;
+    }
     li.innerHTML = `
       <div class="home-task-main">
         <p class="home-task-line1"><span class="home-task-status${statusClass}" aria-hidden="true">${status}</span><span class="home-task-name">${escapeHtml(task.name)}</span><span class="home-task-meta">予定${task.plannedMinutes}分　実績${getHomeActualText(task)}</span></p>
@@ -1705,35 +1732,47 @@ function renderHome() {
     list.appendChild(li);
   });
 
-  document.getElementById("showAllHomeTasksBtn")?.addEventListener("click", () => {
-    state.homeTaskListExpanded = true;
-    saveState();
-    render();
-  });
-
-  list.querySelectorAll("li[data-task-id]").forEach((row) => {
-    row.addEventListener("click", () => {
-      const taskId = row.dataset.taskId;
-      if (!taskId) return;
-      if (state.running.taskId === taskId && state.running.isPaused) {
-        resumePausedTask();
-        return;
-      }
-      changePhase("execution", false);
+  if (!isPreviousView) {
+    list.querySelectorAll("li[data-task-id]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const taskId = row.dataset.taskId;
+        if (!taskId) return;
+        if (state.running.taskId === taskId && state.running.isPaused) {
+          resumePausedTask();
+          return;
+        }
+        changePhase("execution", false);
+      });
+      row.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        row.click();
+      });
     });
-    row.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      e.preventDefault();
-      row.click();
-    });
-  });
+  }
 
-  bindTextAction("openPlanningHeadingBtn", () => changePhase("planning", false));
-  document.getElementById("openHomeworkBtn").addEventListener("click", () => changePhase("homeworkList", false));
-  document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
-  document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
-  document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
-  document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
+  if (isPreviousView) {
+    bindTextAction("backToNextDayBtn", () => {
+      state.homeViewMode = "current";
+      state.homeTaskListExpanded = false;
+      saveState();
+      render();
+    });
+  } else {
+    bindTextAction("openPlanningHeadingBtn", () => changePhase("planning", false));
+    document.getElementById("openPreviousDayBtn")?.addEventListener("click", () => {
+      state.homeViewMode = "previous";
+      state.homeTaskListExpanded = false;
+      saveState();
+      render();
+    });
+
+    document.getElementById("openHomeworkBtn").addEventListener("click", () => changePhase("homeworkList", false));
+    document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
+    document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
+    document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
+    document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
+  }
 }
 
 function renderSettings() {
@@ -2089,6 +2128,9 @@ function resetDailyStatus() {
   state.goPressedAt = null;
   state.dayClosed = false;
   state.previousDayPending = null;
+  state.previousDayArchive = null;
+  state.homeViewMode = "current";
+  state.homeTaskListExpanded = false;
   state.lastResultReportText = "";
   state.phase = "home";
   saveState();
@@ -2648,21 +2690,96 @@ function getHomeStatusIcon(task) {
   return "○";
 }
 
-function getHomeTaskPriority(task) {
+function getHomeTaskPriority(task, runningTaskId = state.running.taskId) {
   if (!task) return 1;
-  if (state.running.taskId === task.id) return 0;
+  if (runningTaskId && runningTaskId === task.id) return 0;
   return 1;
 }
 
-function getHomeTaskDisplayTasks() {
-  const tasksWithIndex = state.tasks.map((task, index) => ({ task, index }));
+function getHomeTaskDisplayTasks(tasks = state.tasks, runningTaskId = state.running.taskId) {
+  const tasksWithIndex = (Array.isArray(tasks) ? tasks : []).map((task, index) => ({ task, index }));
   return tasksWithIndex
     .sort((a, b) => {
-      const priorityDiff = getHomeTaskPriority(a.task) - getHomeTaskPriority(b.task);
+      const priorityDiff = getHomeTaskPriority(a.task, runningTaskId) - getHomeTaskPriority(b.task, runningTaskId);
       if (priorityDiff !== 0) return priorityDiff;
       return a.index - b.index;
     })
     .map((item) => item.task);
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return dateKey;
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  dt.setDate(dt.getDate() + Number(days || 0));
+  const y = dt.getFullYear();
+  const mo = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${d}`;
+}
+
+function formatHomeDateHeading(dateKey) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return getTodayDisplayJst();
+  const weekdayKey = getWeekdayKeyByDateKey(dateKey);
+  const weekdayLabel = RECURRING_DAY_LABELS[weekdayKey] || "";
+  return `${Number(m[2])}月${Number(m[3])}日(${weekdayLabel})`;
+}
+
+function normalizePreviousDayArchive(rawArchive) {
+  if (!rawArchive || typeof rawArchive !== "object") return null;
+  const dateKey = String(rawArchive.dateKey || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return null;
+  return {
+    dateKey,
+    planTimes: {
+      ...createDefaultPlanTimes(),
+      ...(rawArchive.planTimes || {})
+    },
+    tasks: Array.isArray(rawArchive.tasks) ? rawArchive.tasks.map(normalizeTask) : [],
+    belongingsItems: Array.isArray(rawArchive.belongingsItems)
+      ? rawArchive.belongingsItems.map((item) => String(item || "").trim()).filter(Boolean)
+      : [],
+    totalPlanned: Number(rawArchive.totalPlanned) || 0,
+    totalActual: Number(rawArchive.totalActual) || 0
+  };
+}
+
+function createPreviousDayArchive(dateKey) {
+  const belongingsSummary = getBelongingsSummaryForDate(dateKey);
+  return {
+    dateKey,
+    planTimes: { ...state.planTimes },
+    tasks: state.tasks.map((task) => ({ ...task })),
+    belongingsItems: [...belongingsSummary.mergedItems],
+    totalPlanned: sumPlanned(),
+    totalActual: sumActualMinutes()
+  };
+}
+
+function getHomeDisplayContext() {
+  const archive = normalizePreviousDayArchive(state.previousDayArchive);
+  const showPrevious = state.homeViewMode === "previous" && Boolean(archive);
+  if (showPrevious && archive) {
+    return {
+      isPreviousView: true,
+      dateKey: archive.dateKey,
+      tasks: archive.tasks,
+      planTimes: archive.planTimes,
+      belongingsItems: archive.belongingsItems,
+      runningTaskId: null
+    };
+  }
+  const displayDateKey = state.dayClosed ? addDaysToDateKey(state.dateKey, 1) : state.dateKey;
+  const belongingsSummary = getBelongingsSummaryForDate(displayDateKey);
+  return {
+    isPreviousView: false,
+    dateKey: displayDateKey,
+    tasks: state.tasks,
+    planTimes: state.planTimes,
+    belongingsItems: belongingsSummary.mergedItems,
+    runningTaskId: state.running.taskId
+  };
 }
 
 function getHomeActualText(task) {
@@ -3298,7 +3415,7 @@ function renderExecution() {
   } else if (pending.length > 0) {
     runArea.innerHTML = `<ul class="task-list" id="selectList"></ul><p class="notice info">タスクカードをタップすると計測が始まります。</p>`;
     const list = document.getElementById("selectList");
-    pending.slice(0, 3).forEach((task) => {
+      pending.slice(0, 5).forEach((task) => {
       const li = document.createElement("li");
       li.className = "task-card selectable-card";
       li.dataset.taskId = task.id;
@@ -4308,9 +4425,12 @@ function renderDayEnd() {
     const ok = await copyToClipboard(report);
     document.getElementById("dayEndMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
     if (ok) {
+      state.previousDayArchive = createPreviousDayArchive(state.dateKey);
       state.lastResultReportText = report;
       state.dayClosed = true;
-      state.phase = "planning";
+      state.homeViewMode = "current";
+      state.homeTaskListExpanded = false;
+      state.phase = "home";
       state.goPressedAt = null;
       state.running = createRunningState();
       state.review = createReviewState();
