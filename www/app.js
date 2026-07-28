@@ -1799,10 +1799,8 @@ function renderHome() {
   if (headerHomeActions) {
     headerHomeActions.innerHTML = `
       <button id="openSettingsTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>⚙ 設定</button>
-      <button id="logoutTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>🚪 ログアウト</button>
     `;
     document.getElementById("openSettingsTextBtn")?.addEventListener("click", () => changePhase("settings", false));
-    document.getElementById("logoutTextBtn")?.addEventListener("click", performLogout);
   }
   const belongingsItems = homeContext.belongingsItems;
   const belongingsHtml = belongingsItems.length === 0
