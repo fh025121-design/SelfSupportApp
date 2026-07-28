@@ -974,6 +974,7 @@ function renderUiNotice() {
 function isEditableTextElement(el) {
   if (!el || !(el instanceof HTMLElement)) return false;
   if (el.tagName === "TEXTAREA") return true;
+  if (el.tagName === "SELECT") return true;
   if (el.tagName !== "INPUT") return false;
   const type = String(el.type || "text").toLowerCase();
   return ["text", "search", "number", "email", "password", "tel", "url", "date", "time"].includes(type);
