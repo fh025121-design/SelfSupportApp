@@ -65,6 +65,18 @@ const DEFAULT_SUBMISSION_TEMPLATES = [
     ]
   }
 ];
+function normalizeDepartureNotificationSettings(raw) {
+  const base = { ...createDepartureNotificationSettings(), ...(raw || {}) };
+  if (base.leadMinutes === null || base.leadMinutes === "none") {
+    base.leadMinutes = null;
+    return base;
+  }
+  const leadMinutes = Number(base.leadMinutes);
+  base.leadMinutes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(leadMinutes)
+    ? leadMinutes
+    : DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES;
+  return base;
+}
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
 const RECURRING_DAY_KEYS = ["daily", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const RECURRING_DAY_LABELS = {
@@ -137,6 +149,9 @@ const LOCAL_NOTIFICATION_TEST_CHANNEL_ID = "task-finish-test";
 const LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID = 10001;
 const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
 const TASK_FINISH_NOTIFICATION_ID_RANGE = 60000;
+const DEPARTURE_NOTIFICATION_ID_BASE = 80000;
+const DEPARTURE_NOTIFICATION_ID_RANGE = 60000;
+const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
@@ -150,6 +165,7 @@ const state = loadState();
 setupInputGuard();
 initializeLocalNotificationTrial();
 restorePendingTaskFinishNotification();
+restorePendingDepartureNotification();
 render();
 
 window.addEventListener("online", () => {
@@ -339,6 +355,12 @@ function createReturnCheckState() {
   };
 }
 
+function createDepartureNotificationSettings() {
+  return {
+    leadMinutes: DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES
+  };
+}
+
 function createInitialState(dateKey, tasks = []) {
   return {
     dateKey,
@@ -369,6 +391,7 @@ function createInitialState(dateKey, tasks = []) {
     running: createRunningState(),
     review: createReviewState(),
     departureCheck: createDepartureCheckState(),
+    departureNotification: createDepartureNotificationSettings(),
     returnCheck: createReturnCheckState(),
     goPressedAt: null,
     dayClosed: false,
@@ -1407,6 +1430,7 @@ function normalizeLoadedState(rawState) {
   safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
+  safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
   safe.recurringPlansAppliedByDate = {
     ...normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate),
     ...collectAppliedRecurringDatesFromTasks(safe.tasks)
@@ -1989,6 +2013,19 @@ function renderSettings() {
     </div>
     <div class="btn-row compact-stack">
       <div class="task-card">
+        <h3>出発通知</h3>
+        <div class="form-stack">
+          <div>
+            <label for="departureNotificationLeadMinutes">通知を鳴らすタイミング</label>
+            <select id="departureNotificationLeadMinutes">
+              ${renderDepartureNotificationLeadOptions()}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row compact-stack">
+      <div class="task-card">
         <h3>アラートテスト設定（開発用）</h3>
         <div class="form-stack">
           <div>
@@ -2037,6 +2074,17 @@ function renderSettings() {
   document.getElementById("openSubmissionTemplateListBtn")?.addEventListener("click", () => changePhase("submissionTemplateList"));
   document.getElementById("logoutBtn").addEventListener("click", performLogout);
   document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
+  document.getElementById("departureNotificationLeadMinutes")?.addEventListener("change", (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLSelectElement)) return;
+    const nextValue = target.value === "none" ? null : Number(target.value);
+    state.departureNotification = normalizeDepartureNotificationSettings({
+      ...state.departureNotification,
+      leadMinutes: nextValue
+    });
+    saveState();
+    refreshDepartureNotification();
+  });
   const volumeInput = document.getElementById("devAlertVolume");
   const volumeLabel = document.getElementById("devAlertVolumeLabel");
   const toneTypeInput = document.getElementById("devAlertToneType");
@@ -2063,6 +2111,30 @@ function renderSettings() {
   document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
   document.getElementById("localNotificationTestBtn")?.addEventListener("click", runLocalNotificationTest);
   document.getElementById("resetDailyStatusBtn").addEventListener("click", resetDailyStatus);
+}
+
+function renderDepartureNotificationLeadOptions() {
+  const selected = state.departureNotification?.leadMinutes;
+  const options = [
+    { value: "none", label: "なし" },
+    { value: 0, label: "0分前" },
+    { value: 1, label: "1分前" },
+    { value: 2, label: "2分前" },
+    { value: 3, label: "3分前" },
+    { value: 4, label: "4分前" },
+    { value: 5, label: "5分前" },
+    { value: 6, label: "6分前" },
+    { value: 7, label: "7分前" },
+    { value: 8, label: "8分前" },
+    { value: 9, label: "9分前" },
+    { value: 10, label: "10分前" }
+  ];
+  return options.map((option) => {
+    const isSelected = option.value === "none"
+      ? selected === null
+      : Number(option.value) === Number(selected);
+    return `<option value="${escapeHtml(String(option.value))}" ${isSelected ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
+  }).join("");
 }
 
 function setLocalNotificationTestMessage(message) {
@@ -2093,6 +2165,10 @@ function restorePendingTaskFinishNotification() {
   const task = getRunningTask();
   if (!task || state.running.isPaused) return;
   scheduleTaskFinishNotificationForRunningTask(task);
+}
+
+function restorePendingDepartureNotification() {
+  scheduleDepartureNotificationForCurrentPlan();
 }
 
 async function ensureLocalNotificationChannel() {
@@ -2162,6 +2238,19 @@ function getTaskFinishNotificationId(taskId) {
   return TASK_FINISH_NOTIFICATION_ID_BASE + hashed;
 }
 
+function getDepartureNotificationId(dateKey = state.dateKey) {
+  const hashed = hashStringToPositiveInt(`${dateKey || ""}::departure`) % DEPARTURE_NOTIFICATION_ID_RANGE;
+  return DEPARTURE_NOTIFICATION_ID_BASE + hashed;
+}
+
+function getDepartureNotificationLeadMinutes() {
+  if (state.departureNotification?.leadMinutes === null) return null;
+  const leadMinutes = Number(state.departureNotification?.leadMinutes);
+  return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(leadMinutes)
+    ? leadMinutes
+    : DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES;
+}
+
 async function cancelLocalNotificationsByIds(notificationIds) {
   const bridge = getCapacitorBridge();
   const plugin = getLocalNotificationsPlugin();
@@ -2216,6 +2305,71 @@ async function scheduleLocalNotification({ id, title, body, notifyAt, channelId,
 function buildTaskFinishNotificationBody(task) {
   const content = String(task?.content || "").trim();
   return content || "予定時間が終了しました";
+}
+
+function formatDepartureNotificationTime(dateTime) {
+  if (!(dateTime instanceof Date) || Number.isNaN(dateTime.getTime())) return "";
+  const hour = dateTime.getHours();
+  const minute = dateTime.getMinutes();
+  return `${hour}時${minute}分`;
+}
+
+function getDepartureNotificationTitle() {
+  const leadMinutes = getDepartureNotificationLeadMinutes();
+  if (leadMinutes === null) return "";
+  return leadMinutes === 0 ? "出発の時間です" : `出発${leadMinutes}分前です`;
+}
+
+function getDepartureNotificationBody(dateTime) {
+  const formatted = formatDepartureNotificationTime(dateTime);
+  return formatted ? `予定の出発時刻は${formatted}です` : "予定の出発時刻です";
+}
+
+async function scheduleDepartureNotificationForCurrentPlan() {
+  const departureTime = String(state.planTimes?.departure || "");
+  const notificationId = getDepartureNotificationId();
+  await cancelLocalNotificationsByIds([notificationId]);
+
+  if (departureTime === "none") return { ok: true, reason: "disabled" };
+
+  const departureAt = getDateTimeToday(departureTime);
+  if (!departureAt) return { ok: false, reason: "invalid-time" };
+
+  const leadMinutes = getDepartureNotificationLeadMinutes();
+  if (leadMinutes === null) return { ok: true, reason: "disabled" };
+  const notifyAt = new Date(departureAt.getTime() - leadMinutes * 60 * 1000);
+  if (notifyAt.getTime() <= Date.now()) return { ok: false, reason: "past" };
+
+  try {
+    const result = await scheduleLocalNotification({
+      id: notificationId,
+      title: getDepartureNotificationTitle(),
+      body: getDepartureNotificationBody(departureAt),
+      notifyAt,
+      channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+      extra: {
+        source: "departure-reminder",
+        dateKey: state.dateKey,
+        departureTime,
+        leadMinutes
+      }
+    });
+    return result;
+  } catch (error) {
+    console.error("[DepartureNotification] Failed to schedule notification", error);
+    return { ok: false, reason: "error" };
+  }
+}
+
+function cancelDepartureNotification() {
+  const notificationId = getDepartureNotificationId();
+  cancelLocalNotificationsByIds([notificationId]).catch((error) => {
+    console.error("[DepartureNotification] Failed to cancel notification", error);
+  });
+}
+
+function refreshDepartureNotification() {
+  void scheduleDepartureNotificationForCurrentPlan();
 }
 
 function scheduleTaskFinishNotificationForRunningTask(task) {
@@ -2986,7 +3140,15 @@ function renderSubmissionTemplateEditScreen() {
     `).join("");
 
   renderScreen(`
-    <h2>${escapeHtml(template.name)}</h2>
+    <h2>提出・確認テンプレート編集</h2>
+    <div class="task-form-box">
+      <div class="form-stack">
+        <div>
+          <label for="submissionTemplateNameEditInput">テンプレート名</label>
+          <input id="submissionTemplateNameEditInput" type="text" value="${escapeHtml(template.name)}" maxlength="40" placeholder="例: 山田先生" />
+        </div>
+      </div>
+    </div>
     <ul id="submissionTemplateItemList" class="task-list compact-task-list">${itemRows}</ul>
     <div class="task-form-box">
       <div class="form-stack">
@@ -3003,6 +3165,28 @@ function renderSubmissionTemplateEditScreen() {
       <button id="backToSubmissionTemplateListBtn" class="btn-quiet" type="button">戻る</button>
     </div>
   `);
+
+  document.getElementById("submissionTemplateNameEditInput")?.addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
+    template.name = String(e.target.value || "");
+    saveState();
+  });
+  document.getElementById("submissionTemplateNameEditInput")?.addEventListener("blur", (e) => {
+    const nextName = String(e.target.value || "").trim();
+    if (!nextName) {
+      e.target.value = template.name;
+      return;
+    }
+    const duplicated = state.submissionTemplates.some((item) => item.id !== template.id && String(item?.name || "").trim() === nextName);
+    if (duplicated) {
+      alert("同じ名前のテンプレートが既にあります。");
+      e.target.value = template.name;
+      return;
+    }
+    template.name = nextName;
+    saveState();
+    renderSubmissionTemplateEditScreen();
+  });
 
   document.getElementById("submissionTemplateItemInput")?.addEventListener("input", (e) => {
     if (shouldSkipInputWhileComposing(e)) return;
@@ -3847,6 +4031,7 @@ function bindTimeSelectInput(key, hasNone = false, modeId = "") {
         hourEl.disabled = true;
         minuteEl.disabled = true;
         saveState();
+        if (key === "departure") refreshDepartureNotification();
         return;
       }
       hourEl.disabled = false;
@@ -3854,6 +4039,7 @@ function bindTimeSelectInput(key, hasNone = false, modeId = "") {
     }
     state.planTimes[key] = formatHHMM(Number(hourEl.value), Number(minuteEl.value));
     saveState();
+    if (key === "departure") refreshDepartureNotification();
   };
 
   hourEl.addEventListener("change", update);
@@ -5167,6 +5353,7 @@ function finishReturnCheck() {
   ].join("\n");
   state.phase = "returnReport";
   saveState();
+  cancelDepartureNotification();
   render();
 }
 
