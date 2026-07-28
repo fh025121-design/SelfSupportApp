@@ -38,9 +38,27 @@ body {
 
 .eyebrow {
   margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
   font-size: 0.95rem;
   color: var(--sub);
   font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.eyebrow-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.eyebrow-version {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.35;
   letter-spacing: 0.06em;
 }
 
