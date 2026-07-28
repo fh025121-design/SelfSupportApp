@@ -33,7 +33,7 @@ body {
 }
 
 .app-header {
-  padding: 10px 6px 16px;
+  padding: 6px 6px 8px;
 }
 
 .eyebrow {
@@ -546,8 +546,8 @@ button:disabled {
   background: #f7fafc;
   border: 2px solid #dbe5f2;
   border-radius: 12px;
-  padding: 8px 10px;
-  margin: 10px 0 8px;
+  padding: 6px 8px;
+  margin: 6px 0 6px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 16px;
@@ -599,7 +599,7 @@ button:disabled {
   justify-content: space-between;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .home-title-item {
