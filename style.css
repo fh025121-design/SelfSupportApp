@@ -610,15 +610,25 @@ button:disabled {
 }
 
 .home-title-link {
-  color: var(--ink);
+  color: #1f2430;
+  font-size: inherit;
+  font-weight: 800;
+  line-height: inherit;
+  background: rgba(239, 122, 47, 0.36);
+  border: 2px solid rgba(208, 93, 20, 0.45);
+  border-radius: 12px;
+  padding: 6px 14px;
+  box-shadow: 0 4px 10px rgba(208, 93, 20, 0.14);
   cursor: pointer;
   user-select: none;
+  transform: translateX(-1cm);
 }
 
 .home-title-link:hover,
 .home-title-link:focus-visible {
-  color: var(--accent-dark);
-  text-decoration: underline;
+  color: #1f2430;
+  background: rgba(239, 122, 47, 0.52);
+  text-decoration: none;
   outline: none;
 }
 
