@@ -341,6 +341,12 @@ button:disabled {
   font-size: 0.95rem;
 }
 
+.recurring-list-days {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
 .recurring-list-arrow {
   color: var(--muted);
 }
@@ -424,6 +430,40 @@ button:disabled {
   letter-spacing: 0.01em;
 }
 
+.home-homework-summary p {
+  margin: 4px 0;
+}
+
+.homework-summary-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.homework-summary-name {
+  min-width: 0;
+  font-weight: 800;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.homework-summary-meta {
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.homework-remaining-label {
+  color: var(--accent);
+  font-size: 1.06rem;
+  font-weight: 900;
+}
+
 .home-task-list {
   list-style: none;
   margin: 0;
@@ -462,6 +502,27 @@ button:disabled {
   text-align: center;
   font-size: 1.05rem;
   line-height: 1;
+}
+
+.home-task-status-resume {
+  color: #d62839;
+  font-weight: 900;
+  animation: paused-task-blink 2.2s ease-in-out infinite;
+}
+
+@keyframes paused-task-blink {
+  0%, 40%, 100% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-task-status-resume {
+    animation: none;
+  }
 }
 
 .home-task-name {

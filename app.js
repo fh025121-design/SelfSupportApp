@@ -1603,6 +1603,7 @@ function renderHome() {
   const departureReminder = getDepartureReminderForHome();
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
+  const pendingHomework = getSortedPendingHomeworkTasks();
   const syncText = getSyncStatusText();
 
   renderScreen(`
@@ -1629,7 +1630,7 @@ function renderHome() {
       <button id="openDayEndBtn" class="btn-danger" type="button">1日の終了</button>
     </div>
 
-    ${runningTask && state.running.isPaused ? '<div class="notice info">中断中タスクがあります。再開してください。</div>' : ""}
+    ${renderHomeHomeworkSummary(pendingHomework)}
   `);
 
   const list = document.getElementById("homeTaskList");
@@ -1644,12 +1645,13 @@ function renderHome() {
     const li = document.createElement("li");
     li.className = "home-task-row";
     const status = getHomeStatusIcon(task);
+    const statusClass = status === "【再開】" ? " home-task-status-resume" : "";
     li.setAttribute("role", "button");
     li.setAttribute("tabindex", "0");
     li.dataset.taskId = task.id;
     li.innerHTML = `
       <div class="home-task-main">
-        <p class="home-task-line1"><span class="home-task-status" aria-hidden="true">${status}</span><span class="home-task-name">${escapeHtml(task.name)}</span><span class="home-task-meta">予定${task.plannedMinutes}分　実績${getHomeActualText(task)}</span></p>
+        <p class="home-task-line1"><span class="home-task-status${statusClass}" aria-hidden="true">${status}</span><span class="home-task-name">${escapeHtml(task.name)}</span><span class="home-task-meta">予定${task.plannedMinutes}分　実績${getHomeActualText(task)}</span></p>
       </div>
     `;
     list.appendChild(li);
@@ -2399,9 +2401,10 @@ function renderHomeworkListRows() {
     li.setAttribute("role", "button");
     li.setAttribute("tabindex", "0");
     li.dataset.id = item.id;
+    const deadlineInfo = getHomeworkDeadlineDisplayParts(item.deadlineDate);
     li.innerHTML = `
       <div class="recurring-list-main">${escapeHtml(item.name)}</div>
-      <div class="recurring-list-days">${escapeHtml(formatHomeworkDeadlineLabel(item.deadlineDate))}</div>
+      <div class="recurring-list-days"><span>${escapeHtml(deadlineInfo.deadlineLabel)}</span>${deadlineInfo.remainingLabel ? `<span class="homework-remaining-label">${escapeHtml(deadlineInfo.remainingLabel)}</span>` : ""}</div>
       <div class="recurring-list-minutes"></div>
       <div class="recurring-list-arrow" aria-hidden="true">＞</div>
     `;
@@ -2619,8 +2622,8 @@ function renderPlanning() {
 
     <p class="legend">予定を作る日</p>
     <div class="option-group compact-options">
-      <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>明日</span></label>
       <label class="option-item"><input type="radio" name="planFor" value="today" ${state.planFor === "today" ? "checked" : ""} /><span>今日</span></label>
+      <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>明日</span></label>
     </div>
 
     <div class="time-grid">
@@ -4548,10 +4551,56 @@ function getHomeworkPendingCount() {
   return state.homeworkTasks.filter((item) => !item.done).length;
 }
 
+function getDateKeyDayNumber(dateKey) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000);
+}
+
+function getHomeworkRemainingDaysLabel(dateKey) {
+  const dueDayNumber = getDateKeyDayNumber(dateKey);
+  const todayDayNumber = getDateKeyDayNumber(getTodayKeyJst());
+  if (dueDayNumber === null || todayDayNumber === null) return "";
+  const diffDays = dueDayNumber - todayDayNumber;
+  if (diffDays > 0) return `提出まであと${diffDays}日`;
+  if (diffDays === 0) return "今日提出";
+  return "提出期限超過";
+}
+
 function formatHomeworkDeadlineLabel(dateKey) {
   const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return "締切未設定";
-  return `${Number(m[2])}/${Number(m[3])}締切`;
+  const weekdayKey = getWeekdayKeyByDateKey(dateKey);
+  const weekdayLabel = RECURRING_DAY_LABELS[weekdayKey] || "";
+  return `${Number(m[2])}/${Number(m[3])}（${weekdayLabel}）締切`;
+}
+
+function getHomeworkDeadlineDisplayParts(dateKey) {
+  return {
+    deadlineLabel: formatHomeworkDeadlineLabel(dateKey),
+    remainingLabel: getHomeworkRemainingDaysLabel(dateKey)
+  };
+}
+
+function formatHomeworkDeadlineWithRemainingLabel(dateKey) {
+  const { deadlineLabel, remainingLabel } = getHomeworkDeadlineDisplayParts(dateKey);
+  return remainingLabel ? `${deadlineLabel}　${remainingLabel}` : deadlineLabel;
+}
+
+function renderHomeHomeworkSummary(pendingHomework) {
+  if (!Array.isArray(pendingHomework) || pendingHomework.length === 0) return "";
+  const itemsHtml = pendingHomework.map((item) => {
+    const deadlineInfo = getHomeworkDeadlineDisplayParts(item.deadlineDate);
+    return `
+    <p class="homework-summary-line"><span class="homework-summary-name">${escapeHtml(item.name)}</span><span class="homework-summary-meta"><span>${escapeHtml(deadlineInfo.deadlineLabel)}</span>${deadlineInfo.remainingLabel ? `<span class="homework-remaining-label">${escapeHtml(deadlineInfo.remainingLabel)}</span>` : ""}</span></p>
+  `;
+  }).join("");
+  return `
+    <div class="summary home-homework-summary">
+      <p>宿題・課題</p>
+      ${itemsHtml}
+    </div>
+  `;
 }
 
 function getPlanningTargetDateKey() {
