@@ -651,6 +651,33 @@ button:disabled {
 }
 
 @media (max-width: 520px) {
+  .app-header {
+    padding-bottom: 4px;
+  }
+
+  .panel {
+    padding-top: 12px;
+  }
+
+  .eyebrow-title {
+    font-size: 1.35rem;
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  .eyebrow-version {
+    line-height: 1.2;
+  }
+
+  .top-text-action {
+    line-height: 1.2;
+  }
+
+  .header-home-actions,
+  .sync-header-label {
+    top: -1.4cm;
+  }
+
   .home-overview {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     column-gap: 10px;
