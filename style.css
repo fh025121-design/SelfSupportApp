@@ -104,6 +104,14 @@ h1 {
   top: -2cm;
 }
 
+.home-sync-footer {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-align: right;
+}
+
 .auth-error {
   color: var(--danger);
   font-weight: 700;

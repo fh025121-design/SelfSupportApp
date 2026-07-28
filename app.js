@@ -1624,7 +1624,7 @@ function renderHome() {
     todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
   }
   if (syncHeaderLabel) {
-    syncHeaderLabel.textContent = `同期：${syncText || "-"}`;
+    syncHeaderLabel.textContent = "";
   }
   if (headerHomeActions) {
     headerHomeActions.innerHTML = `
@@ -1671,6 +1671,8 @@ function renderHome() {
     </div>
 
     ${renderHomeHomeworkSummary(pendingHomework)}
+
+    <p class="home-sync-footer">同期：${escapeHtml(syncText || "-")}</p>
   `);
 
   const list = document.getElementById("homeTaskList");
