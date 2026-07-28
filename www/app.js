@@ -30,6 +30,7 @@ const db = getFirestore(firebaseApp);
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const STORAGE_OWNER_UID_KEY = "selfSupportAppTrialStateV3_ownerUid";
 const DEFAULT_MINUTES = 30;
+const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
 const RECURRING_DAY_KEYS = ["daily", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -298,6 +299,7 @@ function createInitialState(dateKey, tasks = []) {
     phase: "planning",
     navHistory: [],
     homeTaskListExpanded: false,
+    executionTaskListExpanded: false,
     homeViewMode: "current",
     previousDayArchive: null,
     homeReturnPhase: "planning",
@@ -563,6 +565,7 @@ function loadState() {
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
+    safe.executionTaskListExpanded = Boolean(safe.executionTaskListExpanded);
     safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
@@ -1203,6 +1206,7 @@ function normalizeLoadedState(rawState) {
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
   safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
+  safe.executionTaskListExpanded = Boolean(safe.executionTaskListExpanded);
   safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
   safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
@@ -3369,9 +3373,18 @@ function renderPlanReport() {
   document.getElementById("startExecutionBtn").addEventListener("click", () => changePhase("execution"));
 }
 
+function getExecutionSelectableTasks() {
+  // Keep existing pending-order behavior and only limit visible cards for execution selection.
+  const pending = state.tasks.filter((t) => t.status === "pending");
+  return pending.slice(0, EXECUTION_SELECT_LIMIT);
+}
+
 function renderExecution() {
   const runningTask = getRunningTask();
   const pending = state.tasks.filter((t) => t.status === "pending");
+  const selectableTasks = state.executionTaskListExpanded
+    ? pending
+    : getExecutionSelectableTasks();
 
   renderScreen(`
     <h2>タスク実行</h2>
@@ -3413,9 +3426,13 @@ function renderExecution() {
       saveState();
     }, 1000);
   } else if (pending.length > 0) {
-    runArea.innerHTML = `<ul class="task-list" id="selectList"></ul><p class="notice info">タスクカードをタップすると計測が始まります。</p>`;
+    runArea.innerHTML = `
+      <ul class="task-list" id="selectList"></ul>
+      ${pending.length > EXECUTION_SELECT_LIMIT ? `<div class="home-task-more-row"><button id="toggleExecutionTaskListBtn" class="btn-quiet" type="button">${state.executionTaskListExpanded ? "折りたたむ" : `すべて見る（全${pending.length}件）`}</button></div>` : ""}
+      <p class="notice info">タスクカードをタップすると計測が始まります。</p>
+    `;
     const list = document.getElementById("selectList");
-      pending.slice(0, 5).forEach((task) => {
+    selectableTasks.forEach((task) => {
       const li = document.createElement("li");
       li.className = "task-card selectable-card";
       li.dataset.taskId = task.id;
@@ -3433,7 +3450,14 @@ function renderExecution() {
         }
       });
     });
+
+    document.getElementById("toggleExecutionTaskListBtn")?.addEventListener("click", () => {
+      state.executionTaskListExpanded = !state.executionTaskListExpanded;
+      saveState();
+      renderExecution();
+    });
   } else {
+    state.executionTaskListExpanded = false;
     runArea.innerHTML = `<p class="notice warn">未完了タスクはありません。</p>`;
   }
 
@@ -4883,6 +4907,9 @@ function goBack() {
 
 function changePhase(next, pushHistory = true) {
   if (pushHistory && state.phase !== next) state.navHistory.push(state.phase);
+  if (state.phase !== next && next === "execution") {
+    state.executionTaskListExpanded = false;
+  }
   state.phase = next;
   if (next !== "home") state.homeReturnPhase = next;
   saveState();
