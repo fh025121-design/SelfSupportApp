@@ -634,8 +634,9 @@ button:disabled {
 
 @media (max-width: 520px) {
   .home-overview {
-    grid-template-columns: 1fr;
-    row-gap: 8px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 0;
   }
 }
 
