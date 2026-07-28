@@ -278,8 +278,12 @@ function createReturnCheckState() {
     answers: {
       homework: "",
       trouble: "",
-      reply: ""
+      reply: "",
+      delayedContact: ""
     },
+    reminderPromptTriggered: false,
+    reminderDeferred: false,
+    reminderVisible: false,
     reportText: "",
     copied: false
   };
@@ -1039,6 +1043,7 @@ function renderAuthSyncing() {
       <p class="helper">データを読み込んでいます。</p>
     </div>
   `;
+  removeReturnCheckReminderOverlay();
 }
 
 function renderAuthChecking() {
@@ -1048,6 +1053,7 @@ function renderAuthChecking() {
       <p class="helper">しばらくお待ちください。</p>
     </div>
   `;
+  removeReturnCheckReminderOverlay();
 }
 
 function renderLogin() {
@@ -1070,6 +1076,8 @@ function renderLogin() {
     </div>
     <p id="loginError" class="helper auth-error" aria-live="polite">${escapeHtml(authErrorMessage)}</p>
   `;
+
+  removeReturnCheckReminderOverlay();
 
   const emailEl = document.getElementById("loginEmail");
   const passEl = document.getElementById("loginPassword");
@@ -1541,6 +1549,11 @@ function getSyncStatusText() {
 }
 
 function enforcePriorityPhase() {
+  const promptStateChanged = syncReturnCheckReminderState();
+  if (promptStateChanged) {
+    saveState();
+  }
+
   if (state.previousDayPending) {
     state.phase = "previousDayEnd";
     return;
@@ -1558,11 +1571,6 @@ function enforcePriorityPhase() {
     return;
   }
 
-  if (needsReturnCheck()) {
-    if (!["returnCheck", "returnReport"].includes(state.phase)) {
-      state.phase = "returnCheck";
-    }
-  }
 }
 
 function renderPreviousDayEnd() {
@@ -3944,6 +3952,110 @@ function needsReturnCheck() {
   return rt && now >= rt;
 }
 
+function getReturnCheckReminderStatus() {
+  if (state.planTimes.returnHome === "none" || state.returnCheck.done) return "none";
+  const returnAt = getDateTimeToday(state.planTimes.returnHome);
+  if (!returnAt) return "none";
+
+  const now = getNowInJst();
+  if (now >= returnAt) return "overdue";
+
+  const leadMs = returnAt.getTime() - now.getTime();
+  if (leadMs <= 30 * 60 * 1000) return "before30";
+  return "none";
+}
+
+function getReturnCheckReminderContent(status) {
+  if (status === "overdue") {
+    return {
+      title: "帰宅後チェックが未完了です。",
+      body: "帰宅が遅れそうな場合は、保護者へ連絡してください。"
+    };
+  }
+  return {
+    title: "帰宅予定時刻が近づいています。",
+    body: "帰宅が遅れそうな場合は、早めに保護者へ連絡しましょう。"
+  };
+}
+
+function syncReturnCheckReminderState() {
+  let changed = false;
+  const status = getReturnCheckReminderStatus();
+
+  if (status === "none") {
+    if (state.returnCheck.reminderVisible) {
+      state.returnCheck.reminderVisible = false;
+      changed = true;
+    }
+    return changed;
+  }
+
+  if (!state.returnCheck.reminderPromptTriggered) {
+    state.returnCheck.reminderPromptTriggered = true;
+    state.returnCheck.reminderVisible = true;
+    changed = true;
+  }
+
+  if (state.returnCheck.reminderDeferred && state.phase === "home" && !state.returnCheck.reminderVisible) {
+    state.returnCheck.reminderVisible = true;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function removeReturnCheckReminderOverlay() {
+  document.getElementById("returnCheckReminderOverlay")?.remove();
+}
+
+function renderReturnCheckReminderOverlay() {
+  const status = getReturnCheckReminderStatus();
+  const shouldShow = Boolean(currentUser)
+    && status !== "none"
+    && !state.returnCheck.done
+    && state.returnCheck.reminderVisible;
+
+  if (!shouldShow) {
+    removeReturnCheckReminderOverlay();
+    return;
+  }
+
+  const existing = document.getElementById("returnCheckReminderOverlay");
+  const content = getReturnCheckReminderContent(status);
+
+  const overlay = existing || document.createElement("div");
+  overlay.id = "returnCheckReminderOverlay";
+  overlay.className = "app-modal-overlay";
+  overlay.innerHTML = `
+    <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="returnCheckReminderTitle">
+      <h3 id="returnCheckReminderTitle">${escapeHtml(content.title)}</h3>
+      <p>${escapeHtml(content.body)}</p>
+      <div class="btn-row split compact-stack app-modal-actions">
+        <button id="returnReminderLaterBtn" class="btn-quiet" type="button">あとで</button>
+        <button id="goReturnCheckBtn" class="btn-main" type="button">帰宅後チェックへ</button>
+      </div>
+    </div>
+  `;
+
+  if (!existing) {
+    document.body.appendChild(overlay);
+  }
+
+  document.getElementById("returnReminderLaterBtn")?.addEventListener("click", () => {
+    state.returnCheck.reminderVisible = false;
+    state.returnCheck.reminderDeferred = true;
+    saveState();
+    removeReturnCheckReminderOverlay();
+  });
+
+  document.getElementById("goReturnCheckBtn")?.addEventListener("click", () => {
+    state.returnCheck.reminderVisible = false;
+    state.returnCheck.reminderDeferred = false;
+    saveState();
+    changePhase("returnCheck", false);
+  });
+}
+
 function renderReturnCheck() {
   renderScreen(`
     <h2>帰宅後チェック</h2>
@@ -3952,6 +4064,14 @@ function renderReturnCheck() {
         <div><label for="homeworkAnswer">宿題の有無</label><input id="homeworkAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.homework)}" placeholder="例: あり / なし" /></div>
         <div><label for="troubleAnswer">困ったことの有無</label><input id="troubleAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.trouble)}" placeholder="例: あり（内容） / なし" /></div>
         <div><label for="replyAnswer">家庭教師・親への返信</label><input id="replyAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.reply)}" placeholder="例: LINEで返信した" /></div>
+        <div>
+          <p class="legend">帰宅が遅れそうな場合は、親へ連絡しましたか？</p>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="delayedContactAnswer" value="yes" ${state.returnCheck.answers.delayedContact === "yes" ? "checked" : ""} />はい</label>
+            <label class="option-item"><input type="radio" name="delayedContactAnswer" value="no" ${state.returnCheck.answers.delayedContact === "no" ? "checked" : ""} />いいえ</label>
+            <label class="option-item"><input type="radio" name="delayedContactAnswer" value="na" ${state.returnCheck.answers.delayedContact === "na" ? "checked" : ""} />該当なし</label>
+          </div>
+        </div>
       </div>
       <div class="btn-row split compact-stack">
         <button id="copyReturnCheckBtn" class="btn-sub" type="button">チェック内容をコピー</button>
@@ -3988,26 +4108,51 @@ function renderReturnCheck() {
     saveState();
     refreshCopyText();
   });
+  document.querySelectorAll("input[name='delayedContactAnswer']").forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      state.returnCheck.answers.delayedContact = target.value;
+      saveState();
+      refreshCopyText();
+    });
+  });
   document.getElementById("finishReturnCheckBtn").addEventListener("click", finishReturnCheck);
 }
 
 function buildReturnCheckCopyText() {
   const a = state.returnCheck.answers;
+  const delayedContactLabel = a.delayedContact === "yes"
+    ? "はい"
+    : a.delayedContact === "no"
+      ? "いいえ"
+      : a.delayedContact === "na"
+        ? "該当なし"
+        : "(未選択)";
   return [
     "【帰宅後チェック】",
     `宿題の有無: ${a.homework || "(未入力)"}`,
     `困ったことの有無: ${a.trouble || "(未入力)"}`,
-    `家庭教師・親への返信: ${a.reply || "(未入力)"}`
+    `家庭教師・親への返信: ${a.reply || "(未入力)"}`,
+    `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`
   ].join("\n");
 }
 
 function finishReturnCheck() {
   const a = state.returnCheck.answers;
+  const delayedContactLabel = a.delayedContact === "yes"
+    ? "はい"
+    : a.delayedContact === "no"
+      ? "いいえ"
+      : a.delayedContact === "na"
+        ? "該当なし"
+        : "(未選択)";
   state.returnCheck.reportText = [
     "【帰宅後報告】",
     `宿題: ${a.homework || "(未入力)"}`,
     `困ったこと: ${a.trouble || "(未入力)"}`,
-    `返信: ${a.reply || "(未入力)"}`
+    `返信: ${a.reply || "(未入力)"}`,
+    `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`
   ].join("\n");
   state.phase = "returnReport";
   saveState();
@@ -4036,6 +4181,9 @@ function renderReturnReport() {
   });
   document.getElementById("sentReturnBtn").addEventListener("click", () => {
     state.returnCheck.done = true;
+    state.returnCheck.reminderVisible = false;
+    state.returnCheck.reminderDeferred = false;
+    state.returnCheck.reminderPromptTriggered = false;
     saveState();
     changePhase("home", false);
   });
@@ -4509,6 +4657,7 @@ function getDateTimeToday(hhmm) {
 function renderScreen(content) {
   app.innerHTML = `${renderTopNav()}${renderUiNotice()}${content}`;
   bindTopNav();
+  renderReturnCheckReminderOverlay();
 }
 
 function renderTopNav() {
@@ -4845,6 +4994,11 @@ function ensurePhaseRefreshTimer() {
   if (phaseRefreshTimer) return;
   phaseRefreshTimer = setInterval(() => {
     if (!authReady || !currentUser || !syncReady) return;
+    const promptStateChanged = syncReturnCheckReminderState();
+    if (promptStateChanged) {
+      saveState();
+    }
+    renderReturnCheckReminderOverlay();
     if (state.phase === "execution" && state.running.taskId && !state.running.isPaused) return;
     requestPassiveRender();
   }, 10000);

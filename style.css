@@ -845,6 +845,42 @@ button:disabled {
   color: #155f7a;
 }
 
+.app-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(17, 24, 39, 0.48);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.app-modal {
+  width: min(520px, 100%);
+  border-radius: 14px;
+  border: 2px solid #dbe5f2;
+  background: #fff;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
+  padding: 16px;
+}
+
+.app-modal h3 {
+  margin: 0 0 8px;
+  font-size: 1.12rem;
+  color: var(--ink);
+}
+
+.app-modal p {
+  margin: 0;
+  color: var(--sub);
+  line-height: 1.6;
+}
+
+.app-modal-actions {
+  margin-top: 14px;
+}
+
 .report-box {
   width: 100%;
   border: 2px solid var(--line);
