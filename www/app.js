@@ -144,6 +144,7 @@ const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname)
 
 let localNotificationTestMessage = "";
 let localNotificationsPluginRef = null;
+let planningRecurringPickerOpen = false;
 
 const state = loadState();
 setupInputGuard();
@@ -389,11 +390,13 @@ function createRecurringPlan(name, plannedMinutes, content, repeatType, days, go
 }
 
 function createTask(name, plannedMinutes, content, meta = {}) {
+  const targetDateKey = normalizeTaskDateKey(meta.targetDateKey) || normalizeTaskDateKey(meta.recurringDateKey);
   return {
     id: crypto.randomUUID(),
     name,
     plannedMinutes,
     content,
+    targetDateKey: targetDateKey || null,
     recurringPlanId: typeof meta.recurringPlanId === "string" ? meta.recurringPlanId : null,
     recurringDateKey: typeof meta.recurringDateKey === "string" ? meta.recurringDateKey : null,
     status: "pending",
@@ -406,14 +409,25 @@ function createTask(name, plannedMinutes, content, meta = {}) {
   };
 }
 
-function normalizeTask(task) {
+function normalizeTaskDateKey(value) {
+  const dateKey = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return "";
+  return dateKey;
+}
+
+function normalizeTask(task, fallbackDateKey = "") {
+  const normalizedRecurringDateKey = normalizeTaskDateKey(task?.recurringDateKey);
+  const normalizedTargetDateKey = normalizeTaskDateKey(task?.targetDateKey)
+    || normalizedRecurringDateKey
+    || normalizeTaskDateKey(fallbackDateKey);
   return {
     id: task.id || crypto.randomUUID(),
     name: String(task.name || ""),
     plannedMinutes: sanitizeMinutes(task.plannedMinutes || DEFAULT_MINUTES),
     content: String(task.content || ""),
+    targetDateKey: normalizedTargetDateKey || null,
     recurringPlanId: typeof task.recurringPlanId === "string" ? task.recurringPlanId : null,
-    recurringDateKey: typeof task.recurringDateKey === "string" ? task.recurringDateKey : null,
+    recurringDateKey: normalizedRecurringDateKey || null,
     status: ["pending", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
     actualSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : null,
     memo: String(task.memo || ""),
@@ -638,15 +652,34 @@ function normalizeHomeworkTasks(raw) {
     .filter((item) => item.name && item.deadlineDate && item.content);
 }
 
-function buildCarryoverTasks(previousState) {
+function buildCarryoverTasks(previousState, nextDateKey) {
   if (!previousState || !Array.isArray(previousState.tasks)) return [];
+  const previousDateKey = normalizeTaskDateKey(previousState.dateKey);
   return previousState.tasks
-    .filter((task) => task && task.status === "deferred")
+    .map((task) => normalizeTask(task, previousDateKey))
+    .filter((task) => task && task.status === "deferred" && task.targetDateKey === previousDateKey)
     .map((task) => createTask(
       String(task.name || "").trim(),
       sanitizeMinutes(task.plannedMinutes),
-      String(task.content || "").trim()
+      String(task.content || "").trim(),
+      {
+        targetDateKey: nextDateKey,
+        submissionTemplateId: task.submissionTemplateId
+      }
     ));
+}
+
+function buildNextDateTasks(previousState, nextDateKey) {
+  if (!previousState || !Array.isArray(previousState.tasks)) return [];
+  const previousDateKey = normalizeTaskDateKey(previousState.dateKey);
+  const nextDayNumber = getDateKeyDayNumber(nextDateKey);
+  const normalized = previousState.tasks.map((task) => normalizeTask(task, previousDateKey));
+  const keepTargets = normalized.filter((task) => {
+    const taskDayNumber = getDateKeyDayNumber(task.targetDateKey);
+    if (taskDayNumber === null || nextDayNumber === null) return false;
+    return taskDayNumber >= nextDayNumber;
+  });
+  return [...keepTargets, ...buildCarryoverTasks(previousState, nextDateKey)];
 }
 
 function loadState() {
@@ -664,13 +697,14 @@ function loadState() {
     localBootHasValidData = true;
 
     if (parsed.dateKey !== todayKey) {
-      const nextState = createInitialState(todayKey, buildCarryoverTasks(parsed));
+      const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey));
       nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
       nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
-      if (parsed.goPressedAt && !parsed.dayClosed) {
+      const summary = buildPastDaySummary(parsed);
+      if (parsed.goPressedAt && !parsed.dayClosed && summary.total > 0) {
         nextState.previousDayPending = {
           dateKey: parsed.dateKey,
-          summary: buildPastDaySummary(parsed)
+          summary
         };
         nextState.phase = "previousDayEnd";
       }
@@ -697,7 +731,7 @@ function loadState() {
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
     safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
     safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
-    safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map(normalizeTask) : [];
+    safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map((task) => normalizeTask(task, todayKey)) : [];
     safe.planningForm = normalizePlanningForm(safe.planningForm);
     safe.submissionTemplates = normalizeSubmissionTemplates(safe.submissionTemplates);
     safe.submissionTemplateEditorForm = normalizeSubmissionTemplateEditorForm(safe.submissionTemplateEditorForm);
@@ -741,7 +775,12 @@ function loadState() {
 }
 
 function buildPastDaySummary(prev) {
-  const tasks = Array.isArray(prev.tasks) ? prev.tasks : [];
+  const prevDateKey = normalizeTaskDateKey(prev?.dateKey);
+  const tasks = Array.isArray(prev?.tasks)
+    ? prev.tasks
+      .map((task) => normalizeTask(task, prevDateKey))
+      .filter((task) => task.targetDateKey === prevDateKey)
+    : [];
   const done = tasks.filter((t) => t.status === "done").length;
   const total = tasks.length;
   const planned = tasks.reduce((sum, t) => sum + (Number(t.plannedMinutes) || 0), 0);
@@ -776,10 +815,13 @@ function normalizePlanningForm(raw) {
 
 function normalizeConfirmedPlan(raw) {
   if (!raw) return null;
+  const fallbackDateKey = raw.planFor === "tomorrow"
+    ? addDaysToDateKey(getTodayKeyJst(), 1)
+    : getTodayKeyJst();
   return {
     planFor: raw.planFor === "today" ? "today" : "tomorrow",
     planTimes: { ...createDefaultPlanTimes(), ...(raw.planTimes || {}) },
-    tasks: Array.isArray(raw.tasks) ? raw.tasks.map(normalizeTask) : [],
+    tasks: Array.isArray(raw.tasks) ? raw.tasks.map((task) => normalizeTask(task, fallbackDateKey)) : [],
     totalPlanned: sanitizeMinutesOrZero(raw.totalPlanned),
     reportText: String(raw.reportText || ""),
     confirmedAt: typeof raw.confirmedAt === "number" ? raw.confirmedAt : 0
@@ -1321,13 +1363,14 @@ function normalizeLoadedState(rawState) {
 
   const parsed = rawState;
   if (parsed.dateKey !== todayKey) {
-    const nextState = createInitialState(todayKey, buildCarryoverTasks(parsed));
+    const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey));
     nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
     nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
-    if (parsed.goPressedAt && !parsed.dayClosed) {
+    const summary = buildPastDaySummary(parsed);
+    if (parsed.goPressedAt && !parsed.dayClosed && summary.total > 0) {
       nextState.previousDayPending = {
         dateKey: parsed.dateKey,
-        summary: buildPastDaySummary(parsed)
+        summary
       };
       nextState.phase = "previousDayEnd";
     }
@@ -1354,7 +1397,7 @@ function normalizeLoadedState(rawState) {
   ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
   safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
   safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
-  safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map(normalizeTask) : [];
+  safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map((task) => normalizeTask(task, todayKey)) : [];
   safe.planningForm = normalizePlanningForm(safe.planningForm);
   safe.submissionTemplates = normalizeSubmissionTemplates(safe.submissionTemplates);
   safe.submissionTemplateEditorForm = normalizeSubmissionTemplateEditorForm(safe.submissionTemplateEditorForm);
@@ -2674,8 +2717,9 @@ function getSubmissionChecklistSummary(target) {
 
 function getSubmissionChecklistRemainingEntries() {
   const entries = [];
+  const executionDateKey = getCurrentHomeDateKey();
 
-  state.tasks.forEach((task) => {
+  getTasksForDate(executionDateKey).forEach((task) => {
     if (!task || task.status !== "done") return;
     const template = findSubmissionTemplate(task.submissionTemplateId);
     if (!template || template.items.length === 0) return;
@@ -3325,7 +3369,7 @@ function normalizePreviousDayArchive(rawArchive) {
       ...createDefaultPlanTimes(),
       ...(rawArchive.planTimes || {})
     },
-    tasks: Array.isArray(rawArchive.tasks) ? rawArchive.tasks.map(normalizeTask) : [],
+    tasks: Array.isArray(rawArchive.tasks) ? rawArchive.tasks.map((task) => normalizeTask(task, dateKey)) : [],
     belongingsItems: Array.isArray(rawArchive.belongingsItems)
       ? rawArchive.belongingsItems.map((item) => String(item || "").trim()).filter(Boolean)
       : [],
@@ -3336,14 +3380,44 @@ function normalizePreviousDayArchive(rawArchive) {
 
 function createPreviousDayArchive(dateKey) {
   const belongingsSummary = getBelongingsSummaryForDate(dateKey);
+  const tasks = getTasksForDate(dateKey);
   return {
     dateKey,
     planTimes: { ...state.planTimes },
-    tasks: state.tasks.map((task) => ({ ...task })),
+    tasks: tasks.map((task) => ({ ...task })),
     belongingsItems: [...belongingsSummary.mergedItems],
-    totalPlanned: sumPlanned(),
-    totalActual: sumActualMinutes()
+    totalPlanned: sumPlanned(tasks),
+    totalActual: sumActualMinutes(tasks)
   };
+}
+
+function getTaskTargetDateKey(task, fallbackDateKey = state.dateKey) {
+  if (!task) return "";
+  return normalizeTaskDateKey(task.targetDateKey)
+    || normalizeTaskDateKey(task.recurringDateKey)
+    || normalizeTaskDateKey(fallbackDateKey);
+}
+
+function isTaskForDate(task, dateKey, fallbackDateKey = state.dateKey) {
+  return getTaskTargetDateKey(task, fallbackDateKey) === normalizeTaskDateKey(dateKey);
+}
+
+function getTasksForDate(dateKey, tasks = state.tasks, fallbackDateKey = state.dateKey) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey);
+  if (!normalizedDateKey) return [];
+  return (Array.isArray(tasks) ? tasks : []).filter((task) => isTaskForDate(task, normalizedDateKey, fallbackDateKey));
+}
+
+function getCurrentHomeDateKey() {
+  return state.dayClosed ? addDaysToDateKey(state.dateKey, 1) : state.dateKey;
+}
+
+function getPlanningVisibleTasks() {
+  return getTasksForDate(getPlanningTargetDateKey());
+}
+
+function getExecutionVisibleTasks() {
+  return getTasksForDate(getCurrentHomeDateKey());
 }
 
 function getHomeDisplayContext() {
@@ -3359,12 +3433,12 @@ function getHomeDisplayContext() {
       runningTaskId: null
     };
   }
-  const displayDateKey = state.dayClosed ? addDaysToDateKey(state.dateKey, 1) : state.dateKey;
+  const displayDateKey = getCurrentHomeDateKey();
   const belongingsSummary = getBelongingsSummaryForDate(displayDateKey);
   return {
     isPreviousView: false,
     dateKey: displayDateKey,
-    tasks: state.tasks,
+    tasks: getTasksForDate(displayDateKey),
     planTimes: state.planTimes,
     belongingsItems: belongingsSummary.mergedItems,
     runningTaskId: state.running.taskId
@@ -3383,7 +3457,15 @@ function getHomeActualText(task) {
 }
 
 function renderPlanning() {
-  const editingTask = state.planningForm.mode === "edit" ? findTask(state.planningForm.targetId) : null;
+  const targetDateKey = getPlanningTargetDateKey();
+  const planningDateChoices = getPlanningDateChoices();
+  const planningTasks = getPlanningVisibleTasks();
+  const recurringPickerHtml = planningRecurringPickerOpen
+    ? renderPlanningRecurringPicker(targetDateKey)
+    : "";
+  const editingTask = state.planningForm.mode === "edit"
+    ? planningTasks.find((task) => task.id === state.planningForm.targetId) || null
+    : null;
   const showCustomName = state.planningForm.taskNameChoice === TASK_NAME_NEW;
   const minutesValue = getPlanningFormMinutes() || DEFAULT_MINUTES;
   const wakeParts = getTimeParts(state.planTimes.wakeUp, "06:30");
@@ -3400,8 +3482,8 @@ function renderPlanning() {
 
     <p class="legend">予定を作る日</p>
     <div class="option-group compact-options">
-      <label class="option-item"><input type="radio" name="planFor" value="today" ${state.planFor === "today" ? "checked" : ""} /><span>今日</span></label>
-      <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>明日</span></label>
+      <label class="option-item"><input type="radio" name="planFor" value="today" ${state.planFor === "today" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.todayLabel)}</span></label>
+      <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.tomorrowLabel)}</span></label>
     </div>
 
     <div class="time-grid">
@@ -3454,6 +3536,11 @@ function renderPlanning() {
     </div>
 
     <h3>登録済みタスク</h3>
+    <div class="btn-row compact-stack">
+      <button id="addRecurringBulkBtn" class="btn-sub" type="button" ${getBusyDisabledAttr()}>定期予定を一括追加</button>
+      <button id="openRecurringPickerBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>定期予定を個別追加</button>
+    </div>
+    ${recurringPickerHtml}
     <ul id="taskList" class="task-list compact-task-list"></ul>
 
     <div class="task-form-box">
@@ -3477,24 +3564,57 @@ function renderPlanning() {
     <div class="btn-row compact-stack"><button id="goBtn" class="btn-main" type="button" ${getBusyDisabledAttr()}>最終確認へ</button></div>
   `);
 
-  renderTaskListForPlanning();
+  renderTaskListForPlanning(planningTasks);
   bindPlanningEvents();
 }
 
-function renderTaskListForPlanning() {
+function renderPlanningRecurringPicker(targetDateKey) {
+  const existingPlanIds = new Set(
+    getTasksForDate(targetDateKey)
+      .map((task) => String(task?.recurringPlanId || ""))
+      .filter(Boolean)
+  );
+  const rows = state.recurringPlans.length === 0
+    ? `<p class="helper">定期予定が登録されていません。</p>`
+    : state.recurringPlans.map((plan) => {
+      const disabled = existingPlanIds.has(plan.id) ? "disabled" : "";
+      const badge = existingPlanIds.has(plan.id) ? "<span class=\"helper\">追加済み</span>" : "";
+      return `
+        <label class="option-item recurring-day-item">
+          <input type="checkbox" data-recurring-picker-plan-id="${escapeHtml(plan.id)}" ${disabled} />
+          <span>${escapeHtml(plan.name)} ${badge}</span>
+        </label>
+      `;
+    }).join("");
+
+  return `
+    <div class="task-card">
+      <h3>定期予定を個別追加</h3>
+      <div class="option-group compact-options">
+        ${rows}
+      </div>
+      <div class="btn-row compact-stack">
+        <button id="addRecurringSelectedBtn" class="btn-sub" type="button" ${getBusyDisabledAttr()}>選択した予定を追加</button>
+        <button id="closeRecurringPickerBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>閉じる</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderTaskListForPlanning(planningTasks = getPlanningVisibleTasks()) {
   const list = document.getElementById("taskList");
   list.innerHTML = "";
 
-  if (state.tasks.length === 0) {
+  if (planningTasks.length === 0) {
     const empty = document.createElement("li");
     empty.className = "task-card compact-empty";
     empty.innerHTML = "<p>登録済みタスクはまだありません。</p>";
     list.appendChild(empty);
-    updateTotalPlanned();
+    updateTotalPlanned(planningTasks);
     return;
   }
 
-  state.tasks.forEach((task) => {
+  planningTasks.forEach((task) => {
     const done = task.status === "done";
     const li = document.createElement("li");
     li.className = `task-card compact-task-row${state.planningForm.targetId === task.id ? " editing-row" : ""}`;
@@ -3510,7 +3630,7 @@ function renderTaskListForPlanning() {
     list.appendChild(li);
   });
 
-  updateTotalPlanned();
+  updateTotalPlanned(planningTasks);
 }
 
 function renderTaskNameOptions() {
@@ -3534,7 +3654,8 @@ function bindPlanningEvents() {
       const nextPlanFor = target.value === "today" ? "today" : "tomorrow";
       if (state.planFor === nextPlanFor) return;
       state.planFor = nextPlanFor;
-      applyRecurringPlansForSelectedDateIfNeeded();
+      state.planningForm = createPlanningForm();
+      planningRecurringPickerOpen = false;
       saveState();
       renderPlanning();
     });
@@ -3628,6 +3749,43 @@ function bindPlanningEvents() {
 
   bindProtectedActionButton("saveTaskBtn", savePlanningTask);
 
+  document.getElementById("addRecurringBulkBtn")?.addEventListener("click", () => {
+    const dateKey = getPlanningTargetDateKey();
+    const weekdayKey = getWeekdayKeyByDateKey(dateKey);
+    const applicablePlanIds = state.recurringPlans
+      .filter((plan) => isRecurringPlanForWeekday(plan, weekdayKey))
+      .map((plan) => plan.id);
+    const result = addRecurringPlansToDate(dateKey, applicablePlanIds);
+    saveState();
+    setUiNotice("success", `定期予定を追加しました（追加 ${result.added}件 / 既存 ${result.skipped}件）`, { autoHideMs: 2600 });
+    renderPlanning();
+  });
+
+  document.getElementById("openRecurringPickerBtn")?.addEventListener("click", () => {
+    planningRecurringPickerOpen = !planningRecurringPickerOpen;
+    renderPlanning();
+  });
+
+  document.getElementById("closeRecurringPickerBtn")?.addEventListener("click", () => {
+    planningRecurringPickerOpen = false;
+    renderPlanning();
+  });
+
+  document.getElementById("addRecurringSelectedBtn")?.addEventListener("click", () => {
+    const selectedPlanIds = Array.from(document.querySelectorAll("input[data-recurring-picker-plan-id]:checked"))
+      .map((input) => String(input.getAttribute("data-recurring-picker-plan-id") || ""))
+      .filter(Boolean);
+    if (selectedPlanIds.length === 0) {
+      setUiNotice("error", "追加する定期予定を選択してください。", { autoHideMs: 2200 });
+      return;
+    }
+    const dateKey = getPlanningTargetDateKey();
+    const result = addRecurringPlansToDate(dateKey, selectedPlanIds);
+    saveState();
+    setUiNotice("success", `定期予定を追加しました（追加 ${result.added}件 / 既存 ${result.skipped}件）`, { autoHideMs: 2600 });
+    renderPlanning();
+  });
+
   document.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.id;
@@ -3652,13 +3810,18 @@ function bindPlanningEvents() {
 }
 
 function movePendingTask(taskId, dir) {
-  const idx = state.tasks.findIndex((t) => t.id === taskId);
+  const planningTasks = getPlanningVisibleTasks();
+  const scopedTaskIds = planningTasks.map((task) => task.id);
+  const idx = scopedTaskIds.indexOf(taskId);
   if (idx === -1) return;
   const target = idx + dir;
-  if (target < 0 || target >= state.tasks.length) return;
-  const tmp = state.tasks[idx];
-  state.tasks[idx] = state.tasks[target];
-  state.tasks[target] = tmp;
+  if (target < 0 || target >= scopedTaskIds.length) return;
+  const fromGlobalIndex = state.tasks.findIndex((task) => task.id === scopedTaskIds[idx]);
+  const toGlobalIndex = state.tasks.findIndex((task) => task.id === scopedTaskIds[target]);
+  if (fromGlobalIndex === -1 || toGlobalIndex === -1) return;
+  const tmp = state.tasks[fromGlobalIndex];
+  state.tasks[fromGlobalIndex] = state.tasks[toGlobalIndex];
+  state.tasks[toGlobalIndex] = tmp;
 }
 
 function bindTimeSelectInput(key, hasNone = false, modeId = "") {
@@ -3716,13 +3879,14 @@ async function savePlanningTask() {
     key: "planning-task-save",
     syncFromDom: syncPlanningFormFromDom,
     validate: () => {
+      const planningTasks = getPlanningVisibleTasks();
       const name = getPlanningFormTaskName();
       const minutes = getPlanningFormMinutes();
       const content = state.planningForm.content.trim();
       if (!name) return "タスク名を入力してください。";
       if (!minutes) return "予定時間を入力してください。";
       if (!content) return "内容を入力してください。";
-      if (state.planningForm.mode === "edit" && !findTask(state.planningForm.targetId)) {
+      if (state.planningForm.mode === "edit" && !planningTasks.find((task) => task.id === state.planningForm.targetId)) {
         return "保存対象の予定が見つかりません。";
       }
       return null;
@@ -3737,6 +3901,7 @@ async function savePlanningTask() {
       state.planningForm = normalizePlanningForm(snapshot.planningForm);
     },
     apply: () => {
+      const targetDateKey = getPlanningTargetDateKey();
       const name = getPlanningFormTaskName();
       const minutes = getPlanningFormMinutes();
       const content = state.planningForm.content.trim();
@@ -3749,6 +3914,7 @@ async function savePlanningTask() {
         task.name = name;
         task.plannedMinutes = minutes;
         task.content = content;
+        task.targetDateKey = targetDateKey;
         task.submissionTemplateId = submissionTemplateId;
         if (templateChanged) {
           task.submissionCheckedItemIds = [];
@@ -3757,7 +3923,10 @@ async function savePlanningTask() {
         return;
       }
 
-      state.tasks.push(createTask(name, minutes, content, { submissionTemplateId }));
+      state.tasks.push(createTask(name, minutes, content, {
+        targetDateKey,
+        submissionTemplateId
+      }));
     },
     onSuccess: () => {
       state.planningForm = createPlanningForm();
@@ -3769,15 +3938,17 @@ async function savePlanningTask() {
 }
 
 function onGoToPlanConfirm() {
-  if (state.tasks.length === 0) return alert("タスクが0件です。");
+  const planningTasks = getPlanningVisibleTasks();
+  if (planningTasks.length === 0) return alert("タスクが0件です。");
 
-  const invalid = state.tasks.find((t) => !t.name.trim() || !t.content.trim());
+  const invalid = planningTasks.find((t) => !t.name.trim() || !t.content.trim());
   if (invalid) return alert("タスク名と内容を確認してください。");
 
   changePhase("planConfirm");
 }
 
 function renderPlanConfirm() {
+  const planningTasks = getPlanningVisibleTasks();
   const report = buildPlanReportText();
   const targetDateKey = getPlanningTargetDateKey();
   const confirmBelongings = buildConfirmBelongingsSummary(targetDateKey);
@@ -3790,7 +3961,7 @@ function renderPlanConfirm() {
       <p>勉強開始　　${formatTimeForDisplay(state.planTimes.studyStart)}</p>
     </div>
     <ol class="confirm-list" id="confirmTaskList"></ol>
-    <div class="summary"><p>学習予定時間の合計: ${sumPlanned()}分</p></div>
+    <div class="summary"><p>学習予定時間の合計: ${sumPlanned(planningTasks)}分</p></div>
     <div class="btn-row compact-stack">
       <button id="confirmPlanBtn" class="btn-main" type="button">この予定で決定</button>
       <button id="backToPlanningBtn" class="btn-quiet" type="button">戻って修正</button>
@@ -3800,7 +3971,7 @@ function renderPlanConfirm() {
   `);
 
   const list = document.getElementById("confirmTaskList");
-  state.tasks.forEach((task) => {
+  planningTasks.forEach((task) => {
     const li = document.createElement("li");
     li.className = "confirm-item";
     li.innerHTML = `
@@ -3844,31 +4015,41 @@ function renderConfirmBelongingsSide(confirmBelongings) {
 }
 
 function confirmPlan() {
-  state.tasks = state.tasks.map((t) => ({
-    ...t,
-    name: t.name.trim(),
-    content: t.content.trim(),
-    plannedMinutes: sanitizeMinutes(t.plannedMinutes)
-  }));
+  const targetDateKey = getPlanningTargetDateKey();
+  state.tasks = state.tasks.map((t) => {
+    if (!isTaskForDate(t, targetDateKey)) return t;
+    return {
+      ...t,
+      name: t.name.trim(),
+      content: t.content.trim(),
+      plannedMinutes: sanitizeMinutes(t.plannedMinutes)
+    };
+  });
 
   if (state.planFor === "tomorrow") {
     // Next-day planning starts a fresh execution state for all tasks.
     state.tasks = state.tasks.map((t) => ({
       ...t,
-      status: "pending",
-      actualSeconds: null,
-      memo: "",
-      closeAction: ""
+      ...(isTaskForDate(t, targetDateKey)
+        ? {
+          status: "pending",
+          actualSeconds: null,
+          memo: "",
+          closeAction: ""
+        }
+        : {})
     }));
   }
 
   updateTaskNameStats();
 
+  const planningTasks = getTasksForDate(targetDateKey);
+
   state.confirmedPlan = {
     planFor: state.planFor,
     planTimes: { ...state.planTimes },
-    tasks: state.tasks.map((t) => ({ ...t })),
-    totalPlanned: sumPlanned(),
+    tasks: planningTasks.map((t) => ({ ...t })),
+    totalPlanned: sumPlanned(planningTasks),
     reportText: buildPlanReportText(),
     confirmedAt: Date.now()
   };
@@ -3879,7 +4060,9 @@ function confirmPlan() {
   }
 
   state.goPressedAt = Date.now();
-  state.dayClosed = false;
+  if (state.planFor === "today") {
+    state.dayClosed = false;
+  }
   saveState();
   changePhase("planReport");
 }
@@ -3887,7 +4070,7 @@ function confirmPlan() {
 function updateTaskNameStats() {
   const map = new Map(state.taskNameStats.map((s) => [s.name, { ...s }]));
   const now = Date.now();
-  state.tasks.forEach((task) => {
+  getPlanningVisibleTasks().forEach((task) => {
     const name = task.name.trim();
     if (!name) return;
     const s = map.get(name) || { name, count: 0, lastUsedAt: 0 };
@@ -3899,6 +4082,7 @@ function updateTaskNameStats() {
 }
 
 function buildPlanReportText() {
+  const planningTasks = getPlanningVisibleTasks();
   const now = getNowInJst();
   const targetDate = new Date(now);
   if (state.planFor === "tomorrow") {
@@ -3925,9 +4109,9 @@ function buildPlanReportText() {
   const belongingsLines = buildPlanReportBelongingsLines(getPlanningTargetDateKey());
   belongingsLines.forEach((line) => lines.push(line));
   lines.push("");
-  lines.push(`合計時間　${formatMinutesAsHourMinute(sumPlanned())}`);
+  lines.push(`合計時間　${formatMinutesAsHourMinute(sumPlanned(planningTasks))}`);
   lines.push("");
-  state.tasks.forEach((task, index) => {
+  planningTasks.forEach((task, index) => {
     lines.push(`${toCircledNumber(index + 1)} ${task.name}　予定 ${task.plannedMinutes}分`);
     lines.push(` 内容：${task.content}`);
     lines.push("");
@@ -3976,13 +4160,13 @@ function renderPlanReport() {
 
 function getExecutionSelectableTasks() {
   // Keep existing pending-order behavior and only limit visible cards for execution selection.
-  const pending = state.tasks.filter((t) => t.status === "pending");
+  const pending = getExecutionVisibleTasks().filter((t) => t.status === "pending");
   return pending.slice(0, EXECUTION_SELECT_LIMIT);
 }
 
 function renderExecution() {
   const runningTask = getRunningTask();
-  const pending = state.tasks.filter((t) => t.status === "pending");
+  const pending = getExecutionVisibleTasks().filter((t) => t.status === "pending");
   const selectableTasks = state.executionTaskListExpanded
     ? pending
     : getExecutionSelectableTasks();
@@ -4653,8 +4837,9 @@ function startTodayFinishFlow() {
     runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   }
   state.running = createRunningState();
+  const executionDateKey = getCurrentHomeDateKey();
   state.review = {
-    pendingIds: state.tasks.filter((t) => t.status === "pending").map((t) => t.id),
+    pendingIds: getTasksForDate(executionDateKey).filter((t) => t.status === "pending").map((t) => t.id),
     index: 0,
     pendingAction: null,
     draftMemo: ""
@@ -5003,13 +5188,14 @@ function renderReturnReport() {
 }
 
 function renderResult() {
-  const done = state.tasks.filter((t) => t.status === "done");
-  const deferred = state.tasks.filter((t) => t.status === "deferred");
-  const discarded = state.tasks.filter((t) => t.status === "discarded");
-  const unfinished = state.tasks.length - done.length;
-  const totalPlanned = sumPlanned();
-  const totalActual = sumActualMinutes();
-  const report = buildResultReportText(done, deferred, discarded, unfinished, totalActual);
+  const targetTasks = getTasksForDate(state.dateKey);
+  const done = targetTasks.filter((t) => t.status === "done");
+  const deferred = targetTasks.filter((t) => t.status === "deferred");
+  const discarded = targetTasks.filter((t) => t.status === "discarded");
+  const unfinished = targetTasks.length - done.length;
+  const totalPlanned = sumPlanned(targetTasks);
+  const totalActual = sumActualMinutes(targetTasks);
+  const report = buildResultReportText(targetTasks, done, deferred, discarded, unfinished, totalActual);
 
   renderScreen(`
     <h3>保護者への報告文</h3>
@@ -5033,7 +5219,7 @@ function renderResult() {
   `);
 
   const list = document.getElementById("taskResultList");
-  state.tasks.forEach((task) => {
+  targetTasks.forEach((task) => {
     const li = document.createElement("li");
     li.className = "result-card result-card-compact";
     li.innerHTML = `
@@ -5045,17 +5231,18 @@ function renderResult() {
     list.appendChild(li);
   });
 
-  document.getElementById("resultReportText").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
+  document.getElementById("resultReportText").innerHTML = buildResultReportHtml(targetTasks, done.length, unfinished, totalActual);
   document.getElementById("endDayBtn").addEventListener("click", () => changePhase("dayEnd"));
 }
 
 function renderDayEnd() {
-  const done = state.tasks.filter((t) => t.status === "done");
-  const deferred = state.tasks.filter((t) => t.status === "deferred");
-  const discarded = state.tasks.filter((t) => t.status === "discarded");
-  const unfinished = state.tasks.filter((t) => t.status !== "done").length;
-  const totalActual = sumActualMinutes();
-  const report = buildResultReportText(done, deferred, discarded, unfinished, totalActual);
+  const targetTasks = getTasksForDate(state.dateKey);
+  const done = targetTasks.filter((t) => t.status === "done");
+  const deferred = targetTasks.filter((t) => t.status === "deferred");
+  const discarded = targetTasks.filter((t) => t.status === "discarded");
+  const unfinished = targetTasks.filter((t) => t.status !== "done").length;
+  const totalActual = sumActualMinutes(targetTasks);
+  const report = buildResultReportText(targetTasks, done, deferred, discarded, unfinished, totalActual);
 
   renderScreen(`
     <h2>1日の終了</h2>
@@ -5067,7 +5254,7 @@ function renderDayEnd() {
     <p id="dayEndMsg" class="helper"></p>
   `);
 
-  document.getElementById("dayEndReport").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
+  document.getElementById("dayEndReport").innerHTML = buildResultReportHtml(targetTasks, done.length, unfinished, totalActual);
   document.getElementById("copyDayEndBtn").addEventListener("click", async () => {
     if (!confirmLargeActualGapBeforeSend()) return;
     const ok = await copyToClipboard(report);
@@ -5088,10 +5275,13 @@ function renderDayEnd() {
   });
 }
 
-function buildResultReportText(done, deferred, discarded, unfinished, totalActual) {
-  const now = getNowInJst();
-  const title = `${now.getMonth() + 1}月${now.getDate()}日結果`;
-  const unfinishedNames = state.tasks
+function buildResultReportText(targetTasks, done, deferred, discarded, unfinished, totalActual) {
+  const dateKey = normalizeTaskDateKey(state.dateKey);
+  const dateMatch = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const title = dateMatch
+    ? `${Number(dateMatch[2])}月${Number(dateMatch[3])}日結果`
+    : "本日結果";
+  const unfinishedNames = targetTasks
     .filter((task) => task.status !== "done")
     .map((task) => task.name)
     .join("、");
@@ -5101,16 +5291,16 @@ function buildResultReportText(done, deferred, discarded, unfinished, totalActua
   const lines = [
     `【${title}】`,
     "",
-    `予定：${state.tasks.length}件`,
+    `予定：${targetTasks.length}件`,
     `完了：${done.length}件`,
     unfinishedLine,
     "",
-    `予定時間：${formatMinutesAsHourMinute(sumPlanned())}`,
+    `予定時間：${formatMinutesAsHourMinute(sumPlanned(targetTasks))}`,
     `実績時間：${formatMinutesAsHourMinute(totalActual)}`,
     ""
   ];
 
-  state.tasks.forEach((task, index) => {
+  targetTasks.forEach((task, index) => {
     const contentWrapPrefix = `\t${"　".repeat(3)}`;
     lines.push(`${toCircledNumber(index + 1)}\t${task.name}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分`);
     const contentParts = splitReportContent(task.content || "(未入力)", 30);
@@ -5128,10 +5318,13 @@ function buildResultReportText(done, deferred, discarded, unfinished, totalActua
   return lines.join("\n");
 }
 
-function buildResultReportHtml(doneCount, unfinishedCount, totalActual) {
-  const now = getNowInJst();
-  const title = `${now.getMonth() + 1}月${now.getDate()}日結果`;
-  const unfinishedNames = state.tasks
+function buildResultReportHtml(targetTasks, doneCount, unfinishedCount, totalActual) {
+  const dateKey = normalizeTaskDateKey(state.dateKey);
+  const dateMatch = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const title = dateMatch
+    ? `${Number(dateMatch[2])}月${Number(dateMatch[3])}日結果`
+    : "本日結果";
+  const unfinishedNames = targetTasks
     .filter((task) => task.status !== "done")
     .map((task) => task.name)
     .join("、");
@@ -5141,16 +5334,16 @@ function buildResultReportHtml(doneCount, unfinishedCount, totalActual) {
 
   const lines = [
     `<p>【${escapeHtml(title)}】</p>`,
-    `<p>予定：${state.tasks.length}件</p>`,
+    `<p>予定：${targetTasks.length}件</p>`,
     `<p>完了：${doneCount}件</p>`,
     `<p>${escapeHtml(unfinishedLine)}</p>`,
-    `<p>予定時間：${formatMinutesAsHourMinute(sumPlanned())}</p>`,
+    `<p>予定時間：${formatMinutesAsHourMinute(sumPlanned(targetTasks))}</p>`,
     `<p>実績時間：${formatMinutesAsHourMinute(totalActual)}</p>`
   ];
 
   lines.push('<div class="result-report-gap"></div>');
 
-  state.tasks.forEach((task, index) => {
+  targetTasks.forEach((task, index) => {
     lines.push('<div class="result-report-task">');
     lines.push(`<p>${toCircledNumber(index + 1)} ${escapeHtml(task.name)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分</p>`);
     lines.push(`<div class="task-content-row result-report-content-row"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content || "(未入力)")}</span></div>`);
@@ -5171,7 +5364,7 @@ function hasLargeActualGap(task) {
 }
 
 function getTasksWithLargeActualGap() {
-  return state.tasks.filter((task) => hasLargeActualGap(task));
+  return getTasksForDate(state.dateKey).filter((task) => hasLargeActualGap(task));
 }
 
 function confirmLargeActualGapBeforeSend() {
@@ -5659,13 +5852,72 @@ function renderHomeHomeworkSummary(pendingHomework) {
   `;
 }
 
-function getPlanningTargetDateKey() {
-  const dt = getNowInJst();
-  if (state.planFor === "tomorrow") dt.setDate(dt.getDate() + 1);
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
+function buildDateKeyFromDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function formatPlanningDateChoice(dateKey, suffixText) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return suffixText;
+  const weekdayKey = getWeekdayKeyByDateKey(dateKey);
+  const weekdayLabel = RECURRING_DAY_LABELS[weekdayKey] || "";
+  return `${Number(m[2])}/${Number(m[3])}（${weekdayLabel}） ${suffixText}`;
+}
+
+function getPlanningDateChoices() {
+  const base = getNowInJst();
+  const todayDate = new Date(base);
+  const tomorrowDate = new Date(base);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const todayDateKey = buildDateKeyFromDate(todayDate);
+  const tomorrowDateKey = buildDateKeyFromDate(tomorrowDate);
+  return {
+    todayDateKey,
+    tomorrowDateKey,
+    todayLabel: formatPlanningDateChoice(todayDateKey, "今日"),
+    tomorrowLabel: formatPlanningDateChoice(tomorrowDateKey, "明日")
+  };
+}
+
+function addRecurringPlansToDate(dateKey, planIds = []) {
+  const selectedDateKey = normalizeTaskDateKey(dateKey);
+  if (!selectedDateKey) return { added: 0, skipped: 0 };
+  const targetPlans = state.recurringPlans.filter((plan) => planIds.includes(plan.id));
+  const existingPairs = new Set(
+    getTasksForDate(selectedDateKey)
+      .map((task) => {
+        const planId = String(task?.recurringPlanId || "");
+        if (!planId) return "";
+        return `${selectedDateKey}::${planId}`;
+      })
+      .filter(Boolean)
+  );
+  let added = 0;
+  let skipped = 0;
+  targetPlans.forEach((plan) => {
+    const pairKey = `${selectedDateKey}::${plan.id}`;
+    if (existingPairs.has(pairKey)) {
+      skipped += 1;
+      return;
+    }
+    state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content, {
+      recurringPlanId: plan.id,
+      recurringDateKey: selectedDateKey,
+      targetDateKey: selectedDateKey,
+      submissionTemplateId: plan.submissionTemplateId
+    }));
+    existingPairs.add(pairKey);
+    added += 1;
+  });
+  return { added, skipped };
+}
+
+function getPlanningTargetDateKey() {
+  const choices = getPlanningDateChoices();
+  return state.planFor === "tomorrow" ? choices.tomorrowDateKey : choices.todayDateKey;
 }
 
 function getWeekdayKeyByDateKey(dateKey) {
@@ -5696,23 +5948,26 @@ function getSortedTaskNameOptions() {
   });
 }
 
-function updateTotalPlanned() {
+function updateTotalPlanned(tasks = getPlanningVisibleTasks()) {
   const totalEl = document.getElementById("totalPlanned");
   if (!totalEl) return;
-  totalEl.textContent = `学習予定時間の合計 ${sumPlanned()}分`;
+  totalEl.textContent = `学習予定時間の合計 ${sumPlanned(tasks)}分`;
 }
 
-function getCounts() {
-  const done = state.tasks.filter((t) => t.status === "done").length;
-  return { total: state.tasks.length, done, unfinished: state.tasks.length - done };
+function getCounts(tasks = state.tasks) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  const done = source.filter((t) => t.status === "done").length;
+  return { total: source.length, done, unfinished: source.length - done };
 }
 
-function sumPlanned() {
-  return state.tasks.reduce((sum, t) => sum + sanitizeMinutes(t.plannedMinutes), 0);
+function sumPlanned(tasks = state.tasks) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  return source.reduce((sum, t) => sum + sanitizeMinutes(t.plannedMinutes), 0);
 }
 
-function sumActualMinutes() {
-  return state.tasks.reduce((sum, t) => sum + secondsToMinutes(t.actualSeconds), 0);
+function sumActualMinutes(tasks = state.tasks) {
+  const source = Array.isArray(tasks) ? tasks : [];
+  return source.reduce((sum, t) => sum + secondsToMinutes(t.actualSeconds), 0);
 }
 
 function secondsToMinutes(sec) {
