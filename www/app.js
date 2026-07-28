@@ -256,6 +256,7 @@ function createRecurringForm() {
     content: "",
     belongings: [],
     belongingInput: "",
+    submissionTemplateId: SUBMISSION_TEMPLATE_NONE,
     repeatType: "daily",
     days: [],
     googleSync: false
@@ -373,7 +374,7 @@ function createInitialState(dateKey, tasks = []) {
   };
 }
 
-function createRecurringPlan(name, plannedMinutes, content, repeatType, days, googleSync, belongings = []) {
+function createRecurringPlan(name, plannedMinutes, content, repeatType, days, googleSync, belongings = [], submissionTemplateId = SUBMISSION_TEMPLATE_NONE) {
   return {
     id: crypto.randomUUID(),
     name,
@@ -382,7 +383,8 @@ function createRecurringPlan(name, plannedMinutes, content, repeatType, days, go
     belongings: normalizeBelongingsList(belongings),
     repeatType: normalizeRecurringRepeatType(repeatType),
     days: normalizeRepeatDays(days),
-    googleSync: Boolean(googleSync)
+    googleSync: Boolean(googleSync),
+    submissionTemplateId: normalizeSubmissionTemplateId(submissionTemplateId)
   };
 }
 
@@ -536,7 +538,8 @@ function normalizeRecurringPlan(item) {
     belongings: normalizeBelongingsList(item?.belongings),
     repeatType: normalizeRecurringRepeatType(item?.repeatType || migratedType),
     days: normalizeRepeatDays(normalizedDays),
-    googleSync: Boolean(item?.googleSync)
+    googleSync: Boolean(item?.googleSync),
+    submissionTemplateId: normalizeSubmissionTemplateId(item?.submissionTemplateId)
   };
 }
 
@@ -762,7 +765,7 @@ function normalizePlanningForm(raw) {
   base.minutesChoice = typeof base.minutesChoice === "string" ? base.minutesChoice : String(DEFAULT_MINUTES);
   base.customMinutes = String(base.customMinutes || base.minutesChoice || DEFAULT_MINUTES);
   base.content = String(base.content || "");
-  base.submissionTemplateId = normalizeSubmissionTemplateId(base.submissionTemplateId);
+  base.submissionTemplateId = SUBMISSION_TEMPLATE_NONE;
   delete base.repeatType;
   delete base.repeatDays;
   delete base.deadlineType;
@@ -792,6 +795,7 @@ function normalizeRecurringForm(raw) {
   base.content = String(base.content || "");
   base.belongings = normalizeBelongingsList(base.belongings);
   base.belongingInput = String(base.belongingInput || "");
+  base.submissionTemplateId = normalizeSubmissionTemplateId(base.submissionTemplateId);
   base.repeatType = normalizeRecurringRepeatType(base.repeatType);
   base.days = normalizeRepeatDays(base.days);
   if (base.repeatType === "daily") base.days = [];
@@ -947,10 +951,12 @@ function syncRecurringFormFromDom() {
   const minutes = getInputElementValue("recurringMinutes");
   const content = getInputElementValue("recurringContent");
   const belongingInput = getInputElementValue("recurringBelongingInput");
+  const submissionTemplateId = getInputElementValue("recurringSubmissionTemplate");
   if (name !== null) state.recurringForm.name = name;
   if (minutes !== null) state.recurringForm.minutes = minutes;
   if (content !== null) state.recurringForm.content = content;
   if (belongingInput !== null) state.recurringForm.belongingInput = belongingInput;
+  if (submissionTemplateId !== null) state.recurringForm.submissionTemplateId = normalizeSubmissionTemplateId(submissionTemplateId);
 
   const repeatType = document.querySelector("input[name='recurringRepeatType']:checked");
   if (repeatType instanceof HTMLInputElement) {
@@ -2330,6 +2336,7 @@ function renderRecurringEditScreen() {
           <label>曜日選択</label>
           <div class="option-group compact-options recurring-day-grid">${renderRecurringDayOptions()}</div>
         </div>
+        <div><label for="recurringSubmissionTemplate">提出・確認テンプレート</label><select id="recurringSubmissionTemplate">${renderSubmissionTemplateOptions(state.recurringForm.submissionTemplateId)}</select></div>
         <div>
           <label>Googleカレンダー同期</label>
           <div class="option-group compact-options">
@@ -2509,6 +2516,10 @@ function renderRecurringListRows() {
         saveState();
       });
     });
+    document.getElementById("recurringSubmissionTemplate")?.addEventListener("change", (e) => {
+      state.recurringForm.submissionTemplateId = normalizeSubmissionTemplateId(e.target.value);
+      saveState();
+    });
 
     bindProtectedActionButton("saveRecurringBtn", saveRecurringPlan);
     document.getElementById("deleteRecurringBtn")?.addEventListener("click", deleteRecurringPlanFromEdit);
@@ -2526,6 +2537,7 @@ function renderRecurringListRows() {
       content: plan.content,
       belongings: [...(plan.belongings || [])],
       belongingInput: "",
+      submissionTemplateId: normalizeSubmissionTemplateId(plan.submissionTemplateId),
       repeatType: normalizeRecurringRepeatType(plan.repeatType),
       days: [...plan.days],
       googleSync: Boolean(plan.googleSync)
@@ -2577,6 +2589,7 @@ function renderRecurringListRows() {
         const minutes = sanitizeMinutes(state.recurringForm.minutes);
         const content = state.recurringForm.content.trim();
         const belongings = normalizeBelongingsList(state.recurringForm.belongings);
+        const submissionTemplateId = normalizeSubmissionTemplateId(state.recurringForm.submissionTemplateId);
         const repeatType = normalizeRecurringRepeatType(state.recurringForm.repeatType);
         const days = normalizeRepeatDays(state.recurringForm.days);
         const googleSync = Boolean(state.recurringForm.googleSync);
@@ -2588,13 +2601,14 @@ function renderRecurringListRows() {
           plan.plannedMinutes = minutes;
           plan.content = content;
           plan.belongings = belongings;
+          plan.submissionTemplateId = submissionTemplateId;
           plan.repeatType = repeatType;
           plan.days = repeatType === "daily" ? [] : days;
           plan.googleSync = googleSync;
           return;
         }
 
-        state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync, belongings));
+        state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync, belongings, submissionTemplateId));
       },
       onSuccess: () => {
         state.recurringForm = createRecurringForm();
@@ -3414,13 +3428,10 @@ function renderPlanning() {
         </div>
         <div><label for="minutesInput">自分で入力（分）</label><input id="minutesInput" type="number" min="1" max="600" step="1" value="${escapeHtml(String(minutesValue))}" /></div>
         <div><label for="taskContent">内容</label><input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="例: 新中学問題集 p54" /></div>
-        <div><label for="planningSubmissionTemplate">提出・確認テンプレート</label><select id="planningSubmissionTemplate">${renderSubmissionTemplateOptions(state.planningForm.submissionTemplateId)}</select></div>
       </div>
       <div class="btn-row compact-stack">
         <button id="saveTaskBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-task-save", editingTask ? "修正を保存" : "追加")}</button>
-        ${editingTask && state.planningForm.submissionTemplateId ? `<button id="openPlanningSubmissionChecklistBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>提出・確認を開く</button>` : ""}
       </div>
-      ${editingTask && state.planningForm.submissionTemplateId ? renderPlanningSubmissionChecklistSummary(editingTask) : ""}
     </div>
 
     <div class="summary" id="totalPlanned"></div>
@@ -3526,10 +3537,6 @@ function bindPlanningEvents() {
     state.planningForm.content = e.target.value;
     saveState();
   });
-  document.getElementById("planningSubmissionTemplate")?.addEventListener("change", (e) => {
-    state.planningForm.submissionTemplateId = normalizeSubmissionTemplateId(e.target.value);
-    saveState();
-  });
 
   document.getElementById("dailyBelongingInput")?.addEventListener("input", (e) => {
     if (shouldSkipInputWhileComposing(e)) return;
@@ -3581,10 +3588,6 @@ function bindPlanningEvents() {
   });
 
   bindProtectedActionButton("saveTaskBtn", savePlanningTask);
-  document.getElementById("openPlanningSubmissionChecklistBtn")?.addEventListener("click", () => {
-    if (!state.planningForm.targetId) return;
-    openSubmissionChecklistTarget("task", state.planningForm.targetId, "planning");
-  });
 
   document.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -5534,7 +5537,8 @@ function applyRecurringPlansForSelectedDateIfNeeded() {
     if (existingPairs.has(pairKey)) return;
     state.tasks.push(createTask(plan.name, plan.plannedMinutes, plan.content, {
       recurringPlanId: plan.id,
-      recurringDateKey: targetDateKey
+        recurringDateKey: targetDateKey,
+        submissionTemplateId: plan.submissionTemplateId
     }));
     existingPairs.add(pairKey);
   });
