@@ -1855,7 +1855,8 @@ function renderPreviousDayEnd() {
 function renderHome() {
   const homeContext = getHomeDisplayContext();
   const isPreviousView = homeContext.isPreviousView;
-  const departureReminder = isPreviousView ? null : getDepartureReminderForHome();
+  const showDepartureCheckHomeButton = !isPreviousView && hasPendingDepartureCheck();
+  const departureReminder = showDepartureCheckHomeButton ? getDepartureReminderForHome() : null;
   const showReturnCheckHomeButton = !isPreviousView
     && hasDepartureCheckActivated()
     && state.planTimes.returnHome !== "none"
@@ -1890,7 +1891,7 @@ function renderHome() {
         : `<p id="openPlanningHeadingBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="予定入力へ">予定入力</p>`}
     </div>
     ${!isPreviousView && state.previousDayArchive ? `<div class="home-task-more-row"><button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button></div>` : ""}
-    ${departureReminder ? `<div class="notice warn"><p>🟡 出発前チェック（あと${departureReminder.minutesLeft}分）</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
+    ${showDepartureCheckHomeButton ? `<div class="notice warn"><p>🟡 出発前チェック${departureReminder ? `（あと${departureReminder.minutesLeft}分）` : ""}</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
       <div class="home-overview-left">
@@ -5586,11 +5587,11 @@ function renderDepartureCheck() {
   }
 
   normalizeDepartureCheckQueue();
+  const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
   const queue = Array.isArray(state.departureCheck.remainingIndices) ? state.departureCheck.remainingIndices : [];
-  const done = state.departureCheck.done || queue.length === 0;
+  const done = recomputeDepartureCheckCompletion(belongingsSummary.mergedItems);
 
   if (done) {
-    state.departureCheck.done = true;
     state.departureCheck.lastAutoPromptAt = 0;
     state.phase = "home";
     saveState();
@@ -5598,18 +5599,26 @@ function renderDepartureCheck() {
   }
 
   const currentIndex = queue[0];
-  if (typeof currentIndex !== "number") {
-    state.departureCheck.done = true;
-    state.phase = "home";
-    saveState();
-    return renderHome();
-  }
+  const checklistCardHtml = typeof currentIndex === "number"
+    ? `
+    <div class="task-card checklist-card">
+      <p>${currentIndex + 1}. ${DEPARTURE_CHECK_ITEMS[currentIndex]}</p>
+      <div class="btn-row split compact-stack">
+        <button id="confirmDepartureItemBtn" class="btn-main" type="button">確認した</button>
+        <button id="stillDepartureItemBtn" class="btn-quiet" type="button">まだ</button>
+      </div>
+    </div>
+    `
+    : `
+    <div class="task-card checklist-card">
+      <p>固定チェック項目は完了です。持ち物チェックを完了してください。</p>
+    </div>
+    `;
 
   const progressRows = DEPARTURE_CHECK_ITEMS.map((item, itemIndex) => {
     const status = Array.isArray(state.departureCheck.completedIndices) && state.departureCheck.completedIndices.includes(itemIndex) ? "済" : "未";
     return `<li>${item} <span class="status-chip">${status}</span></li>`;
   }).join("");
-  const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
   const belongingsRows = renderDepartureBelongingsChecklist(belongingsSummary.mergedItems);
 
   renderScreen(`
@@ -5623,13 +5632,7 @@ function renderDepartureCheck() {
       <p>🎒 今日の持ち物</p>
       <ul class="confirm-list">${belongingsRows}</ul>
     </div>
-    <div class="task-card checklist-card">
-      <p>${currentIndex + 1}. ${DEPARTURE_CHECK_ITEMS[currentIndex]}</p>
-      <div class="btn-row split compact-stack">
-        <button id="confirmDepartureItemBtn" class="btn-main" type="button">確認した</button>
-        <button id="stillDepartureItemBtn" class="btn-quiet" type="button">まだ</button>
-      </div>
-    </div>
+    ${checklistCardHtml}
     <div class="task-card">
       <p class="helper">確認状況</p>
       <ul class="confirm-list">${progressRows}</ul>
@@ -5639,22 +5642,28 @@ function renderDepartureCheck() {
     </div>
   `);
 
-  document.getElementById("confirmDepartureItemBtn").addEventListener("click", () => {
-    markDepartureItemDone(currentIndex);
-    saveState();
-    renderDepartureCheck();
-  });
-  document.getElementById("stillDepartureItemBtn").addEventListener("click", () => {
-    rotateDepartureItem(currentIndex);
-    saveState();
-    renderDepartureCheck();
-  });
+  if (typeof currentIndex === "number") {
+    document.getElementById("confirmDepartureItemBtn").addEventListener("click", () => {
+      markDepartureItemDone(currentIndex);
+      saveState();
+      renderDepartureCheck();
+    });
+    document.getElementById("stillDepartureItemBtn").addEventListener("click", () => {
+      rotateDepartureItem(currentIndex);
+      saveState();
+      renderDepartureCheck();
+    });
+  }
   document.querySelectorAll("input[data-belonging-check]").forEach((input) => {
     input.addEventListener("change", () => {
       const name = decodeURIComponent(String(input.dataset.belongingCheck || ""));
       if (!name) return;
       state.departureCheck.belongingChecked[name] = Boolean(input.checked);
+      recomputeDepartureCheckCompletion(belongingsSummary.mergedItems);
       saveState();
+      if (state.departureCheck.done) {
+        renderDepartureCheck();
+      }
     });
   });
   document.getElementById("backHomeFromDepartureBtn").addEventListener("click", goHome);
@@ -5787,23 +5796,39 @@ function normalizeDepartureCheckQueue() {
   state.departureCheck = normalizeDepartureCheckState(state.departureCheck);
 }
 
+function areDepartureBelongingsComplete(items) {
+  if (!Array.isArray(items) || items.length === 0) return true;
+  const checkedMap = state.departureCheck.belongingChecked || {};
+  return items.every((name) => Boolean(checkedMap[name]));
+}
+
+function recomputeDepartureCheckCompletion(belongingsItems = null) {
+  const queue = Array.isArray(state.departureCheck.remainingIndices) ? state.departureCheck.remainingIndices : [];
+  const fixedDone = queue.length === 0;
+  const resolvedBelongings = Array.isArray(belongingsItems)
+    ? belongingsItems
+    : getBelongingsSummaryForDate(state.dateKey).mergedItems;
+  const belongingsDone = areDepartureBelongingsComplete(resolvedBelongings);
+  state.departureCheck.done = fixedDone && belongingsDone;
+  if (state.departureCheck.done) {
+    state.departureCheck.lastAutoPromptAt = 0;
+  }
+  return state.departureCheck.done;
+}
+
 function markDepartureItemDone(itemIndex) {
   normalizeDepartureCheckQueue();
   const queue = state.departureCheck.remainingIndices || [];
   const current = queue[0];
   if (typeof current !== "number") {
-    state.departureCheck.done = true;
-    state.departureCheck.lastAutoPromptAt = 0;
+    recomputeDepartureCheckCompletion();
     return;
   }
   if (!state.departureCheck.completedIndices.includes(current)) {
     state.departureCheck.completedIndices.push(current);
   }
   state.departureCheck.remainingIndices = queue.slice(1);
-  state.departureCheck.done = state.departureCheck.remainingIndices.length === 0;
-  if (state.departureCheck.done) {
-    state.departureCheck.lastAutoPromptAt = 0;
-  }
+  recomputeDepartureCheckCompletion();
 }
 
 function rotateDepartureItem(itemIndex) {
@@ -5821,6 +5846,7 @@ function isAnyDepartureCheckIncomplete() {
 
 function hasPendingDepartureCheck() {
   normalizeDepartureCheckQueue();
+  recomputeDepartureCheckCompletion();
   return state.planTimes.departure !== "none" && !state.departureCheck.done;
 }
 
