@@ -1611,6 +1611,7 @@ function renderPreviousDayEnd() {
 function renderHome() {
   const runningTask = getRunningTask();
   const departureReminder = getDepartureReminderForHome();
+  const showReturnCheckHomeButton = state.planTimes.returnHome !== "none" && !state.returnCheck.done;
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const pendingHomework = getSortedPendingHomeworkTasks();
@@ -1624,12 +1625,13 @@ function renderHome() {
     <h2>今日の予定</h2>
     <p class="sync-indicator">同期: ${escapeHtml(syncText)}</p>
     ${departureReminder ? `<div class="notice warn"><p>🟡 出発前チェック（あと${departureReminder.minutesLeft}分）</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
+    ${showReturnCheckHomeButton ? `<div class="notice info"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
       <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
       <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
       <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
       <p>勉強 ${formatTimeForDisplay(state.planTimes.studyStart)}</p>
-      <p>持ち物 ${escapeHtml(belongingsLineText)}</p>
+      <p class="home-overview-belongings"><span>持ち物</span><span class="home-overview-belongings-value">${escapeHtml(belongingsLineText)}</span></p>
     </div>
     <hr class="sep" />
 
@@ -1694,6 +1696,7 @@ function renderHome() {
   document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
   document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
   document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
+  document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
 }
 
 function renderSettings() {

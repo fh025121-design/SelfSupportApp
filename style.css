@@ -510,6 +510,19 @@ button:disabled {
   letter-spacing: 0.01em;
 }
 
+.home-overview-belongings {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.home-overview-belongings-value {
+  min-width: 0;
+  text-align: right;
+  color: var(--sub);
+  overflow-wrap: anywhere;
+}
+
 .home-homework-summary p {
   margin: 4px 0;
 }
