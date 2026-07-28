@@ -244,6 +244,8 @@ function createRunningState() {
     baseSeconds: 0,
     isPaused: false,
     confirmingComplete: false,
+    confirmingExtendSource: "",
+    confirmingExtendMinutes: null,
     alertAtSeconds: null,
     alerting: false,
     lastAlertTarget: null,
@@ -3221,15 +3223,11 @@ function renderExecution() {
         <p>予定時間: ${runningTask.plannedMinutes}分</p>
         <div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(runningTask.content)}</span></div>
         <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
-        <div class="btn-row split compact-stack">
-          <button id="completeBtn" class="btn-ok" type="button">完了</button>
-          <button id="interruptBtn" class="btn-quiet" type="button">中断</button>
-        </div>
+        ${renderExecutionCompleteControls()}
         <div class="btn-row compact-stack">
           <button id="setOneMinuteTestBtn" class="btn-quiet" type="button">1分テスト設定</button>
         </div>
         ${renderOverrunControls(elapsed)}
-        <div id="completeConfirmArea"></div>
       </div>
     `;
 
@@ -3272,56 +3270,110 @@ function renderExecution() {
 
 function renderOverrunControls(elapsed) {
   if (state.running.alertAtSeconds == null || elapsed < state.running.alertAtSeconds) return "";
+  const confirmingSource = String(state.running.confirmingExtendSource || "");
+  const customExtendActionHtml = confirmingSource === "extendCustom"
+    ? `
+      <div class="custom-confirm-row">
+        <button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button>
+        <button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>
+      </div>
+    `
+    : '<button id="extendCustomBtn" class="btn-sub" type="button">延長する</button>';
   return `
     <div class="notice warn">
       <p>予定時間を超えました。</p>
       <div class="btn-row split compact-stack">
         <button id="stopNotifyBtn" class="btn-quiet" type="button">通知停止</button>
-        <button id="extend10Btn" class="btn-sub" type="button">10分延長</button>
-        <button id="extend20Btn" class="btn-sub" type="button">20分延長</button>
+        ${confirmingSource === "extend10"
+    ? renderInlineExtendConfirmButtons()
+    : '<button id="extend10Btn" class="btn-sub" type="button">10分延長</button>'}
+        ${confirmingSource === "extend20"
+    ? renderInlineExtendConfirmButtons()
+    : '<button id="extend20Btn" class="btn-sub" type="button">20分延長</button>'}
       </div>
-      <div class="grid-2">
-        <div>
+      <div class="grid-2 custom-extend-grid">
+        <div class="custom-extend-field">
           <label for="extendCustom">時間指定延長（分）</label>
-          <input id="extendCustom" type="number" min="1" max="180" value="${escapeHtml(state.running.customExtendMinutes || "")}" />
-        </div>
-        <div class="btn-row compact-stack">
-          <button id="extendCustomBtn" class="btn-sub" type="button">延長する</button>
+          <div class="custom-extend-row">
+            <input id="extendCustom" type="number" min="1" max="180" value="${escapeHtml(state.running.customExtendMinutes || "")}" />
+            <div class="custom-extend-action">
+              ${customExtendActionHtml}
+            </div>
+          </div>
         </div>
       </div>
     </div>
   `;
 }
 
+function renderInlineExtendConfirmButtons() {
+  return `
+    <div class="btn-row split compact-stack inline-confirm-row">
+      <button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button>
+      <button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>
+    </div>
+  `;
+}
+
+function renderExecutionCompleteControls() {
+  if (state.running.confirmingComplete) {
+    return `
+      <div class="btn-row split compact-stack">
+        <button id="cancelCompleteBtn" class="btn-quiet" type="button">キャンセル</button>
+        <button id="confirmCompleteBtn" class="btn-ok" type="button">完了する</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="btn-row split compact-stack">
+      <button id="completeBtn" class="btn-ok" type="button">完了</button>
+      <button id="interruptBtn" class="btn-quiet" type="button">中断</button>
+    </div>
+  `;
+}
+
+function clearExecutionConfirmStates() {
+  state.running.confirmingComplete = false;
+  state.running.confirmingExtendSource = "";
+  state.running.confirmingExtendMinutes = null;
+}
+
+function beginExtendConfirmation(source, minutes) {
+  clearExecutionConfirmStates();
+  state.running.confirmingExtendSource = source;
+  state.running.confirmingExtendMinutes = minutes;
+  saveState();
+  renderExecution();
+}
+
+function cancelExtendConfirmation() {
+  state.running.confirmingExtendSource = "";
+  state.running.confirmingExtendMinutes = null;
+  saveState();
+  renderExecution();
+}
+
 function bindExecutionButtons() {
   document.getElementById("completeBtn")?.addEventListener("click", () => {
+    state.running.confirmingExtendSource = "";
+    state.running.confirmingExtendMinutes = null;
     state.running.confirmingComplete = true;
+    saveState();
+    renderExecution();
+  });
+  document.getElementById("confirmCompleteBtn")?.addEventListener("click", finalizeTaskCompletion);
+  document.getElementById("cancelCompleteBtn")?.addEventListener("click", () => {
+    state.running.confirmingComplete = false;
     saveState();
     renderExecution();
   });
   document.getElementById("interruptBtn")?.addEventListener("click", interruptRunningTask);
 
-  if (state.running.confirmingComplete) {
-    document.getElementById("completeConfirmArea").innerHTML = `
-      <div class="notice info confirm-box">
-        <p>本当に完了しますか？</p>
-        <div class="btn-row split compact-stack">
-          <button id="confirmCompleteBtn" class="btn-ok" type="button">完了する</button>
-          <button id="cancelCompleteBtn" class="btn-quiet" type="button">戻る</button>
-        </div>
-      </div>
-    `;
-    document.getElementById("confirmCompleteBtn").addEventListener("click", finalizeTaskCompletion);
-    document.getElementById("cancelCompleteBtn").addEventListener("click", () => {
-      state.running.confirmingComplete = false;
-      saveState();
-      renderExecution();
-    });
-  }
-
   document.getElementById("stopNotifyBtn")?.addEventListener("click", () => {
     cancelSecondAlertFollowup();
     state.running.alerting = false;
+    state.running.confirmingExtendSource = "";
+    state.running.confirmingExtendMinutes = null;
     saveState();
     renderExecution();
   });
@@ -3332,12 +3384,14 @@ function bindExecutionButtons() {
     state.running.alertAtSeconds = 60;
     state.running.alerting = false;
     state.running.lastAlertTarget = null;
+    state.running.confirmingExtendSource = "";
+    state.running.confirmingExtendMinutes = null;
     console.log("[OverrunTest] plannedMinutes and alertAtSeconds set to 1 minute");
     saveState();
     renderExecution();
   });
-  document.getElementById("extend10Btn")?.addEventListener("click", () => extendRunningTask(10));
-  document.getElementById("extend20Btn")?.addEventListener("click", () => extendRunningTask(20));
+  document.getElementById("extend10Btn")?.addEventListener("click", () => beginExtendConfirmation("extend10", 10));
+  document.getElementById("extend20Btn")?.addEventListener("click", () => beginExtendConfirmation("extend20", 20));
   document.getElementById("extendCustom")?.addEventListener("input", (e) => {
     state.running.customExtendMinutes = e.target.value;
     saveState();
@@ -3345,12 +3399,19 @@ function bindExecutionButtons() {
   document.getElementById("extendCustomBtn")?.addEventListener("click", () => {
     const n = Number(state.running.customExtendMinutes);
     if (!Number.isFinite(n) || n <= 0) return alert("延長分を入力してください。");
-    extendRunningTask(Math.round(n));
+    beginExtendConfirmation("extendCustom", Math.round(n));
+  });
+  document.getElementById("cancelExtendBtn")?.addEventListener("click", cancelExtendConfirmation);
+  document.getElementById("confirmExtendBtn")?.addEventListener("click", () => {
+    const min = Number(state.running.confirmingExtendMinutes);
+    if (!Number.isFinite(min) || min <= 0) return;
+    extendRunningTask(Math.round(min));
   });
 }
 
 function extendRunningTask(min) {
   cancelSecondAlertFollowup();
+  clearExecutionConfirmStates();
   state.running.alertAtSeconds = (state.running.alertAtSeconds || 0) + min * 60;
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
@@ -3712,6 +3773,8 @@ function startTask(taskId) {
     baseSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : 0,
     isPaused: false,
     confirmingComplete: false,
+    confirmingExtendSource: "",
+    confirmingExtendMinutes: null,
     alertAtSeconds: task.plannedMinutes * 60,
     alerting: false,
     lastAlertTarget: null,
@@ -3745,7 +3808,7 @@ function interruptRunningTask() {
   state.running.baseSeconds = elapsed;
   state.running.startedAt = null;
   state.running.isPaused = true;
-  state.running.confirmingComplete = false;
+  clearExecutionConfirmStates();
   state.running.alerting = false;
   goHome();
 }
@@ -3757,7 +3820,7 @@ function resumePausedTask() {
   state.running.startedAt = Date.now();
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
   state.running.isPaused = false;
-  state.running.confirmingComplete = false;
+  clearExecutionConfirmStates();
   scheduleTaskFinishNotificationForRunningTask(task);
   changePhase("execution", false);
 }
@@ -4032,6 +4095,7 @@ function renderResult() {
 
   document.getElementById("resultReportText").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
   document.getElementById("copyResultBtn").addEventListener("click", async () => {
+    if (!confirmLargeActualGapBeforeSend()) return;
     const ok = await copyToClipboard(report);
     document.getElementById("copyResultMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
   });
@@ -4058,6 +4122,7 @@ function renderDayEnd() {
 
   document.getElementById("dayEndReport").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
   document.getElementById("copyDayEndBtn").addEventListener("click", async () => {
+    if (!confirmLargeActualGapBeforeSend()) return;
     const ok = await copyToClipboard(report);
     document.getElementById("dayEndMsg").textContent = ok ? "コピーしました" : "コピーに失敗しました";
     if (ok) {
@@ -4146,6 +4211,26 @@ function buildResultReportHtml(doneCount, unfinishedCount, totalActual) {
   });
 
   return `<div class="result-report-lines">${lines.join("")}</div>`;
+}
+
+function hasLargeActualGap(task) {
+  const plannedMinutes = sanitizeMinutes(task?.plannedMinutes);
+  const actualMinutes = secondsToMinutes(task?.actualSeconds);
+  if (!plannedMinutes || !actualMinutes) return false;
+  return actualMinutes >= plannedMinutes * 2 && actualMinutes - plannedMinutes >= 30;
+}
+
+function getTasksWithLargeActualGap() {
+  return state.tasks.filter((task) => hasLargeActualGap(task));
+}
+
+function confirmLargeActualGapBeforeSend() {
+  if (getTasksWithLargeActualGap().length === 0) return true;
+  return window.confirm([
+    "予定と実績の差が大きいタスクがあります。",
+    "",
+    "実績に誤りがないか確認してから送信してください。"
+  ].join("\n"));
 }
 
 function renderDepartureCheck() {

@@ -157,6 +157,64 @@ textarea {
   background: #fff;
 }
 
+#extendCustom {
+  width: auto;
+  min-width: 0;
+  flex: 7 1 0;
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid #f0c892;
+  padding: 10px 10px;
+}
+
+.custom-extend-grid {
+  grid-template-columns: 1fr;
+}
+
+.custom-extend-field {
+  width: 50%;
+}
+
+.custom-extend-row {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  margin-top: 8px;
+  border: 2px solid #f1a43e;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.custom-extend-action {
+  display: flex;
+  flex: 3 1 0;
+  min-width: 0;
+}
+
+.custom-extend-action > button {
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  padding: 10px 16px;
+  font-size: 1rem;
+}
+
+.custom-confirm-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.custom-confirm-row > button {
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  padding: 10px 12px;
+  font-size: 0.96rem;
+}
+
 textarea {
   min-height: 110px;
   resize: vertical;
