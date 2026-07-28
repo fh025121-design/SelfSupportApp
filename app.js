@@ -149,6 +149,7 @@ let planningRecurringPickerOpen = false;
 const state = loadState();
 setupInputGuard();
 initializeLocalNotificationTrial();
+restorePendingTaskFinishNotification();
 render();
 
 window.addEventListener("online", () => {
@@ -2086,6 +2087,12 @@ function getLocalNotificationsPlugin() {
 
 async function initializeLocalNotificationTrial() {
   await ensureLocalNotificationChannel();
+}
+
+function restorePendingTaskFinishNotification() {
+  const task = getRunningTask();
+  if (!task || state.running.isPaused) return;
+  scheduleTaskFinishNotificationForRunningTask(task);
 }
 
 async function ensureLocalNotificationChannel() {
