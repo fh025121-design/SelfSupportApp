@@ -1614,6 +1614,10 @@ function renderHome() {
   const homeworkPending = getHomeworkPendingCount();
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const pendingHomework = getSortedPendingHomeworkTasks();
+  const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
+  const belongingsLineText = belongingsSummary.mergedItems.length > 0
+    ? belongingsSummary.mergedItems.join("、")
+    : "なし";
   const syncText = getSyncStatusText();
 
   renderScreen(`
@@ -1625,6 +1629,7 @@ function renderHome() {
       <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
       <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
       <p>勉強 ${formatTimeForDisplay(state.planTimes.studyStart)}</p>
+      <p>持ち物 ${escapeHtml(belongingsLineText)}</p>
     </div>
     <hr class="sep" />
 
