@@ -32,6 +32,39 @@ const STORAGE_OWNER_UID_KEY = "selfSupportAppTrialStateV3_ownerUid";
 const DEFAULT_MINUTES = 30;
 const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
+const SUBMISSION_TEMPLATE_NONE = "";
+const DEFAULT_SUBMISSION_TEMPLATES = [
+  {
+    id: "school-submission",
+    name: "学校提出物",
+    items: [
+      { id: "school-submission-1", label: "宿題を終えた" },
+      { id: "school-submission-2", label: "やりなおしをした" },
+      { id: "school-submission-3", label: "鞄へ入れた" },
+      { id: "school-submission-4", label: "提出した" }
+    ]
+  },
+  {
+    id: "harada",
+    name: "原田先生",
+    items: [
+      { id: "harada-1", label: "宿題を終えた" },
+      { id: "harada-2", label: "やりなおしをした" },
+      { id: "harada-3", label: "写真を提出した" }
+    ]
+  },
+  {
+    id: "iwamaru",
+    name: "岩丸先生",
+    items: [
+      { id: "iwamaru-1", label: "宿題を終えた" },
+      { id: "iwamaru-2", label: "やりなおしをした" },
+      { id: "iwamaru-3", label: "チェックリストを確認した" },
+      { id: "iwamaru-4", label: "父へ報告した" },
+      { id: "iwamaru-5", label: "写真を提出した" }
+    ]
+  }
+];
 const MINUTE_OPTIONS = [10, 20, 30, 40, 60];
 const RECURRING_DAY_KEYS = ["daily", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const RECURRING_DAY_LABELS = {
@@ -209,7 +242,8 @@ function createPlanningForm() {
     customTaskName: "",
     minutesChoice: String(DEFAULT_MINUTES),
     customMinutes: String(DEFAULT_MINUTES),
-    content: ""
+    content: "",
+    submissionTemplateId: SUBMISSION_TEMPLATE_NONE
   };
 }
 
@@ -236,7 +270,15 @@ function createHomeworkForm() {
     deadlineDate: "",
     content: "",
     googleSync: false,
-    done: false
+    done: false,
+    submissionTemplateId: SUBMISSION_TEMPLATE_NONE
+  };
+}
+
+function createSubmissionTemplateEditorForm() {
+  return {
+    templateId: null,
+    itemInput: ""
   };
 }
 
@@ -307,6 +349,9 @@ function createInitialState(dateKey, tasks = []) {
     planTimes: createDefaultPlanTimes(),
     tasks,
     planningForm: createPlanningForm(),
+    submissionTemplates: createDefaultSubmissionTemplates(),
+    submissionTemplateEditorForm: createSubmissionTemplateEditorForm(),
+    submissionChecklistTarget: null,
     taskNameStats: [],
     recurringPlans: [],
     recurringForm: createRecurringForm(),
@@ -352,7 +397,10 @@ function createTask(name, plannedMinutes, content, meta = {}) {
     status: "pending",
     actualSeconds: null,
     memo: "",
-    closeAction: ""
+    closeAction: "",
+    submissionTemplateId: normalizeSubmissionTemplateId(meta.submissionTemplateId),
+    submissionCheckedItemIds: [],
+    submissionChecklistCompleted: false
   };
 }
 
@@ -367,7 +415,10 @@ function normalizeTask(task) {
     status: ["pending", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
     actualSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : null,
     memo: String(task.memo || ""),
-    closeAction: String(task.closeAction || "")
+    closeAction: String(task.closeAction || ""),
+    submissionTemplateId: normalizeSubmissionTemplateId(task.submissionTemplateId),
+    submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(task.submissionCheckedItemIds),
+    submissionChecklistCompleted: Boolean(task.submissionChecklistCompleted)
   };
 }
 
@@ -496,6 +547,73 @@ function normalizeRecurringPlans(rawPlans) {
     .filter((p) => p.name && p.content && (p.repeatType === "daily" || p.days.length > 0));
 }
 
+function createDefaultSubmissionTemplates() {
+  return DEFAULT_SUBMISSION_TEMPLATES.map((template) => ({
+    id: template.id,
+    name: template.name,
+    items: template.items.map((item) => ({ id: item.id, label: item.label }))
+  }));
+}
+
+function normalizeSubmissionTemplateId(value) {
+  if (typeof value !== "string") return SUBMISSION_TEMPLATE_NONE;
+  return value;
+}
+
+function normalizeSubmissionCheckedItemIds(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  raw.forEach((id) => {
+    const text = String(id || "").trim();
+    if (!text) return;
+    if (!out.includes(text)) out.push(text);
+  });
+  return out;
+}
+
+function normalizeSubmissionTemplateItem(rawItem) {
+  const id = String(rawItem?.id || crypto.randomUUID());
+  const label = String(rawItem?.label || "").trim();
+  return { id, label };
+}
+
+function normalizeSubmissionTemplate(rawTemplate) {
+  const id = String(rawTemplate?.id || crypto.randomUUID());
+  const name = String(rawTemplate?.name || "").trim();
+  const items = Array.isArray(rawTemplate?.items)
+    ? rawTemplate.items.map(normalizeSubmissionTemplateItem).filter((item) => item.label)
+    : [];
+  return { id, name, items };
+}
+
+function normalizeSubmissionTemplates(rawTemplates) {
+  const base = Array.isArray(rawTemplates) ? rawTemplates : createDefaultSubmissionTemplates();
+  const normalized = base
+    .map(normalizeSubmissionTemplate)
+    .filter((template) => template.name);
+  if (normalized.length === 0) return createDefaultSubmissionTemplates();
+  return normalized;
+}
+
+function normalizeSubmissionTemplateEditorForm(raw) {
+  const base = { ...createSubmissionTemplateEditorForm(), ...(raw || {}) };
+  base.templateId = typeof base.templateId === "string" ? base.templateId : null;
+  base.itemInput = String(base.itemInput || "");
+  return base;
+}
+
+function normalizeSubmissionChecklistTarget(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const targetType = raw.targetType === "homework" ? "homework" : raw.targetType === "task" ? "task" : "";
+  const targetId = String(raw.targetId || "");
+  if (!targetType || !targetId) return null;
+  return {
+    targetType,
+    targetId,
+    returnPhase: String(raw.returnPhase || "")
+  };
+}
+
 function normalizeHomeworkTask(item) {
   return {
     id: item?.id || crypto.randomUUID(),
@@ -503,7 +621,10 @@ function normalizeHomeworkTask(item) {
     deadlineDate: normalizeDeadlineDate(item?.deadlineDate),
     content: String(item?.content || "").trim(),
     googleSync: Boolean(item?.googleSync),
-    done: Boolean(item?.done)
+    done: Boolean(item?.done),
+    submissionTemplateId: normalizeSubmissionTemplateId(item?.submissionTemplateId),
+    submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(item?.submissionCheckedItemIds),
+    submissionChecklistCompleted: Boolean(item?.submissionChecklistCompleted)
   };
 }
 
@@ -561,7 +682,7 @@ function loadState() {
 
     safe.phase = [
       "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
-      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit"
+      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
@@ -569,12 +690,15 @@ function loadState() {
     safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
-      "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd"
+      "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
     safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
     safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
     safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map(normalizeTask) : [];
     safe.planningForm = normalizePlanningForm(safe.planningForm);
+    safe.submissionTemplates = normalizeSubmissionTemplates(safe.submissionTemplates);
+    safe.submissionTemplateEditorForm = normalizeSubmissionTemplateEditorForm(safe.submissionTemplateEditorForm);
+    safe.submissionChecklistTarget = normalizeSubmissionChecklistTarget(safe.submissionChecklistTarget);
     safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
     safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
     safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
@@ -638,6 +762,7 @@ function normalizePlanningForm(raw) {
   base.minutesChoice = typeof base.minutesChoice === "string" ? base.minutesChoice : String(DEFAULT_MINUTES);
   base.customMinutes = String(base.customMinutes || base.minutesChoice || DEFAULT_MINUTES);
   base.content = String(base.content || "");
+  base.submissionTemplateId = normalizeSubmissionTemplateId(base.submissionTemplateId);
   delete base.repeatType;
   delete base.repeatDays;
   delete base.deadlineType;
@@ -683,6 +808,7 @@ function normalizeHomeworkForm(raw) {
   base.content = String(base.content || "");
   base.googleSync = Boolean(base.googleSync);
   base.done = Boolean(base.done);
+  base.submissionTemplateId = normalizeSubmissionTemplateId(base.submissionTemplateId);
   return base;
 }
 
@@ -803,6 +929,7 @@ function syncPlanningFormFromDom() {
   const customTaskName = getInputElementValue("customTaskName");
   const customMinutes = getInputElementValue("minutesInput");
   const content = getInputElementValue("taskContent");
+  const submissionTemplateId = getInputElementValue("planningSubmissionTemplate");
   const dailyBelongingInput = getInputElementValue("dailyBelongingInput");
   if (taskNameChoice !== null) state.planningForm.taskNameChoice = taskNameChoice;
   if (customTaskName !== null) state.planningForm.customTaskName = customTaskName;
@@ -811,6 +938,7 @@ function syncPlanningFormFromDom() {
     state.planningForm.minutesChoice = customMinutes;
   }
   if (content !== null) state.planningForm.content = content;
+  if (submissionTemplateId !== null) state.planningForm.submissionTemplateId = normalizeSubmissionTemplateId(submissionTemplateId);
   if (dailyBelongingInput !== null) state.planningDailyBelongingInput = dailyBelongingInput;
 }
 
@@ -842,9 +970,11 @@ function syncHomeworkFormFromDom() {
   const name = getInputElementValue("homeworkName");
   const deadlineDate = getInputElementValue("homeworkDeadline");
   const content = getInputElementValue("homeworkContent");
+  const submissionTemplateId = getInputElementValue("homeworkSubmissionTemplate");
   if (name !== null) state.homeworkForm.name = name;
   if (deadlineDate !== null) state.homeworkForm.deadlineDate = normalizeDeadlineDate(deadlineDate);
   if (content !== null) state.homeworkForm.content = content;
+  if (submissionTemplateId !== null) state.homeworkForm.submissionTemplateId = normalizeSubmissionTemplateId(submissionTemplateId);
 
   const googleSync = document.querySelector("input[name='homeworkGoogleSync']:checked");
   if (googleSync instanceof HTMLInputElement) {
@@ -1043,6 +1173,10 @@ function render() {
       return renderHomeworkListScreen();
     case "homeworkEdit":
       return renderHomeworkEditScreen();
+    case "submissionTemplateList":
+      return renderSubmissionTemplateListScreen();
+    case "submissionTemplateEdit":
+      return renderSubmissionTemplateEditScreen();
     default:
       return renderResult();
   }
@@ -1202,7 +1336,7 @@ function normalizeLoadedState(rawState) {
 
   safe.phase = [
     "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
-    "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit"
+    "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
   safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
@@ -1210,12 +1344,15 @@ function normalizeLoadedState(rawState) {
   safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
   safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
-    "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd"
+    "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
   safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
   safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
   safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map(normalizeTask) : [];
   safe.planningForm = normalizePlanningForm(safe.planningForm);
+  safe.submissionTemplates = normalizeSubmissionTemplates(safe.submissionTemplates);
+  safe.submissionTemplateEditorForm = normalizeSubmissionTemplateEditorForm(safe.submissionTemplateEditorForm);
+  safe.submissionChecklistTarget = normalizeSubmissionChecklistTarget(safe.submissionChecklistTarget);
   safe.taskNameStats = normalizeTaskNameStats(safe.taskNameStats);
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
@@ -1788,6 +1925,10 @@ function renderSettings() {
         <span>定期予定</span>
         <span aria-hidden="true">＞</span>
       </button>
+      <button id="openSubmissionTemplateListBtn" class="settings-menu-row" type="button">
+        <span>提出・確認テンプレート</span>
+        <span aria-hidden="true">＞</span>
+      </button>
     </div>
     <div class="btn-row compact-stack">
       <button id="logoutBtn" class="btn-danger" type="button">ログアウト</button>
@@ -1840,6 +1981,7 @@ function renderSettings() {
   `);
 
   document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
+  document.getElementById("openSubmissionTemplateListBtn")?.addEventListener("click", () => changePhase("submissionTemplateList"));
   document.getElementById("logoutBtn").addEventListener("click", performLogout);
   document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
   const volumeInput = document.getElementById("devAlertVolume");
@@ -2135,6 +2277,7 @@ function resetDailyStatus() {
   state.previousDayArchive = null;
   state.homeViewMode = "current";
   state.homeTaskListExpanded = false;
+  state.submissionChecklistTarget = null;
   state.lastResultReportText = "";
   state.phase = "home";
   saveState();
@@ -2468,6 +2611,350 @@ function renderRecurringListRows() {
     return days.map((d) => `${RECURRING_DAY_LABELS[d] || d}曜`).join("・");
   }
 
+function findSubmissionTemplate(templateId) {
+  if (!templateId) return null;
+  return state.submissionTemplates.find((template) => template.id === templateId) || null;
+}
+
+function renderSubmissionTemplateOptions(selectedId) {
+  const options = [`<option value="" ${!selectedId ? "selected" : ""}>なし</option>`];
+  state.submissionTemplates.forEach((template) => {
+    const selected = template.id === selectedId ? "selected" : "";
+    options.push(`<option value="${escapeHtml(template.id)}" ${selected}>${escapeHtml(template.name)}</option>`);
+  });
+  return options.join("");
+}
+
+function getSubmissionChecklistSummary(target) {
+  if (!target) return null;
+  const template = findSubmissionTemplate(target.submissionTemplateId);
+  if (!template) {
+    return {
+      hasTemplate: false,
+      total: 0,
+      checked: 0,
+      completed: true,
+      templateName: ""
+    };
+  }
+  const itemIds = template.items.map((item) => item.id);
+  const checkedSet = new Set(normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds));
+  const checked = itemIds.filter((id) => checkedSet.has(id)).length;
+  const completed = itemIds.length > 0 && checked === itemIds.length;
+  return {
+    hasTemplate: true,
+    total: itemIds.length,
+    checked,
+    completed,
+    templateName: template.name
+  };
+}
+
+function getSubmissionChecklistRemainingEntries() {
+  const entries = [];
+
+  state.tasks.forEach((task) => {
+    if (!task || task.status !== "done") return;
+    const template = findSubmissionTemplate(task.submissionTemplateId);
+    if (!template || template.items.length === 0) return;
+    const checkedSet = new Set(normalizeSubmissionCheckedItemIds(task.submissionCheckedItemIds));
+    const remainingItems = template.items.filter((item) => !checkedSet.has(item.id));
+    if (remainingItems.length === 0) return;
+    entries.push({
+      targetType: "task",
+      targetId: task.id,
+      title: `${template.name}　${task.name}`,
+      remainingLabels: remainingItems.map((item) => item.label)
+    });
+  });
+
+  state.homeworkTasks.forEach((item) => {
+    if (!item || !item.done) return;
+    const template = findSubmissionTemplate(item.submissionTemplateId);
+    if (!template || template.items.length === 0) return;
+    const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
+    const remainingItems = template.items.filter((templateItem) => !checkedSet.has(templateItem.id));
+    if (remainingItems.length === 0) return;
+    entries.push({
+      targetType: "homework",
+      targetId: item.id,
+      title: `${template.name}　${item.name}`,
+      remainingLabels: remainingItems.map((templateItem) => templateItem.label)
+    });
+  });
+
+  return entries;
+}
+
+function renderExecutionSubmissionChecklistSection() {
+  const entries = getSubmissionChecklistRemainingEntries();
+  if (entries.length === 0) return "";
+
+  const rows = entries.map((entry) => `
+    <div class="task-card">
+      <p>${escapeHtml(entry.title)}</p>
+      <ul class="confirm-list">${entry.remainingLabels.map((label) => `<li>□ ${escapeHtml(label)}</li>`).join("")}</ul>
+      <div class="btn-row compact-stack">
+        <button type="button" class="btn-sub" data-open-submission-checklist="1" data-submission-target-type="${escapeHtml(entry.targetType)}" data-submission-target-id="${escapeHtml(entry.targetId)}">確認を続ける</button>
+      </div>
+    </div>
+  `).join("");
+
+  return `
+    <hr class="sep" />
+    <h3>未完了の確認</h3>
+    ${rows}
+  `;
+}
+
+function getSubmissionChecklistTargetEntity(targetType, targetId) {
+  if (targetType === "task") {
+    return state.tasks.find((task) => task.id === targetId) || null;
+  }
+  if (targetType === "homework") {
+    return state.homeworkTasks.find((item) => item.id === targetId) || null;
+  }
+  return null;
+}
+
+function openSubmissionChecklistTarget(targetType, targetId, returnPhase = state.phase) {
+  const target = getSubmissionChecklistTargetEntity(targetType, targetId);
+  if (!target) return false;
+  const template = findSubmissionTemplate(target.submissionTemplateId);
+  if (!template || template.items.length === 0) return false;
+  state.submissionChecklistTarget = {
+    targetType,
+    targetId,
+    returnPhase
+  };
+  saveState();
+  render();
+  return true;
+}
+
+function closeSubmissionChecklistTarget() {
+  state.submissionChecklistTarget = null;
+  saveState();
+  render();
+}
+
+function renderSubmissionChecklistOverlay() {
+  removeSubmissionChecklistOverlay();
+  const context = normalizeSubmissionChecklistTarget(state.submissionChecklistTarget);
+  if (!context) return;
+  const target = getSubmissionChecklistTargetEntity(context.targetType, context.targetId);
+  if (!target) {
+    state.submissionChecklistTarget = null;
+    saveState();
+    return;
+  }
+  const template = findSubmissionTemplate(target.submissionTemplateId);
+  if (!template || template.items.length === 0) {
+    state.submissionChecklistTarget = null;
+    saveState();
+    return;
+  }
+
+  const checkedSet = new Set(normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds));
+  const itemsHtml = template.items.map((item) => {
+    const checked = checkedSet.has(item.id) ? "checked" : "";
+    return `<label class="option-item"><input type="checkbox" data-submission-item-id="${escapeHtml(item.id)}" ${checked} /><span>${escapeHtml(item.label)}</span></label>`;
+  }).join("");
+  const allDone = template.items.length > 0 && template.items.every((item) => checkedSet.has(item.id));
+
+  const overlay = document.createElement("div");
+  overlay.id = "submissionChecklistOverlay";
+  overlay.className = "app-modal-overlay";
+  overlay.innerHTML = `
+    <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="submissionChecklistTitle">
+      <h3 id="submissionChecklistTitle">${escapeHtml(template.name)}　${escapeHtml(target.name)}</h3>
+      <div class="option-group compact-options" id="submissionChecklistItems">${itemsHtml}</div>
+      <div class="btn-row split compact-stack app-modal-actions">
+        <button id="closeSubmissionChecklistBtn" class="btn-quiet" type="button">後で</button>
+        <button id="completeSubmissionChecklistBtn" class="btn-main" type="button" ${allDone ? "" : "disabled"}>完了</button>
+      </div>
+      <p class="helper" id="submissionChecklistStatus">${allDone ? "すべて確認済みです。" : `確認済み ${checkedSet.size}/${template.items.length}`}</p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const refreshChecklistStatus = () => {
+    const checkedIds = Array.from(overlay.querySelectorAll("input[data-submission-item-id]:checked"))
+      .map((el) => String(el.getAttribute("data-submission-item-id") || ""))
+      .filter(Boolean);
+    target.submissionCheckedItemIds = checkedIds;
+    const isDone = template.items.length > 0 && template.items.every((item) => checkedIds.includes(item.id));
+    target.submissionChecklistCompleted = isDone;
+    const completeBtn = document.getElementById("completeSubmissionChecklistBtn");
+    const statusEl = document.getElementById("submissionChecklistStatus");
+    if (completeBtn) completeBtn.disabled = !isDone;
+    if (statusEl) statusEl.textContent = isDone ? "すべて確認済みです。" : `確認済み ${checkedIds.length}/${template.items.length}`;
+    saveState();
+  };
+
+  overlay.querySelectorAll("input[data-submission-item-id]").forEach((cb) => {
+    cb.addEventListener("change", refreshChecklistStatus);
+  });
+
+  document.getElementById("closeSubmissionChecklistBtn")?.addEventListener("click", () => {
+    saveState();
+    closeSubmissionChecklistTarget();
+  });
+
+  document.getElementById("completeSubmissionChecklistBtn")?.addEventListener("click", () => {
+    target.submissionChecklistCompleted = true;
+    saveState();
+    closeSubmissionChecklistTarget();
+  });
+}
+
+function removeSubmissionChecklistOverlay() {
+  document.getElementById("submissionChecklistOverlay")?.remove();
+}
+
+function renderSubmissionTemplateListScreen() {
+  renderScreen(`
+    <h2>提出・確認テンプレート</h2>
+    <ul id="submissionTemplateList" class="task-list recurring-list"></ul>
+    <div class="btn-row compact-stack">
+      <button id="backToSettingsFromSubmissionTemplateListBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  const list = document.getElementById("submissionTemplateList");
+  list.innerHTML = "";
+  state.submissionTemplates.forEach((template) => {
+    const li = document.createElement("li");
+    li.className = "task-card recurring-list-row";
+    li.setAttribute("role", "button");
+    li.setAttribute("tabindex", "0");
+    li.dataset.id = template.id;
+    li.innerHTML = `
+      <div class="recurring-list-main">${escapeHtml(template.name)}</div>
+      <div class="recurring-list-days">項目 ${template.items.length}件</div>
+      <div class="recurring-list-minutes"></div>
+      <div class="recurring-list-arrow" aria-hidden="true">＞</div>
+    `;
+    li.addEventListener("click", () => {
+      state.submissionTemplateEditorForm = {
+        templateId: template.id,
+        itemInput: ""
+      };
+      saveState();
+      changePhase("submissionTemplateEdit");
+    });
+    li.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      li.click();
+    });
+    list.appendChild(li);
+  });
+
+  document.getElementById("backToSettingsFromSubmissionTemplateListBtn")?.addEventListener("click", () => changePhase("settings"));
+}
+
+function renderSubmissionTemplateEditScreen() {
+  const template = findSubmissionTemplate(state.submissionTemplateEditorForm.templateId);
+  if (!template) {
+    changePhase("submissionTemplateList", false);
+    return;
+  }
+
+  const itemRows = template.items.length === 0
+    ? "<li class=\"task-card compact-empty\"><p>確認項目はまだありません。</p></li>"
+    : template.items.map((item, index) => `
+      <li class="task-card compact-task-row">
+        <div class="task-inline-text">
+          <input type="text" value="${escapeHtml(item.label)}" data-submission-template-item-label="${escapeHtml(item.id)}" maxlength="80" />
+        </div>
+        <div class="task-inline-actions">
+          <button type="button" class="btn-mini btn-quiet" data-submission-template-item-action="up" data-submission-template-item-id="${escapeHtml(item.id)}" ${index === 0 ? "disabled" : ""}>↑</button>
+          <button type="button" class="btn-mini btn-quiet" data-submission-template-item-action="down" data-submission-template-item-id="${escapeHtml(item.id)}" ${index === template.items.length - 1 ? "disabled" : ""}>↓</button>
+          <button type="button" class="btn-mini btn-danger" data-submission-template-item-action="delete" data-submission-template-item-id="${escapeHtml(item.id)}">削除</button>
+        </div>
+      </li>
+    `).join("");
+
+  renderScreen(`
+    <h2>${escapeHtml(template.name)}</h2>
+    <ul id="submissionTemplateItemList" class="task-list compact-task-list">${itemRows}</ul>
+    <div class="task-form-box">
+      <div class="form-stack">
+        <div>
+          <label for="submissionTemplateItemInput">項目を追加</label>
+          <input id="submissionTemplateItemInput" type="text" value="${escapeHtml(state.submissionTemplateEditorForm.itemInput)}" maxlength="80" placeholder="例: 写真を提出した" />
+        </div>
+      </div>
+      <div class="btn-row compact-stack">
+        <button id="addSubmissionTemplateItemBtn" class="btn-sub" type="button">追加</button>
+      </div>
+    </div>
+    <div class="btn-row compact-stack">
+      <button id="backToSubmissionTemplateListBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  document.getElementById("submissionTemplateItemInput")?.addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
+    state.submissionTemplateEditorForm.itemInput = e.target.value;
+    saveState();
+  });
+
+  document.querySelectorAll("input[data-submission-template-item-label]").forEach((input) => {
+    input.addEventListener("input", (e) => {
+      if (shouldSkipInputWhileComposing(e)) return;
+      const id = String(e.target.getAttribute("data-submission-template-item-label") || "");
+      const item = template.items.find((x) => x.id === id);
+      if (!item) return;
+      item.label = e.target.value;
+      saveState();
+    });
+    input.addEventListener("blur", (e) => {
+      const id = String(e.target.getAttribute("data-submission-template-item-label") || "");
+      const item = template.items.find((x) => x.id === id);
+      if (!item) return;
+      item.label = String(item.label || "").trim();
+      if (!item.label) item.label = "(未入力)";
+      saveState();
+      renderSubmissionTemplateEditScreen();
+    });
+  });
+
+  document.querySelectorAll("button[data-submission-template-item-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const action = String(btn.dataset.submissionTemplateItemAction || "");
+      const id = String(btn.dataset.submissionTemplateItemId || "");
+      const idx = template.items.findIndex((item) => item.id === id);
+      if (idx === -1) return;
+      if (action === "delete") {
+        template.items.splice(idx, 1);
+      } else if (action === "up" && idx > 0) {
+        const tmp = template.items[idx - 1];
+        template.items[idx - 1] = template.items[idx];
+        template.items[idx] = tmp;
+      } else if (action === "down" && idx < template.items.length - 1) {
+        const tmp = template.items[idx + 1];
+        template.items[idx + 1] = template.items[idx];
+        template.items[idx] = tmp;
+      }
+      saveState();
+      renderSubmissionTemplateEditScreen();
+    });
+  });
+
+  document.getElementById("addSubmissionTemplateItemBtn")?.addEventListener("click", () => {
+    const label = String(state.submissionTemplateEditorForm.itemInput || "").trim();
+    if (!label) return;
+    template.items.push({ id: crypto.randomUUID(), label });
+    state.submissionTemplateEditorForm.itemInput = "";
+    saveState();
+    renderSubmissionTemplateEditScreen();
+  });
+
+  document.getElementById("backToSubmissionTemplateListBtn")?.addEventListener("click", () => changePhase("submissionTemplateList"));
+}
+
 function renderHomeworkListScreen() {
   renderScreen(`
     <h2>宿題・課題一覧</h2>
@@ -2533,6 +3020,10 @@ function bindHomeworkListEvents() {
 
 function renderHomeworkEditScreen() {
   const editing = state.homeworkForm.mode === "edit";
+  const selectedHomeworkTemplate = findSubmissionTemplate(state.homeworkForm.submissionTemplateId);
+  const canOpenHomeworkChecklist = editing && selectedHomeworkTemplate && selectedHomeworkTemplate.items.length > 0;
+  const editingHomeworkItem = editing ? state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId) : null;
+  const checklistSummary = editingHomeworkItem ? getSubmissionChecklistSummary(editingHomeworkItem) : null;
   renderScreen(`
     <h2>${editing ? "宿題・課題を編集" : "宿題・課題を追加"}</h2>
     <div class="task-form-box">
@@ -2540,6 +3031,7 @@ function renderHomeworkEditScreen() {
         <div><label for="homeworkName">課題名</label><input id="homeworkName" type="text" value="${escapeHtml(state.homeworkForm.name)}" maxlength="60" placeholder="例: 理科レポート" /></div>
         <div><label for="homeworkDeadline">締切</label><input id="homeworkDeadline" type="date" value="${escapeHtml(state.homeworkForm.deadlineDate)}" /></div>
         <div><label for="homeworkContent">内容</label><input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="例: 実験レポートを提出" /></div>
+        <div><label for="homeworkSubmissionTemplate">提出・確認テンプレート</label><select id="homeworkSubmissionTemplate">${renderSubmissionTemplateOptions(state.homeworkForm.submissionTemplateId)}</select></div>
         <div>
           <label>Googleカレンダー同期</label>
           <div class="option-group compact-options">
@@ -2558,7 +3050,9 @@ function renderHomeworkEditScreen() {
       <div class="btn-row compact-stack">
         <button id="saveHomeworkBtn" class="btn-main" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("homework-save", "保存")}</button>
         ${editing ? `<button id="deleteHomeworkBtn" class="btn-danger" type="button" ${getBusyDisabledAttr()}>削除</button>` : ""}
+        ${canOpenHomeworkChecklist ? `<button id="openHomeworkSubmissionChecklistBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>提出・確認を開く</button>` : ""}
       </div>
+      ${checklistSummary?.hasTemplate ? `<p class="helper">提出・確認: ${checklistSummary.checked}/${checklistSummary.total}${checklistSummary.completed ? "（完了）" : "（未完了）"}</p>` : ""}
     </div>
     <div class="btn-row compact-stack">
       <button id="backToHomeworkListBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>戻る</button>
@@ -2595,8 +3089,16 @@ function bindHomeworkEditEvents() {
       saveState();
     });
   });
+  document.getElementById("homeworkSubmissionTemplate")?.addEventListener("change", (e) => {
+    state.homeworkForm.submissionTemplateId = normalizeSubmissionTemplateId(e.target.value);
+    saveState();
+  });
   bindProtectedActionButton("saveHomeworkBtn", saveHomeworkItem);
   document.getElementById("deleteHomeworkBtn")?.addEventListener("click", deleteHomeworkItemFromEdit);
+  document.getElementById("openHomeworkSubmissionChecklistBtn")?.addEventListener("click", () => {
+    if (!state.homeworkForm.targetId) return;
+    openSubmissionChecklistTarget("homework", state.homeworkForm.targetId, "homeworkEdit");
+  });
   document.getElementById("backToHomeworkListBtn").addEventListener("click", () => changePhase("homeworkList"));
 }
 
@@ -2610,7 +3112,8 @@ function loadHomeworkIntoForm(id) {
     deadlineDate: item.deadlineDate,
     content: item.content,
     googleSync: Boolean(item.googleSync),
-    done: Boolean(item.done)
+    done: Boolean(item.done),
+    submissionTemplateId: normalizeSubmissionTemplateId(item.submissionTemplateId)
   };
   saveState();
 }
@@ -2657,26 +3160,55 @@ async function saveHomeworkItem() {
       const content = state.homeworkForm.content.trim();
       const googleSync = Boolean(state.homeworkForm.googleSync);
       const done = Boolean(state.homeworkForm.done);
+      const submissionTemplateId = normalizeSubmissionTemplateId(state.homeworkForm.submissionTemplateId);
+      const targetPhase = "homeworkList";
 
       if (state.homeworkForm.mode === "edit") {
         const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
         if (!item) throw new Error("missing-homework-item");
+        const wasDone = Boolean(item.done);
+        const templateChanged = item.submissionTemplateId !== submissionTemplateId;
         item.name = name;
         item.deadlineDate = deadlineDate;
         item.content = content;
         item.googleSync = googleSync;
         item.done = done;
+        item.submissionTemplateId = submissionTemplateId;
+        if (templateChanged) {
+          item.submissionCheckedItemIds = [];
+          item.submissionChecklistCompleted = false;
+        }
+        if (done && submissionTemplateId && !item.submissionChecklistCompleted) {
+          state.submissionChecklistTarget = {
+            targetType: "homework",
+            targetId: item.id,
+            returnPhase: targetPhase
+          };
+        } else if (state.submissionChecklistTarget?.targetType === "homework" && state.submissionChecklistTarget?.targetId === item.id) {
+          state.submissionChecklistTarget = null;
+        }
         return;
       }
 
-      state.homeworkTasks.push({
+      const newItem = {
         id: crypto.randomUUID(),
         name,
         deadlineDate,
         content,
         googleSync,
-        done
-      });
+        done,
+        submissionTemplateId,
+        submissionCheckedItemIds: [],
+        submissionChecklistCompleted: false
+      };
+      state.homeworkTasks.push(newItem);
+      if (done && submissionTemplateId) {
+        state.submissionChecklistTarget = {
+          targetType: "homework",
+          targetId: newItem.id,
+          returnPhase: targetPhase
+        };
+      }
     },
     onSuccess: () => {
       state.homeworkForm = createHomeworkForm();
@@ -2882,8 +3414,13 @@ function renderPlanning() {
         </div>
         <div><label for="minutesInput">自分で入力（分）</label><input id="minutesInput" type="number" min="1" max="600" step="1" value="${escapeHtml(String(minutesValue))}" /></div>
         <div><label for="taskContent">内容</label><input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="例: 新中学問題集 p54" /></div>
+        <div><label for="planningSubmissionTemplate">提出・確認テンプレート</label><select id="planningSubmissionTemplate">${renderSubmissionTemplateOptions(state.planningForm.submissionTemplateId)}</select></div>
       </div>
-      <div class="btn-row compact-stack"><button id="saveTaskBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-task-save", editingTask ? "修正を保存" : "追加")}</button></div>
+      <div class="btn-row compact-stack">
+        <button id="saveTaskBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-task-save", editingTask ? "修正を保存" : "追加")}</button>
+        ${editingTask && state.planningForm.submissionTemplateId ? `<button id="openPlanningSubmissionChecklistBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>提出・確認を開く</button>` : ""}
+      </div>
+      ${editingTask && state.planningForm.submissionTemplateId ? renderPlanningSubmissionChecklistSummary(editingTask) : ""}
     </div>
 
     <div class="summary" id="totalPlanned"></div>
@@ -2989,6 +3526,10 @@ function bindPlanningEvents() {
     state.planningForm.content = e.target.value;
     saveState();
   });
+  document.getElementById("planningSubmissionTemplate")?.addEventListener("change", (e) => {
+    state.planningForm.submissionTemplateId = normalizeSubmissionTemplateId(e.target.value);
+    saveState();
+  });
 
   document.getElementById("dailyBelongingInput")?.addEventListener("input", (e) => {
     if (shouldSkipInputWhileComposing(e)) return;
@@ -3040,6 +3581,10 @@ function bindPlanningEvents() {
   });
 
   bindProtectedActionButton("saveTaskBtn", savePlanningTask);
+  document.getElementById("openPlanningSubmissionChecklistBtn")?.addEventListener("click", () => {
+    if (!state.planningForm.targetId) return;
+    openSubmissionChecklistTarget("task", state.planningForm.targetId, "planning");
+  });
 
   document.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3113,8 +3658,15 @@ function loadTaskIntoForm(taskId) {
     customTaskName: knownName ? "" : task.name,
     minutesChoice: String(task.plannedMinutes),
     customMinutes: String(task.plannedMinutes),
-    content: task.content
+    content: task.content,
+    submissionTemplateId: normalizeSubmissionTemplateId(task.submissionTemplateId)
   };
+}
+
+function renderPlanningSubmissionChecklistSummary(task) {
+  const summary = getSubmissionChecklistSummary(task);
+  if (!summary || !summary.hasTemplate) return "";
+  return `<p class="helper">提出・確認: ${summary.checked}/${summary.total}${summary.completed ? "（完了）" : "（未完了）"}</p>`;
 }
 
 async function savePlanningTask() {
@@ -3146,17 +3698,24 @@ async function savePlanningTask() {
       const name = getPlanningFormTaskName();
       const minutes = getPlanningFormMinutes();
       const content = state.planningForm.content.trim();
+      const submissionTemplateId = normalizeSubmissionTemplateId(state.planningForm.submissionTemplateId);
 
       if (state.planningForm.mode === "edit") {
         const task = findTask(state.planningForm.targetId);
         if (!task) throw new Error("missing-planning-task");
+        const templateChanged = task.submissionTemplateId !== submissionTemplateId;
         task.name = name;
         task.plannedMinutes = minutes;
         task.content = content;
+        task.submissionTemplateId = submissionTemplateId;
+        if (templateChanged) {
+          task.submissionCheckedItemIds = [];
+          task.submissionChecklistCompleted = false;
+        }
         return;
       }
 
-      state.tasks.push(createTask(name, minutes, content));
+      state.tasks.push(createTask(name, minutes, content, { submissionTemplateId }));
     },
     onSuccess: () => {
       state.planningForm = createPlanningForm();
@@ -3345,7 +3904,7 @@ function buildPlanReportBelongingsLines(dateKey) {
   const manualText = Array.isArray(summary.manualItems) ? summary.manualItems.join(" / ") : "";
   const lines = [];
   if (autoText) {
-    lines.push(`自動持ち物　${autoText}`);
+    lines.push(`持ち物　${autoText}`);
   }
   if (manualText) {
     lines.push(`追加持ち物　${manualText}`);
@@ -3459,6 +4018,19 @@ function renderExecution() {
   } else {
     state.executionTaskListExpanded = false;
     runArea.innerHTML = `<p class="notice warn">未完了タスクはありません。</p>`;
+  }
+
+  const checklistSectionHtml = renderExecutionSubmissionChecklistSection();
+  if (checklistSectionHtml) {
+    runArea.insertAdjacentHTML("beforeend", checklistSectionHtml);
+    runArea.querySelectorAll("button[data-open-submission-checklist]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetType = String(btn.getAttribute("data-submission-target-type") || "");
+        const targetId = String(btn.getAttribute("data-submission-target-id") || "");
+        if (!targetType || !targetId) return;
+        openSubmissionChecklistTarget(targetType, targetId, "execution");
+      });
+    });
   }
 
   document.getElementById("finishTodayBtn").addEventListener("click", startTodayFinishFlow);
@@ -4009,6 +4581,16 @@ function finalizeTaskCompletion() {
   cancelTaskFinishNotification(task.id);
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
+  if (task.submissionTemplateId && !task.submissionChecklistCompleted) {
+    const template = findSubmissionTemplate(task.submissionTemplateId);
+    if (template && template.items.length > 0) {
+      state.submissionChecklistTarget = {
+        targetType: "task",
+        targetId: task.id,
+        returnPhase: "execution"
+      };
+    }
+  }
   state.running = createRunningState();
   saveState();
   renderExecution();
@@ -4848,6 +5430,7 @@ function renderScreen(content) {
   app.innerHTML = `${renderTopNav()}${renderUiNotice()}${content}`;
   bindTopNav();
   renderReturnCheckReminderOverlay();
+  renderSubmissionChecklistOverlay();
 }
 
 function renderTopNav() {
@@ -4909,6 +5492,9 @@ function changePhase(next, pushHistory = true) {
   if (pushHistory && state.phase !== next) state.navHistory.push(state.phase);
   if (state.phase !== next && next === "execution") {
     state.executionTaskListExpanded = false;
+  }
+  if (state.phase !== next) {
+    removeSubmissionChecklistOverlay();
   }
   state.phase = next;
   if (next !== "home") state.homeReturnPhase = next;
