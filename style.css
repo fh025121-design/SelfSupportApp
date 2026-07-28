@@ -57,6 +57,18 @@ h1 {
   font-weight: 700;
 }
 
+.header-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.sync-header-label {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .auth-error {
   color: var(--danger);
   font-weight: 700;
@@ -101,6 +113,31 @@ h1 {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.top-nav-home {
+  margin-bottom: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.top-text-action {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--sub);
+  font-size: 0.98rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.top-text-action:hover,
+.top-text-action:focus-visible {
+  color: var(--accent-dark);
+  text-decoration: underline;
+  outline: none;
 }
 
 #openSettingsBtn {
@@ -499,28 +536,87 @@ button:disabled {
   background: #f7fafc;
   border: 2px solid #dbe5f2;
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   margin: 10px 0 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 0;
 }
 
 .home-overview p {
-  margin: 4px 0;
+  margin: 2px 0;
   color: var(--ink);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 
-.home-overview-belongings {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+.home-overview-left {
+  display: grid;
+  gap: 2px;
 }
 
-.home-overview-belongings-value {
+.home-overview-right {
   min-width: 0;
-  text-align: right;
+}
+
+.home-overview-belongings-title {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.home-overview-belongings-none {
+  margin: 0;
   color: var(--sub);
+  font-weight: 800;
+}
+
+.home-belongings-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  color: var(--sub);
+  font-weight: 700;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.home-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.home-title-item {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.home-title-link {
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+}
+
+.home-title-link:hover,
+.home-title-link:focus-visible {
+  color: var(--accent-dark);
+  text-decoration: underline;
+  outline: none;
+}
+
+@media (max-width: 520px) {
+  .home-overview {
+    grid-template-columns: 1fr;
+    row-gap: 8px;
+  }
 }
 
 .home-homework-summary p {

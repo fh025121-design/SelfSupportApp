@@ -53,6 +53,7 @@ const DEPARTURE_CHECK_ITEMS = [
 
 const app = document.getElementById("app");
 const todayLabel = document.getElementById("todayLabel");
+const syncHeaderLabel = document.getElementById("syncHeaderLabel");
 
 let tickTimer = null;
 let phaseRefreshTimer = null;
@@ -520,7 +521,7 @@ function buildCarryoverTasks(previousState) {
 
 function loadState() {
   const todayKey = getTodayKeyJst();
-  todayLabel.textContent = `本日: ${getTodayDisplayJst()}`;
+  todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -1617,22 +1618,32 @@ function renderHome() {
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const pendingHomework = getSortedPendingHomeworkTasks();
   const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
-  const belongingsLineText = belongingsSummary.mergedItems.length > 0
-    ? belongingsSummary.mergedItems.join("、")
-    : "なし";
   const syncText = getSyncStatusText();
+  if (syncHeaderLabel) {
+    syncHeaderLabel.textContent = `同期：${syncText || "-"}`;
+  }
+  const belongingsItems = belongingsSummary.mergedItems;
+  const belongingsHtml = belongingsItems.length === 0
+    ? `<p class="home-overview-belongings-none">持ち物：なし</p>`
+    : `<p class="home-overview-belongings-title">持ち物</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
 
   renderScreen(`
-    <h2>今日の予定</h2>
-    <p class="sync-indicator">同期: ${escapeHtml(syncText)}</p>
+    <div class="home-title-row">
+      <h2 class="home-title-item">今日の予定</h2>
+      <p id="openPlanningHeadingBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="予定入力へ">予定入力</p>
+    </div>
     ${departureReminder ? `<div class="notice warn"><p>🟡 出発前チェック（あと${departureReminder.minutesLeft}分）</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
-      <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
-      <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
-      <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
-      <p>勉強 ${formatTimeForDisplay(state.planTimes.studyStart)}</p>
-      <p class="home-overview-belongings"><span>持ち物</span><span class="home-overview-belongings-value">${escapeHtml(belongingsLineText)}</span></p>
+      <div class="home-overview-left">
+        <p>起床 ${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
+        <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
+        <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
+        <p>勉強 ${formatTimeForDisplay(state.planTimes.studyStart)}</p>
+      </div>
+      <div class="home-overview-right">
+        ${belongingsHtml}
+      </div>
     </div>
     <hr class="sep" />
 
@@ -1643,7 +1654,6 @@ function renderHome() {
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openPlanningBtn" class="btn-quiet" type="button">予定入力へ</button>
       <button id="openHomeworkBtn" class="btn-quiet" type="button">${homeworkLabel}</button>
       <button id="openDayEndBtn" class="btn-danger" type="button">1日の終了</button>
     </div>
@@ -1692,7 +1702,7 @@ function renderHome() {
     });
   });
 
-  document.getElementById("openPlanningBtn").addEventListener("click", () => changePhase("planning", false));
+  bindTextAction("openPlanningHeadingBtn", () => changePhase("planning", false));
   document.getElementById("openHomeworkBtn").addEventListener("click", () => changePhase("homeworkList", false));
   document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
   document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
@@ -4670,25 +4680,45 @@ function renderScreen(content) {
 function renderTopNav() {
   const showSettings = state.phase === "home";
   const isPlanReport = state.phase === "planReport";
-  const primaryLabel = state.phase === "home" ? "ログアウト" : isPlanReport ? "戻る" : "ホーム";
+  const primaryLabel = isPlanReport ? "戻る" : "ホーム";
+  if (showSettings) {
+    return `
+      <div class="top-nav top-nav-home">
+        <button id="openSettingsTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>⚙ 設定</button>
+        <button id="logoutTextBtn" class="top-text-action" type="button" ${getBusyDisabledAttr()}>🚪 ログアウト</button>
+      </div>
+    `;
+  }
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>${primaryLabel}</button>
-      ${showSettings ? `<button id="openSettingsBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>⚙️設定</button>` : ""}
     </div>
   `;
 }
 
 function bindTopNav() {
-  const homeBtn = document.getElementById("homeBtn");
   if (state.phase === "home") {
-    homeBtn?.addEventListener("click", performLogout);
-  } else if (state.phase === "planReport") {
+    document.getElementById("openSettingsTextBtn")?.addEventListener("click", () => changePhase("settings", false));
+    document.getElementById("logoutTextBtn")?.addEventListener("click", performLogout);
+    return;
+  }
+  const homeBtn = document.getElementById("homeBtn");
+  if (state.phase === "planReport") {
     homeBtn?.addEventListener("click", goBack);
   } else {
     homeBtn?.addEventListener("click", goHome);
   }
-  document.getElementById("openSettingsBtn")?.addEventListener("click", () => changePhase("settings", false));
+}
+
+function bindTextAction(id, onActivate) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener("click", onActivate);
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    onActivate();
+  });
 }
 
 async function performLogout() {
