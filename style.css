@@ -208,6 +208,31 @@ textarea {
   }
 }
 
+@media (max-width: 600px) {
+  .custom-extend-control.is-confirming {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+
+  .custom-extend-control.is-confirming #extendCustom {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid #f0c892;
+  }
+
+  .custom-extend-control.is-confirming > button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .custom-extend-control.is-confirming > button + button {
+    border-left: 1px solid #d7e4e6;
+  }
+}
+
 textarea {
   min-height: 110px;
   resize: vertical;

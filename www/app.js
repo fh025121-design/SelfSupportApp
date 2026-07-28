@@ -3297,7 +3297,7 @@ function renderOverrunControls(elapsed) {
       <div class="grid-2 custom-extend-grid">
         <div class="custom-extend-field">
           <label for="extendCustom">時間指定延長（分）</label>
-          <div class="custom-extend-control">
+          <div class="custom-extend-control${confirmingSource === "extendCustom" ? " is-confirming" : ""}">
             <input id="extendCustom" type="number" min="1" max="180" value="${escapeHtml(state.running.customExtendMinutes || "")}" />
             ${customExtendActionHtml}
           </div>
