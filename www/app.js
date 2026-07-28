@@ -3272,12 +3272,7 @@ function renderOverrunControls(elapsed) {
   if (state.running.alertAtSeconds == null || elapsed < state.running.alertAtSeconds) return "";
   const confirmingSource = String(state.running.confirmingExtendSource || "");
   const customExtendActionHtml = confirmingSource === "extendCustom"
-    ? `
-      <div class="custom-confirm-row">
-        <button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button>
-        <button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>
-      </div>
-    `
+    ? '<button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button><button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>'
     : '<button id="extendCustomBtn" class="btn-sub" type="button">延長する</button>';
   return `
     <div class="notice warn">
@@ -3294,11 +3289,9 @@ function renderOverrunControls(elapsed) {
       <div class="grid-2 custom-extend-grid">
         <div class="custom-extend-field">
           <label for="extendCustom">時間指定延長（分）</label>
-          <div class="custom-extend-row">
+          <div class="custom-extend-control">
             <input id="extendCustom" type="number" min="1" max="180" value="${escapeHtml(state.running.customExtendMinutes || "")}" />
-            <div class="custom-extend-action">
-              ${customExtendActionHtml}
-            </div>
+            ${customExtendActionHtml}
           </div>
         </div>
       </div>
