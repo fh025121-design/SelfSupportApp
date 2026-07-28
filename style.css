@@ -809,6 +809,10 @@ button:disabled {
   padding: 8px 2px;
 }
 
+.home-task-more-row {
+  margin: 6px 0 0;
+}
+
 .result-summary-compact {
   padding: 10px 12px;
 }

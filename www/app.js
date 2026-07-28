@@ -297,6 +297,7 @@ function createInitialState(dateKey, tasks = []) {
     dateKey,
     phase: "planning",
     navHistory: [],
+    homeTaskListExpanded: false,
     homeReturnPhase: "planning",
     planFor: "tomorrow",
     planTimes: createDefaultPlanTimes(),
@@ -559,6 +560,7 @@ function loadState() {
       "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
+    safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
     safe.homeReturnPhase = [
       "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
@@ -1661,6 +1663,8 @@ function renderHome() {
 
     <ul class="home-task-list" id="homeTaskList"></ul>
 
+    ${state.tasks.length > 5 && !state.homeTaskListExpanded ? `<div class="home-task-more-row"><button id="showAllHomeTasksBtn" class="btn-quiet" type="button">すべて見る（全${state.tasks.length}件）</button></div>` : ""}
+
     <div class="btn-row">
       <button id="openExecutionBtn" class="btn-main" type="button">タスク実行へ</button>
     </div>
@@ -1676,14 +1680,16 @@ function renderHome() {
   `);
 
   const list = document.getElementById("homeTaskList");
-  if (state.tasks.length === 0) {
+  const displayTasks = getHomeTaskDisplayTasks();
+  const visibleTasks = state.homeTaskListExpanded ? displayTasks : displayTasks.slice(0, 5);
+  if (displayTasks.length === 0) {
     const empty = document.createElement("li");
     empty.className = "home-task-empty";
     empty.textContent = "予定タスクはまだありません。";
     list.appendChild(empty);
   }
 
-  state.tasks.forEach((task) => {
+  visibleTasks.forEach((task) => {
     const li = document.createElement("li");
     li.className = "home-task-row";
     const status = getHomeStatusIcon(task);
@@ -1697,6 +1703,12 @@ function renderHome() {
       </div>
     `;
     list.appendChild(li);
+  });
+
+  document.getElementById("showAllHomeTasksBtn")?.addEventListener("click", () => {
+    state.homeTaskListExpanded = true;
+    saveState();
+    render();
   });
 
   list.querySelectorAll("li[data-task-id]").forEach((row) => {
@@ -2636,6 +2648,23 @@ function getHomeStatusIcon(task) {
   return "○";
 }
 
+function getHomeTaskPriority(task) {
+  if (!task) return 1;
+  if (state.running.taskId === task.id) return 0;
+  return 1;
+}
+
+function getHomeTaskDisplayTasks() {
+  const tasksWithIndex = state.tasks.map((task, index) => ({ task, index }));
+  return tasksWithIndex
+    .sort((a, b) => {
+      const priorityDiff = getHomeTaskPriority(a.task) - getHomeTaskPriority(b.task);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.index - b.index;
+    })
+    .map((item) => item.task);
+}
+
 function getHomeActualText(task) {
   const formatMinutes = (sec) => `${Math.max(1, Math.floor(sec / 60))}分`;
   if (state.running.taskId === task.id && !state.running.isPaused) {
@@ -3205,32 +3234,20 @@ function buildPlanReportBelongingsLines(dateKey) {
 
 function renderPlanReport() {
   const report = buildPlanReportText();
-  const canComposeDailyMail = Boolean(state.lastResultReportText && state.lastResultReportText.trim());
   renderScreen(`
     <h2>親への予定報告</h2>
     <div id="planReportText" class="report-box"></div>
     <div class="btn-row compact-stack">
       <button id="copyPlanBtn" class="btn-main" type="button">予定をコピー</button>
-      <button id="composeDailyMailBtn" class="btn-sub" type="button" ${canComposeDailyMail ? "" : "disabled"}>実績+次の日予定をメール作成</button>
       <button id="startExecutionBtn" class="btn-quiet" type="button">タスク実行へ進む</button>
     </div>
-    <p id="copyPlanMessage" class="helper" aria-live="polite">${canComposeDailyMail ? "" : "先に「1日の終了」で当日の実績報告を確定するとメール作成できます。"}</p>
+    <p id="copyPlanMessage" class="helper" aria-live="polite"></p>
   `);
 
   document.getElementById("planReportText").textContent = report;
   document.getElementById("copyPlanBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(report);
     document.getElementById("copyPlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
-  });
-  document.getElementById("composeDailyMailBtn")?.addEventListener("click", () => {
-    const body = [
-      state.lastResultReportText.trim(),
-      "",
-      report
-    ].join("\n");
-    const now = getNowInJst();
-    const subject = `${now.getMonth() + 1}/${now.getDate()} 実績と次の日予定`;
-    window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   });
   document.getElementById("startExecutionBtn").addEventListener("click", () => changePhase("execution"));
 }
@@ -4233,10 +4250,8 @@ function renderResult() {
     <h3>保護者への報告文</h3>
     <div id="resultReportText" class="report-box result-report-box"></div>
     <div class="btn-row compact-stack">
-      <button id="copyResultBtn" class="btn-main" type="button">報告文をコピー</button>
       <button id="endDayBtn" class="btn-danger" type="button">1日の終了へ</button>
     </div>
-    <p id="copyResultMessage" class="helper"></p>
 
     <div class="summary result-summary-compact">
       <div class="result-inline-row">
@@ -4266,11 +4281,6 @@ function renderResult() {
   });
 
   document.getElementById("resultReportText").innerHTML = buildResultReportHtml(done.length, unfinished, totalActual);
-  document.getElementById("copyResultBtn").addEventListener("click", async () => {
-    if (!confirmLargeActualGapBeforeSend()) return;
-    const ok = await copyToClipboard(report);
-    document.getElementById("copyResultMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
-  });
   document.getElementById("endDayBtn").addEventListener("click", () => changePhase("dayEnd"));
 }
 
