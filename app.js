@@ -82,6 +82,13 @@ let isComposingText = false;
 let pendingRemoteState = null;
 let pendingRemoteHash = "";
 let pendingPassiveRender = false;
+let deferredUiBlockUntil = 0;
+let activeSaveActionKey = "";
+let uiNotice = { type: "", text: "" };
+let uiNoticeTimer = null;
+let pendingSyncHash = "";
+let syncDrainPromise = null;
+let resolveSyncDrainPromise = null;
 let devAlertTestConfig = {
   volume: 5,
   toneType: "type1",
@@ -667,8 +674,86 @@ function saveState(options = {}) {
     localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
   }
 
-  if (options.skipRemote) return;
-  scheduleFirestoreSave();
+  if (options.skipRemote) return Promise.resolve({ status: "local-only" });
+  return scheduleFirestoreSave({
+    immediate: Boolean(options.immediateRemote),
+    awaitCompletion: Boolean(options.awaitRemote)
+  });
+}
+
+function ensureSyncDrainPromise() {
+  if (syncDrainPromise) return syncDrainPromise;
+  syncDrainPromise = new Promise((resolve) => {
+    resolveSyncDrainPromise = resolve;
+  });
+  return syncDrainPromise;
+}
+
+function resolveSyncDrain(result) {
+  if (!resolveSyncDrainPromise) return;
+  resolveSyncDrainPromise(result);
+  resolveSyncDrainPromise = null;
+  syncDrainPromise = null;
+}
+
+function isAnySaveActionPending() {
+  return Boolean(activeSaveActionKey);
+}
+
+function isSaveActionPending(key) {
+  return activeSaveActionKey === key;
+}
+
+function getBusyDisabledAttr() {
+  return isAnySaveActionPending() ? 'disabled aria-disabled="true"' : "";
+}
+
+function getSaveActionDisabledAttr() {
+  return getBusyDisabledAttr();
+}
+
+function getSaveActionLabel(key, defaultLabel) {
+  return isSaveActionPending(key) ? "保存中..." : defaultLabel;
+}
+
+function blockDeferredUiUpdates(ms = 900) {
+  deferredUiBlockUntil = Math.max(deferredUiBlockUntil, Date.now() + ms);
+}
+
+function clearUiNotice(options = {}) {
+  const { skipRender = false } = options;
+  if (uiNoticeTimer) {
+    clearTimeout(uiNoticeTimer);
+    uiNoticeTimer = null;
+  }
+  uiNotice = { type: "", text: "" };
+  if (!skipRender) requestPassiveRender();
+}
+
+function setUiNotice(type, text, options = {}) {
+  const { autoHideMs = 0, skipRender = false } = options;
+  if (uiNoticeTimer) {
+    clearTimeout(uiNoticeTimer);
+    uiNoticeTimer = null;
+  }
+  uiNotice = {
+    type: String(type || "info"),
+    text: String(text || "")
+  };
+  if (autoHideMs > 0 && uiNotice.text) {
+    uiNoticeTimer = window.setTimeout(() => {
+      uiNoticeTimer = null;
+      uiNotice = { type: "", text: "" };
+      requestPassiveRender();
+    }, autoHideMs);
+  }
+  if (!skipRender) requestPassiveRender();
+}
+
+function renderUiNotice() {
+  if (!uiNotice.text) return "";
+  const ariaRole = uiNotice.type === "error" ? "alert" : "status";
+  return `<p class="helper ui-notice ui-notice-${escapeHtml(uiNotice.type)}" role="${ariaRole}" aria-live="polite">${escapeHtml(uiNotice.text)}</p>`;
 }
 
 function isEditableTextElement(el) {
@@ -685,6 +770,138 @@ function isUserEditing() {
 
 function shouldSkipInputWhileComposing(e) {
   return Boolean(e?.isComposing) || isComposingText;
+}
+
+function getInputElementValue(id) {
+  const el = document.getElementById(id);
+  if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
+    return el.value;
+  }
+  return null;
+}
+
+function syncPlanningFormFromDom() {
+  const taskNameChoice = getInputElementValue("taskNameSelect");
+  const customTaskName = getInputElementValue("customTaskName");
+  const customMinutes = getInputElementValue("minutesInput");
+  const content = getInputElementValue("taskContent");
+  const dailyBelongingInput = getInputElementValue("dailyBelongingInput");
+  if (taskNameChoice !== null) state.planningForm.taskNameChoice = taskNameChoice;
+  if (customTaskName !== null) state.planningForm.customTaskName = customTaskName;
+  if (customMinutes !== null) {
+    state.planningForm.customMinutes = customMinutes;
+    state.planningForm.minutesChoice = customMinutes;
+  }
+  if (content !== null) state.planningForm.content = content;
+  if (dailyBelongingInput !== null) state.planningDailyBelongingInput = dailyBelongingInput;
+}
+
+function syncRecurringFormFromDom() {
+  const name = getInputElementValue("recurringName");
+  const minutes = getInputElementValue("recurringMinutes");
+  const content = getInputElementValue("recurringContent");
+  const belongingInput = getInputElementValue("recurringBelongingInput");
+  if (name !== null) state.recurringForm.name = name;
+  if (minutes !== null) state.recurringForm.minutes = minutes;
+  if (content !== null) state.recurringForm.content = content;
+  if (belongingInput !== null) state.recurringForm.belongingInput = belongingInput;
+
+  const repeatType = document.querySelector("input[name='recurringRepeatType']:checked");
+  if (repeatType instanceof HTMLInputElement) {
+    state.recurringForm.repeatType = normalizeRecurringRepeatType(repeatType.value);
+  }
+  const selectedDays = Array.from(document.querySelectorAll("input[name='recurringDay']:checked"))
+    .map((el) => el instanceof HTMLInputElement ? el.value : "")
+    .filter(Boolean);
+  state.recurringForm.days = normalizeRepeatDays(selectedDays);
+  const googleSync = document.querySelector("input[name='recurringGoogleSync']:checked");
+  if (googleSync instanceof HTMLInputElement) {
+    state.recurringForm.googleSync = googleSync.value === "on";
+  }
+}
+
+function syncHomeworkFormFromDom() {
+  const name = getInputElementValue("homeworkName");
+  const deadlineDate = getInputElementValue("homeworkDeadline");
+  const content = getInputElementValue("homeworkContent");
+  if (name !== null) state.homeworkForm.name = name;
+  if (deadlineDate !== null) state.homeworkForm.deadlineDate = normalizeDeadlineDate(deadlineDate);
+  if (content !== null) state.homeworkForm.content = content;
+
+  const googleSync = document.querySelector("input[name='homeworkGoogleSync']:checked");
+  if (googleSync instanceof HTMLInputElement) {
+    state.homeworkForm.googleSync = googleSync.value === "on";
+  }
+  const done = document.querySelector("input[name='homeworkDone']:checked");
+  if (done instanceof HTMLInputElement) {
+    state.homeworkForm.done = done.value === "done";
+  }
+}
+
+function bindProtectedActionButton(id, handler) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.addEventListener("pointerdown", () => {
+    blockDeferredUiUpdates();
+  });
+  btn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (isAnySaveActionPending()) return;
+    await handler();
+  });
+}
+
+async function runProtectedSaveAction(options) {
+  const {
+    key,
+    syncFromDom,
+    validate,
+    captureState,
+    restoreState,
+    apply,
+    onSuccess,
+    successMessage,
+    failureMessage = "保存に失敗しました。入力内容は保持しています。"
+  } = options;
+
+  if (isAnySaveActionPending()) return false;
+
+  blockDeferredUiUpdates(1400);
+  clearUiNotice({ skipRender: true });
+  syncFromDom?.();
+
+  const validationMessage = validate?.();
+  if (validationMessage) {
+    deferredUiBlockUntil = 0;
+    flushDeferredUiUpdates();
+    alert(validationMessage);
+    return false;
+  }
+
+  const snapshot = captureState?.();
+  activeSaveActionKey = key;
+  render();
+
+  try {
+    apply();
+    await saveState({ immediateRemote: true, awaitRemote: true });
+    activeSaveActionKey = "";
+    setUiNotice("success", successMessage, { autoHideMs: 2600, skipRender: true });
+    onSuccess?.();
+    return true;
+  } catch (error) {
+    restoreState?.(snapshot);
+    activeSaveActionKey = "";
+    setUiNotice("error", failureMessage, { skipRender: true });
+    render();
+    return false;
+  } finally {
+    if (activeSaveActionKey === key) {
+      activeSaveActionKey = "";
+    }
+    deferredUiBlockUntil = 0;
+    flushDeferredUiUpdates();
+  }
 }
 
 function requestPassiveRender() {
@@ -707,6 +924,14 @@ function applyRemoteStateKeepingCurrentPhase(rawState) {
 }
 
 function flushDeferredUiUpdates() {
+  if (isAnySaveActionPending()) return;
+  if (Date.now() < deferredUiBlockUntil) {
+    const waitMs = Math.max(deferredUiBlockUntil - Date.now(), 1);
+    window.setTimeout(() => {
+      flushDeferredUiUpdates();
+    }, waitMs);
+    return;
+  }
   if (isUserEditing()) return;
   if (pendingRemoteState) {
     applyRemoteStateKeepingCurrentPhase(pendingRemoteState);
@@ -767,23 +992,42 @@ function render() {
   ensurePhaseRefreshTimer();
   enforcePriorityPhase();
 
-  if (state.phase === "previousDayEnd") return renderPreviousDayEnd();
-  if (state.phase === "departureCheck") return renderDepartureCheck();
-  if (state.phase === "home") return renderHome();
-  if (state.phase === "planning") return renderPlanning();
-  if (state.phase === "planConfirm") return renderPlanConfirm();
-  if (state.phase === "planReport") return renderPlanReport();
-  if (state.phase === "execution") return renderExecution();
-  if (state.phase === "review") return renderReview();
-  if (state.phase === "returnCheck") return renderReturnCheck();
-  if (state.phase === "returnReport") return renderReturnReport();
-  if (state.phase === "dayEnd") return renderDayEnd();
-  if (state.phase === "settings") return renderSettings();
-  if (state.phase === "recurringList") return renderRecurringListScreen();
-  if (state.phase === "recurringEdit") return renderRecurringEditScreen();
-  if (state.phase === "homeworkList") return renderHomeworkListScreen();
-  if (state.phase === "homeworkEdit") return renderHomeworkEditScreen();
-  return renderResult();
+  switch (state.phase) {
+    case "previousDayEnd":
+      return renderPreviousDayEnd();
+    case "departureCheck":
+      return renderDepartureCheck();
+    case "home":
+      return renderHome();
+    case "planning":
+      return renderPlanning();
+    case "planConfirm":
+      return renderPlanConfirm();
+    case "planReport":
+      return renderPlanReport();
+    case "execution":
+      return renderExecution();
+    case "review":
+      return renderReview();
+    case "returnCheck":
+      return renderReturnCheck();
+    case "returnReport":
+      return renderReturnReport();
+    case "dayEnd":
+      return renderDayEnd();
+    case "settings":
+      return renderSettings();
+    case "recurringList":
+      return renderRecurringListScreen();
+    case "recurringEdit":
+      return renderRecurringEditScreen();
+    case "homeworkList":
+      return renderHomeworkListScreen();
+    case "homeworkEdit":
+      return renderHomeworkEditScreen();
+    default:
+      return renderResult();
+  }
 }
 
 function renderAuthSyncing() {
@@ -1190,11 +1434,17 @@ function shouldSyncToFirestore() {
   return true;
 }
 
-function scheduleFirestoreSave() {
-  if (!shouldSyncToFirestore()) return;
+function scheduleFirestoreSave(options = {}) {
+  if (!shouldSyncToFirestore()) return Promise.resolve({ status: "local-only" });
 
   const nextHash = hashStateObject(state);
-  if (!nextHash || nextHash === lastSavedStateHash) return;
+  if (!nextHash || nextHash === lastSavedStateHash) {
+    pendingSyncHash = "";
+    return Promise.resolve({ status: "synced" });
+  }
+
+  pendingSyncHash = nextHash;
+  const completionPromise = options.awaitCompletion ? ensureSyncDrainPromise() : null;
 
   if (syncSaveTimer) {
     clearTimeout(syncSaveTimer);
@@ -1204,16 +1454,36 @@ function scheduleFirestoreSave() {
     syncStatus = "saving";
   }
 
-  syncSaveTimer = setTimeout(() => {
+  if (options.immediate) {
     syncSaveTimer = null;
-    flushFirestoreSave(nextHash);
-  }, SYNC_SAVE_DEBOUNCE_MS);
+    void flushFirestoreSave(nextHash);
+  } else {
+    syncSaveTimer = setTimeout(() => {
+      syncSaveTimer = null;
+      void flushFirestoreSave(nextHash);
+    }, SYNC_SAVE_DEBOUNCE_MS);
+  }
+
+  return completionPromise || Promise.resolve({ status: "scheduled" });
 }
 
 async function flushFirestoreSave(expectedHash) {
-  if (!shouldSyncToFirestore()) return;
+  if (!shouldSyncToFirestore()) {
+    resolveSyncDrain({ status: "local-only" });
+    return;
+  }
+
+  const targetHash = pendingSyncHash || expectedHash;
   if (syncSaveInFlight) return;
-  if (!expectedHash || expectedHash === lastSavedStateHash) return;
+  if (!targetHash || targetHash === lastSavedStateHash) {
+    if (targetHash === lastSavedStateHash) {
+      pendingSyncHash = "";
+    }
+    if (!syncSaveTimer) {
+      resolveSyncDrain({ status: "synced" });
+    }
+    return;
+  }
 
   syncSaveInFlight = true;
   const uid = currentUser.uid;
@@ -1221,8 +1491,9 @@ async function flushFirestoreSave(expectedHash) {
     const payloadState = cloneStateForSync();
     const latestHash = hashStateObject(payloadState);
     if (!latestHash || latestHash === lastSavedStateHash) {
-      syncSaveInFlight = false;
+      pendingSyncHash = "";
       if (syncStatus !== "offline") syncStatus = "synced";
+      resolveSyncDrain({ status: "synced" });
       return;
     }
 
@@ -1234,6 +1505,9 @@ async function flushFirestoreSave(expectedHash) {
     }, { merge: true });
 
     lastSavedStateHash = latestHash;
+    if (pendingSyncHash === latestHash) {
+      pendingSyncHash = "";
+    }
     if (syncStatus !== "offline") syncStatus = "synced";
   } catch (error) {
     reportFirestoreError("save-write", error, {
@@ -1241,9 +1515,17 @@ async function flushFirestoreSave(expectedHash) {
       expectedHashLength: String(expectedHash || "").length
     });
     syncStatus = navigator.onLine ? "error" : "offline";
+    resolveSyncDrain({ status: "local-only", remoteError: error });
   } finally {
     syncSaveInFlight = false;
     requestPassiveRender();
+    if (shouldSyncToFirestore() && pendingSyncHash && pendingSyncHash !== lastSavedStateHash && syncStatus !== "error" && syncStatus !== "offline") {
+      void flushFirestoreSave(pendingSyncHash);
+      return;
+    }
+    if (!syncSaveTimer) {
+      resolveSyncDrain(pendingSyncHash && pendingSyncHash !== lastSavedStateHash ? { status: "local-only" } : { status: "synced" });
+    }
   }
 }
 
@@ -1787,7 +2069,7 @@ function renderRecurringEditScreen() {
           <label>持ち物</label>
           <div class="btn-row split compact-stack">
             <input id="recurringBelongingInput" type="text" value="${escapeHtml(state.recurringForm.belongingInput)}" maxlength="60" placeholder="例: グローブ" />
-            <button id="addRecurringBelongingBtn" class="btn-sub" type="button">追加</button>
+            <button id="addRecurringBelongingBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("recurring-belonging-add", "追加")}</button>
           </div>
           <ul id="recurringBelongingList" class="confirm-list">${renderRecurringBelongingList()}</ul>
         </div>
@@ -1811,13 +2093,13 @@ function renderRecurringEditScreen() {
         </div>
       </div>
       <div class="btn-row compact-stack">
-        <button id="saveRecurringBtn" class="btn-main" type="button">保存</button>
-        ${editing ? '<button id="deleteRecurringBtn" class="btn-danger" type="button">削除</button>' : ""}
+        <button id="saveRecurringBtn" class="btn-main" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("recurring-save", "保存")}</button>
+        ${editing ? `<button id="deleteRecurringBtn" class="btn-danger" type="button" ${getBusyDisabledAttr()}>削除</button>` : ""}
       </div>
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="backToRecurringListBtn" class="btn-quiet" type="button">戻る</button>
+      <button id="backToRecurringListBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>戻る</button>
     </div>
   `);
 
@@ -1921,15 +2203,35 @@ function renderRecurringListRows() {
       state.recurringForm.belongingInput = e.target.value;
       saveState();
     });
-    document.getElementById("addRecurringBelongingBtn")?.addEventListener("click", () => {
+    bindProtectedActionButton("addRecurringBelongingBtn", async () => {
+      syncRecurringFormFromDom();
       const name = normalizeBelongingName(state.recurringForm.belongingInput);
-      if (!name) return;
-      if (!state.recurringForm.belongings.includes(name)) {
-        state.recurringForm.belongings.push(name);
+      if (!name) {
+        deferredUiBlockUntil = 0;
+        flushDeferredUiUpdates();
+        return;
       }
-      state.recurringForm.belongingInput = "";
-      saveState();
-      renderRecurringEditScreen();
+      await runProtectedSaveAction({
+        key: "recurring-belonging-add",
+        syncFromDom: syncRecurringFormFromDom,
+        captureState: () => structuredClone({ recurringForm: state.recurringForm }),
+        restoreState: (snapshot) => {
+          if (!snapshot) return;
+          state.recurringForm = normalizeRecurringForm(snapshot.recurringForm);
+        },
+        apply: () => {
+          const nextName = normalizeBelongingName(state.recurringForm.belongingInput);
+          if (!state.recurringForm.belongings.includes(nextName)) {
+            state.recurringForm.belongings.push(nextName);
+          }
+          state.recurringForm.belongingInput = "";
+        },
+        onSuccess: () => {
+          saveState();
+          renderRecurringEditScreen();
+        },
+        successMessage: ""
+      });
     });
     document.querySelectorAll("button[data-recurring-belonging-remove]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1962,7 +2264,7 @@ function renderRecurringListRows() {
       });
     });
 
-    document.getElementById("saveRecurringBtn").addEventListener("click", saveRecurringPlan);
+    bindProtectedActionButton("saveRecurringBtn", saveRecurringPlan);
     document.getElementById("deleteRecurringBtn")?.addEventListener("click", deleteRecurringPlanFromEdit);
     document.getElementById("backToRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
   }
@@ -1996,36 +2298,65 @@ function renderRecurringListRows() {
     changePhase("recurringList");
   }
 
-  function saveRecurringPlan() {
-    const name = state.recurringForm.name.trim();
-    const minutes = sanitizeMinutes(state.recurringForm.minutes);
-    const content = state.recurringForm.content.trim();
-    const belongings = normalizeBelongingsList(state.recurringForm.belongings);
-    const repeatType = normalizeRecurringRepeatType(state.recurringForm.repeatType);
-    const days = normalizeRepeatDays(state.recurringForm.days);
-    const googleSync = Boolean(state.recurringForm.googleSync);
-    if (!name) return alert("予定名を入力してください。");
-    if (!minutes) return alert("予定時間（分）を入力してください。");
-    if (!content) return alert("内容を入力してください。");
-    if (repeatType === "weekday" && days.length === 0) return alert("曜日を1つ以上選択してください。");
+  async function saveRecurringPlan() {
+    await runProtectedSaveAction({
+      key: "recurring-save",
+      syncFromDom: syncRecurringFormFromDom,
+      validate: () => {
+        const name = state.recurringForm.name.trim();
+        const minutes = sanitizeMinutes(state.recurringForm.minutes);
+        const content = state.recurringForm.content.trim();
+        const repeatType = normalizeRecurringRepeatType(state.recurringForm.repeatType);
+        const days = normalizeRepeatDays(state.recurringForm.days);
+        if (!name) return "予定名を入力してください。";
+        if (!minutes) return "予定時間（分）を入力してください。";
+        if (!content) return "内容を入力してください。";
+        if (repeatType === "weekday" && days.length === 0) return "曜日を1つ以上選択してください。";
+        if (state.recurringForm.mode === "edit" && !state.recurringPlans.find((p) => p.id === state.recurringForm.targetId)) {
+          return "保存対象の定期予定が見つかりません。";
+        }
+        return null;
+      },
+      captureState: () => structuredClone({
+        recurringPlans: state.recurringPlans,
+        recurringForm: state.recurringForm
+      }),
+      restoreState: (snapshot) => {
+        if (!snapshot) return;
+        state.recurringPlans = snapshot.recurringPlans;
+        state.recurringForm = normalizeRecurringForm(snapshot.recurringForm);
+      },
+      apply: () => {
+        const name = state.recurringForm.name.trim();
+        const minutes = sanitizeMinutes(state.recurringForm.minutes);
+        const content = state.recurringForm.content.trim();
+        const belongings = normalizeBelongingsList(state.recurringForm.belongings);
+        const repeatType = normalizeRecurringRepeatType(state.recurringForm.repeatType);
+        const days = normalizeRepeatDays(state.recurringForm.days);
+        const googleSync = Boolean(state.recurringForm.googleSync);
 
-    if (state.recurringForm.mode === "edit") {
-      const plan = state.recurringPlans.find((p) => p.id === state.recurringForm.targetId);
-      if (!plan) return;
-      plan.name = name;
-      plan.plannedMinutes = minutes;
-      plan.content = content;
-      plan.belongings = belongings;
-      plan.repeatType = repeatType;
-      plan.days = repeatType === "daily" ? [] : days;
-      plan.googleSync = googleSync;
-    } else {
-      state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync, belongings));
-    }
+        if (state.recurringForm.mode === "edit") {
+          const plan = state.recurringPlans.find((p) => p.id === state.recurringForm.targetId);
+          if (!plan) throw new Error("missing-recurring-plan");
+          plan.name = name;
+          plan.plannedMinutes = minutes;
+          plan.content = content;
+          plan.belongings = belongings;
+          plan.repeatType = repeatType;
+          plan.days = repeatType === "daily" ? [] : days;
+          plan.googleSync = googleSync;
+          return;
+        }
 
-    state.recurringForm = createRecurringForm();
-    saveState();
-    changePhase("recurringList");
+        state.recurringPlans.push(createRecurringPlan(name, minutes, content, repeatType, repeatType === "daily" ? [] : days, googleSync, belongings));
+      },
+      onSuccess: () => {
+        state.recurringForm = createRecurringForm();
+        saveState();
+        changePhase("recurringList");
+      },
+      successMessage: "定期予定を登録しました"
+    });
   }
 
   function formatRecurringRepeat(plan) {
@@ -2121,12 +2452,12 @@ function renderHomeworkEditScreen() {
         </div>
       </div>
       <div class="btn-row compact-stack">
-        <button id="saveHomeworkBtn" class="btn-main" type="button">保存</button>
-        ${editing ? '<button id="deleteHomeworkBtn" class="btn-danger" type="button">削除</button>' : ""}
+        <button id="saveHomeworkBtn" class="btn-main" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("homework-save", "保存")}</button>
+        ${editing ? `<button id="deleteHomeworkBtn" class="btn-danger" type="button" ${getBusyDisabledAttr()}>削除</button>` : ""}
       </div>
     </div>
     <div class="btn-row compact-stack">
-      <button id="backToHomeworkListBtn" class="btn-quiet" type="button">戻る</button>
+      <button id="backToHomeworkListBtn" class="btn-quiet" type="button" ${getBusyDisabledAttr()}>戻る</button>
     </div>
   `);
 
@@ -2160,7 +2491,7 @@ function bindHomeworkEditEvents() {
       saveState();
     });
   });
-  document.getElementById("saveHomeworkBtn").addEventListener("click", saveHomeworkItem);
+  bindProtectedActionButton("saveHomeworkBtn", saveHomeworkItem);
   document.getElementById("deleteHomeworkBtn")?.addEventListener("click", deleteHomeworkItemFromEdit);
   document.getElementById("backToHomeworkListBtn").addEventListener("click", () => changePhase("homeworkList"));
 }
@@ -2191,38 +2522,65 @@ function deleteHomeworkItemFromEdit() {
   changePhase("homeworkList");
 }
 
-function saveHomeworkItem() {
-  const name = state.homeworkForm.name.trim();
-  const deadlineDate = normalizeDeadlineDate(state.homeworkForm.deadlineDate);
-  const content = state.homeworkForm.content.trim();
-  const googleSync = Boolean(state.homeworkForm.googleSync);
-  const done = Boolean(state.homeworkForm.done);
-  if (!name) return alert("課題名を入力してください。");
-  if (!deadlineDate) return alert("締切を入力してください。");
-  if (!content) return alert("内容を入力してください。");
+async function saveHomeworkItem() {
+  await runProtectedSaveAction({
+    key: "homework-save",
+    syncFromDom: syncHomeworkFormFromDom,
+    validate: () => {
+      const name = state.homeworkForm.name.trim();
+      const deadlineDate = normalizeDeadlineDate(state.homeworkForm.deadlineDate);
+      const content = state.homeworkForm.content.trim();
+      if (!name) return "課題名を入力してください。";
+      if (!deadlineDate) return "締切を入力してください。";
+      if (!content) return "内容を入力してください。";
+      if (state.homeworkForm.mode === "edit" && !state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId)) {
+        return "保存対象の課題が見つかりません。";
+      }
+      return null;
+    },
+    captureState: () => structuredClone({
+      homeworkTasks: state.homeworkTasks,
+      homeworkForm: state.homeworkForm
+    }),
+    restoreState: (snapshot) => {
+      if (!snapshot) return;
+      state.homeworkTasks = snapshot.homeworkTasks;
+      state.homeworkForm = normalizeHomeworkForm(snapshot.homeworkForm);
+    },
+    apply: () => {
+      const name = state.homeworkForm.name.trim();
+      const deadlineDate = normalizeDeadlineDate(state.homeworkForm.deadlineDate);
+      const content = state.homeworkForm.content.trim();
+      const googleSync = Boolean(state.homeworkForm.googleSync);
+      const done = Boolean(state.homeworkForm.done);
 
-  if (state.homeworkForm.mode === "edit") {
-    const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
-    if (!item) return;
-    item.name = name;
-    item.deadlineDate = deadlineDate;
-    item.content = content;
-    item.googleSync = googleSync;
-    item.done = done;
-  } else {
-    state.homeworkTasks.push({
-      id: crypto.randomUUID(),
-      name,
-      deadlineDate,
-      content,
-      googleSync,
-      done
-    });
-  }
+      if (state.homeworkForm.mode === "edit") {
+        const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
+        if (!item) throw new Error("missing-homework-item");
+        item.name = name;
+        item.deadlineDate = deadlineDate;
+        item.content = content;
+        item.googleSync = googleSync;
+        item.done = done;
+        return;
+      }
 
-  state.homeworkForm = createHomeworkForm();
-  saveState();
-  changePhase("homeworkList");
+      state.homeworkTasks.push({
+        id: crypto.randomUUID(),
+        name,
+        deadlineDate,
+        content,
+        googleSync,
+        done
+      });
+    },
+    onSuccess: () => {
+      state.homeworkForm = createHomeworkForm();
+      saveState();
+      changePhase("homeworkList");
+    },
+    successMessage: "保存しました"
+  });
 }
 
 function getHomeStatusIcon(task) {
@@ -2310,7 +2668,7 @@ function renderPlanning() {
       <ul class="confirm-list">${renderPlanningManualBelongings(belongingsSummary.manualItems)}</ul>
       <div class="btn-row split compact-stack">
         <input id="dailyBelongingInput" type="text" value="${escapeHtml(state.planningDailyBelongingInput || "")}" maxlength="60" placeholder="例: 絵の具セット" />
-        <button id="addDailyBelongingBtn" class="btn-sub" type="button">追加</button>
+        <button id="addDailyBelongingBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-belonging-add", "追加")}</button>
       </div>
     </div>
 
@@ -2329,11 +2687,11 @@ function renderPlanning() {
         <div><label for="minutesInput">自分で入力（分）</label><input id="minutesInput" type="number" min="1" max="600" step="1" value="${escapeHtml(String(minutesValue))}" /></div>
         <div><label for="taskContent">内容</label><input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="例: 新中学問題集 p54" /></div>
       </div>
-      <div class="btn-row compact-stack"><button id="saveTaskBtn" class="btn-sub" type="button">${editingTask ? "修正を保存" : "追加"}</button></div>
+      <div class="btn-row compact-stack"><button id="saveTaskBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-task-save", editingTask ? "修正を保存" : "追加")}</button></div>
     </div>
 
     <div class="summary" id="totalPlanned"></div>
-    <div class="btn-row compact-stack"><button id="goBtn" class="btn-main" type="button">最終確認へ</button></div>
+    <div class="btn-row compact-stack"><button id="goBtn" class="btn-main" type="button" ${getBusyDisabledAttr()}>最終確認へ</button></div>
   `);
 
   renderTaskListForPlanning();
@@ -2360,10 +2718,10 @@ function renderTaskListForPlanning() {
     li.innerHTML = `
       <div class="task-inline-text">${escapeHtml(task.name)} <span>${task.plannedMinutes}分</span> ${done ? '<span class="status-chip">完了</span>' : ""}</div>
       <div class="task-inline-actions">
-        <button type="button" class="btn-mini btn-quiet" data-action="up" data-id="${task.id}">↑</button>
-        <button type="button" class="btn-mini btn-quiet" data-action="down" data-id="${task.id}">↓</button>
-        <button type="button" class="btn-mini btn-sub" data-action="edit" data-id="${task.id}">修正</button>
-        <button type="button" class="btn-mini btn-danger" data-action="delete" data-id="${task.id}">削除</button>
+        <button type="button" class="btn-mini btn-quiet" data-action="up" data-id="${task.id}" ${getBusyDisabledAttr()}>↑</button>
+        <button type="button" class="btn-mini btn-quiet" data-action="down" data-id="${task.id}" ${getBusyDisabledAttr()}>↓</button>
+        <button type="button" class="btn-mini btn-sub" data-action="edit" data-id="${task.id}" ${getBusyDisabledAttr()}>修正</button>
+        <button type="button" class="btn-mini btn-danger" data-action="delete" data-id="${task.id}" ${getBusyDisabledAttr()}>削除</button>
       </div>
     `;
     list.appendChild(li);
@@ -2441,14 +2799,38 @@ function bindPlanningEvents() {
     state.planningDailyBelongingInput = e.target.value;
     saveState();
   });
-  document.getElementById("addDailyBelongingBtn")?.addEventListener("click", () => {
+  bindProtectedActionButton("addDailyBelongingBtn", async () => {
+    syncPlanningFormFromDom();
     const name = normalizeBelongingName(state.planningDailyBelongingInput);
-    if (!name) return;
-    const dateKey = getPlanningTargetDateKey();
-    addDailySpecialBelonging(dateKey, name);
-    state.planningDailyBelongingInput = "";
-    saveState();
-    renderPlanning();
+    if (!name) {
+      deferredUiBlockUntil = 0;
+      flushDeferredUiUpdates();
+      return;
+    }
+    await runProtectedSaveAction({
+      key: "planning-belonging-add",
+      syncFromDom: syncPlanningFormFromDom,
+      captureState: () => structuredClone({
+        dailySpecialBelongingsByDate: state.dailySpecialBelongingsByDate,
+        planningDailyBelongingInput: state.planningDailyBelongingInput
+      }),
+      restoreState: (snapshot) => {
+        if (!snapshot) return;
+        state.dailySpecialBelongingsByDate = snapshot.dailySpecialBelongingsByDate;
+        state.planningDailyBelongingInput = snapshot.planningDailyBelongingInput;
+      },
+      apply: () => {
+        const nextName = normalizeBelongingName(state.planningDailyBelongingInput);
+        const dateKey = getPlanningTargetDateKey();
+        addDailySpecialBelonging(dateKey, nextName);
+        state.planningDailyBelongingInput = "";
+      },
+      onSuccess: () => {
+        saveState();
+        renderPlanning();
+      },
+      successMessage: ""
+    });
   });
   document.querySelectorAll("button[data-daily-belonging-name]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -2461,7 +2843,7 @@ function bindPlanningEvents() {
     });
   });
 
-  document.getElementById("saveTaskBtn").addEventListener("click", savePlanningTask);
+  bindProtectedActionButton("saveTaskBtn", savePlanningTask);
 
   document.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -2539,27 +2921,54 @@ function loadTaskIntoForm(taskId) {
   };
 }
 
-function savePlanningTask() {
-  const name = getPlanningFormTaskName();
-  const minutes = getPlanningFormMinutes();
-  const content = state.planningForm.content.trim();
-  if (!name) return alert("タスク名を入力してください。");
-  if (!minutes) return alert("予定時間を入力してください。");
-  if (!content) return alert("内容を入力してください。");
+async function savePlanningTask() {
+  await runProtectedSaveAction({
+    key: "planning-task-save",
+    syncFromDom: syncPlanningFormFromDom,
+    validate: () => {
+      const name = getPlanningFormTaskName();
+      const minutes = getPlanningFormMinutes();
+      const content = state.planningForm.content.trim();
+      if (!name) return "タスク名を入力してください。";
+      if (!minutes) return "予定時間を入力してください。";
+      if (!content) return "内容を入力してください。";
+      if (state.planningForm.mode === "edit" && !findTask(state.planningForm.targetId)) {
+        return "保存対象の予定が見つかりません。";
+      }
+      return null;
+    },
+    captureState: () => structuredClone({
+      tasks: state.tasks,
+      planningForm: state.planningForm
+    }),
+    restoreState: (snapshot) => {
+      if (!snapshot) return;
+      state.tasks = snapshot.tasks;
+      state.planningForm = normalizePlanningForm(snapshot.planningForm);
+    },
+    apply: () => {
+      const name = getPlanningFormTaskName();
+      const minutes = getPlanningFormMinutes();
+      const content = state.planningForm.content.trim();
 
-  if (state.planningForm.mode === "edit") {
-    const task = findTask(state.planningForm.targetId);
-    if (!task) return;
-    task.name = name;
-    task.plannedMinutes = minutes;
-    task.content = content;
-  } else {
-    state.tasks.push(createTask(name, minutes, content));
-  }
+      if (state.planningForm.mode === "edit") {
+        const task = findTask(state.planningForm.targetId);
+        if (!task) throw new Error("missing-planning-task");
+        task.name = name;
+        task.plannedMinutes = minutes;
+        task.content = content;
+        return;
+      }
 
-  state.planningForm = createPlanningForm();
-  saveState();
-  renderPlanning();
+      state.tasks.push(createTask(name, minutes, content));
+    },
+    onSuccess: () => {
+      state.planningForm = createPlanningForm();
+      saveState();
+      renderPlanning();
+    },
+    successMessage: "予定を保存しました"
+  });
 }
 
 function onGoToPlanConfirm() {
@@ -4017,7 +4426,7 @@ function getDateTimeToday(hhmm) {
 }
 
 function renderScreen(content) {
-  app.innerHTML = `${renderTopNav()}${content}`;
+  app.innerHTML = `${renderTopNav()}${renderUiNotice()}${content}`;
   bindTopNav();
 }
 
@@ -4027,8 +4436,8 @@ function renderTopNav() {
   const primaryLabel = state.phase === "home" ? "ログアウト" : isPlanReport ? "戻る" : "ホーム";
   return `
     <div class="top-nav">
-      <button id="homeBtn" class="btn-mini btn-quiet" type="button">${primaryLabel}</button>
-      ${showSettings ? '<button id="openSettingsBtn" class="btn-mini btn-quiet" type="button">⚙️設定</button>' : ""}
+      <button id="homeBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>${primaryLabel}</button>
+      ${showSettings ? `<button id="openSettingsBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>⚙️設定</button>` : ""}
     </div>
   `;
 }

@@ -69,6 +69,27 @@ h1 {
   text-align: right;
 }
 
+.ui-notice {
+  margin: 0 0 12px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: #f8fbff;
+  font-weight: 700;
+}
+
+.ui-notice-success {
+  color: var(--ok);
+  border-color: rgba(22, 127, 69, 0.25);
+  background: rgba(22, 127, 69, 0.08);
+}
+
+.ui-notice-error {
+  color: var(--danger);
+  border-color: rgba(156, 31, 47, 0.25);
+  background: rgba(156, 31, 47, 0.08);
+}
+
 .panel {
   background: var(--card);
   border-radius: var(--radius);
@@ -231,6 +252,11 @@ button {
   font-size: 1.07rem;
   font-weight: 800;
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .btn-mini {
