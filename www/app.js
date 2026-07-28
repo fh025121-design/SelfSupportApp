@@ -2628,6 +2628,16 @@ function findSubmissionTemplate(templateId) {
   return state.submissionTemplates.find((template) => template.id === templateId) || null;
 }
 
+function createSubmissionTemplateFromName(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return null;
+  return {
+    id: crypto.randomUUID(),
+    name: trimmed,
+    items: []
+  };
+}
+
 function renderSubmissionTemplateOptions(selectedId) {
   const options = [`<option value="" ${!selectedId ? "selected" : ""}>なし</option>`];
   state.submissionTemplates.forEach((template) => {
@@ -2828,6 +2838,17 @@ function renderSubmissionTemplateListScreen() {
   renderScreen(`
     <h2>提出・確認テンプレート</h2>
     <ul id="submissionTemplateList" class="task-list recurring-list"></ul>
+    <div class="task-form-box">
+      <div class="form-stack">
+        <div>
+          <label for="submissionTemplateNameInput">テンプレート名</label>
+          <input id="submissionTemplateNameInput" type="text" maxlength="40" placeholder="例: 山田先生" />
+        </div>
+      </div>
+      <div class="btn-row compact-stack">
+        <button id="addSubmissionTemplateBtn" class="btn-main" type="button">＋ テンプレートを追加</button>
+      </div>
+    </div>
     <div class="btn-row compact-stack">
       <button id="backToSettingsFromSubmissionTemplateListBtn" class="btn-quiet" type="button">戻る</button>
     </div>
@@ -2861,6 +2882,26 @@ function renderSubmissionTemplateListScreen() {
       li.click();
     });
     list.appendChild(li);
+  });
+
+  document.getElementById("addSubmissionTemplateBtn")?.addEventListener("click", () => {
+    const nameInput = document.getElementById("submissionTemplateNameInput");
+    const name = String(nameInput?.value || "").trim();
+    if (!name) {
+      alert("テンプレート名を入力してください。");
+      return;
+    }
+    const duplicated = state.submissionTemplates.some((template) => String(template?.name || "").trim() === name);
+    if (duplicated) {
+      alert("同じ名前のテンプレートが既にあります。");
+      return;
+    }
+    const template = createSubmissionTemplateFromName(name);
+    if (!template) return;
+    state.submissionTemplates.push(template);
+    if (nameInput) nameInput.value = "";
+    saveState();
+    renderSubmissionTemplateListScreen();
   });
 
   document.getElementById("backToSettingsFromSubmissionTemplateListBtn")?.addEventListener("click", () => changePhase("settings"));
