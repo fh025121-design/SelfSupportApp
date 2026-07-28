@@ -284,6 +284,7 @@ function createReturnCheckState() {
     reminderPromptTriggered: false,
     reminderDeferred: false,
     reminderVisible: false,
+    reminderSnoozeUntil: 0,
     reportText: "",
     copied: false
   };
@@ -3974,6 +3975,8 @@ function getReturnCheckReminderContent(status) {
 function syncReturnCheckReminderState() {
   let changed = false;
   const status = getReturnCheckReminderStatus();
+  const nowMs = Date.now();
+  const snoozeUntil = Number(state.returnCheck.reminderSnoozeUntil || 0);
 
   if (status === "none") {
     if (state.returnCheck.reminderVisible) {
@@ -3987,6 +3990,14 @@ function syncReturnCheckReminderState() {
     state.returnCheck.reminderPromptTriggered = true;
     state.returnCheck.reminderVisible = true;
     changed = true;
+  }
+
+  if (snoozeUntil > nowMs) {
+    if (state.returnCheck.reminderVisible) {
+      state.returnCheck.reminderVisible = false;
+      changed = true;
+    }
+    return changed;
   }
 
   if (state.returnCheck.reminderDeferred && state.phase === "home" && !state.returnCheck.reminderVisible) {
@@ -4037,6 +4048,7 @@ function renderReturnCheckReminderOverlay() {
   document.getElementById("returnReminderLaterBtn")?.addEventListener("click", () => {
     state.returnCheck.reminderVisible = false;
     state.returnCheck.reminderDeferred = true;
+    state.returnCheck.reminderSnoozeUntil = Date.now() + 3 * 60 * 1000;
     saveState();
     removeReturnCheckReminderOverlay();
   });
@@ -4044,6 +4056,7 @@ function renderReturnCheckReminderOverlay() {
   document.getElementById("goReturnCheckBtn")?.addEventListener("click", () => {
     state.returnCheck.reminderVisible = false;
     state.returnCheck.reminderDeferred = false;
+    state.returnCheck.reminderSnoozeUntil = 0;
     saveState();
     changePhase("returnCheck", false);
   });
@@ -4177,6 +4190,7 @@ function renderReturnReport() {
     state.returnCheck.reminderVisible = false;
     state.returnCheck.reminderDeferred = false;
     state.returnCheck.reminderPromptTriggered = false;
+    state.returnCheck.reminderSnoozeUntil = 0;
     saveState();
     changePhase("home", false);
   });
