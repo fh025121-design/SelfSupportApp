@@ -35,6 +35,7 @@ const TASK_NAME_NEW = "__new__";
 const SUBMISSION_TEMPLATE_NONE = "";
 const HOMEWORK_WORK_TYPE_WITH_WORK = "with-work";
 const HOMEWORK_WORK_TYPE_NO_WORK = "no-work";
+const STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID = "standard-homework-submission";
 const NO_HOMEWORK_SUBMISSION_TEMPLATE_ID = "no-homework-submission";
 const NO_HOMEWORK_FIRST_STEP_LABEL = "黒の手帳へ書いた";
 const NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY = "黒の手帳へ記録した";
@@ -44,6 +45,16 @@ const NO_HOMEWORK_THIRD_STEP_LABEL = "提出した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL = "報告した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY = "親へ報告した";
 const DEFAULT_SUBMISSION_TEMPLATES = [
+  {
+    id: STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID,
+    name: "通常の提出",
+    items: [
+      { id: "standard-homework-1", label: "黒の手帳へ書いた" },
+      { id: "standard-homework-2", label: "カバンへ入れた" },
+      { id: "standard-homework-3", label: "提出した" },
+      { id: "standard-homework-4", label: "報告した" }
+    ]
+  },
   {
     id: NO_HOMEWORK_SUBMISSION_TEMPLATE_ID,
     name: "書類提出・質問・確認（自宅での作業なし）",
@@ -311,7 +322,7 @@ function createHomeworkForm() {
     homeworkWorkType: HOMEWORK_WORK_TYPE_WITH_WORK,
     googleSync: false,
     done: false,
-    submissionTemplateId: SUBMISSION_TEMPLATE_NONE
+    submissionTemplateId: STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID
   };
 }
 
@@ -445,6 +456,7 @@ function createTask(name, plannedMinutes, content, meta = {}) {
     targetDateKey: targetDateKey || null,
     recurringPlanId: typeof meta.recurringPlanId === "string" ? meta.recurringPlanId : null,
     recurringDateKey: typeof meta.recurringDateKey === "string" ? meta.recurringDateKey : null,
+    homeworkId: typeof meta.homeworkId === "string" ? meta.homeworkId : null,
     status: "pending",
     actualSeconds: null,
     memo: "",
@@ -474,6 +486,7 @@ function normalizeTask(task, fallbackDateKey = "") {
     targetDateKey: normalizedTargetDateKey || null,
     recurringPlanId: typeof task.recurringPlanId === "string" ? task.recurringPlanId : null,
     recurringDateKey: normalizedRecurringDateKey || null,
+    homeworkId: typeof task.homeworkId === "string" ? task.homeworkId : null,
     status: ["pending", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
     actualSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : null,
     memo: String(task.memo || ""),
@@ -660,11 +673,13 @@ function normalizeSubmissionTemplates(rawTemplates) {
     .filter((template) => template.name);
   const fallback = createDefaultSubmissionTemplates();
   if (normalized.length === 0) return fallback;
-  const hasNoHomeworkTemplate = normalized.some((template) => template.id === NO_HOMEWORK_SUBMISSION_TEMPLATE_ID);
-  if (!hasNoHomeworkTemplate) {
-    const defaultNoHomeworkTemplate = fallback.find((template) => template.id === NO_HOMEWORK_SUBMISSION_TEMPLATE_ID);
-    if (defaultNoHomeworkTemplate) normalized.push(defaultNoHomeworkTemplate);
-  }
+  const requiredTemplateIds = [STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID, NO_HOMEWORK_SUBMISSION_TEMPLATE_ID];
+  requiredTemplateIds.forEach((templateId) => {
+    const exists = normalized.some((template) => template.id === templateId);
+    if (exists) return;
+    const fallbackTemplate = fallback.find((template) => template.id === templateId);
+    if (fallbackTemplate) normalized.push(fallbackTemplate);
+  });
   return normalized;
 }
 
@@ -688,15 +703,20 @@ function normalizeSubmissionChecklistTarget(raw) {
 }
 
 function normalizeHomeworkTask(item) {
+  const homeworkWorkType = normalizeHomeworkWorkType(item?.homeworkWorkType);
+  const normalizedSubmissionTemplateId = normalizeSubmissionTemplateId(item?.submissionTemplateId)
+    || (homeworkWorkType === HOMEWORK_WORK_TYPE_NO_WORK
+      ? NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
+      : STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID);
   return {
     id: item?.id || crypto.randomUUID(),
     name: String(item?.name || "").trim(),
     deadlineDate: normalizeDeadlineDate(item?.deadlineDate),
     content: String(item?.content || "").trim(),
-    homeworkWorkType: normalizeHomeworkWorkType(item?.homeworkWorkType),
+    homeworkWorkType,
     googleSync: Boolean(item?.googleSync),
     done: Boolean(item?.done),
-    submissionTemplateId: normalizeSubmissionTemplateId(item?.submissionTemplateId),
+    submissionTemplateId: normalizedSubmissionTemplateId,
     submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(item?.submissionCheckedItemIds),
     submissionChecklistCompleted: Boolean(item?.submissionChecklistCompleted),
     actionNoSuppressedDateKey: normalizeTaskDateKey(item?.actionNoSuppressedDateKey) || "",
@@ -921,6 +941,11 @@ function normalizeHomeworkForm(raw) {
   base.googleSync = Boolean(base.googleSync);
   base.done = Boolean(base.done);
   base.submissionTemplateId = normalizeSubmissionTemplateId(base.submissionTemplateId);
+  if (!base.submissionTemplateId) {
+    base.submissionTemplateId = base.homeworkWorkType === HOMEWORK_WORK_TYPE_NO_WORK
+      ? NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
+      : STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID;
+  }
   return base;
 }
 
@@ -2914,21 +2939,108 @@ function getNoHomeworkChecklistStepsByTemplateId(templateId) {
   };
 }
 
-function tryAutoCompleteNoHomeworkByChecklist(targetType, target, template, checkedIds) {
-  if (targetType !== "homework" || !target || !template) return;
-  if (normalizeHomeworkWorkType(target.homeworkWorkType) !== HOMEWORK_WORK_TYPE_NO_WORK) return;
-  const noHomeworkSteps = getNoHomeworkChecklistStepsByTemplateId(target.submissionTemplateId);
-  if (!noHomeworkSteps) return;
+function getHomeworkLinkedWorkTasks(homeworkId) {
+  if (!homeworkId) return [];
+  return state.tasks.filter((task) => String(task?.homeworkId || "") === homeworkId);
+}
 
-  const checkedSet = new Set(checkedIds);
-  const allNoHomeworkStepsDone = checkedSet.has(noHomeworkSteps.firstStep.id)
-    && checkedSet.has(noHomeworkSteps.secondStep.id)
-    && checkedSet.has(noHomeworkSteps.thirdStep.id)
-    && checkedSet.has(noHomeworkSteps.fourthStep.id);
-  if (!allNoHomeworkStepsDone) return;
+function isHomeworkLinkedWorkDone(homeworkId) {
+  const linked = getHomeworkLinkedWorkTasks(homeworkId).filter((task) => task.status !== "discarded");
+  if (linked.length === 0) return false;
+  return linked.every((task) => task.status === "done");
+}
 
-  target.done = true;
-  target.submissionChecklistCompleted = true;
+function getStandardHomeworkManualStepsByTemplateId(templateId) {
+  const template = findSubmissionTemplate(templateId);
+  if (!template) return null;
+  const firstStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]);
+  const secondStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_SECOND_STEP_LABEL, NO_HOMEWORK_SECOND_STEP_LABEL_LEGACY]);
+  const thirdStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_THIRD_STEP_LABEL]);
+  const fourthStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FOURTH_STEP_LABEL, NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY]);
+  if (!firstStep || !secondStep || !thirdStep || !fourthStep) return null;
+  return {
+    firstStep,
+    secondStep,
+    thirdStep,
+    fourthStep,
+    ordered: [firstStep, secondStep, thirdStep, fourthStep]
+  };
+}
+
+function buildHomeworkStandardFlowState(item, baseDateKey = getCurrentHomeDateKey()) {
+  if (!item) return null;
+  const workType = normalizeHomeworkWorkType(item.homeworkWorkType);
+  if (![HOMEWORK_WORK_TYPE_WITH_WORK, HOMEWORK_WORK_TYPE_NO_WORK].includes(workType)) return null;
+
+  const manualSteps = getStandardHomeworkManualStepsByTemplateId(item.submissionTemplateId);
+  if (!manualSteps) return null;
+
+  const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
+  const deadlineDayNumber = getDateKeyDayNumber(item.deadlineDate);
+  const baseDayNumber = getDateKeyDayNumber(baseDateKey);
+  const isFromDeadlineEve = baseDayNumber !== null && deadlineDayNumber !== null && baseDayNumber >= (deadlineDayNumber - 1);
+  const isFromDeadlineDay = baseDayNumber !== null && deadlineDayNumber !== null && baseDayNumber >= deadlineDayNumber;
+  const workDone = workType === HOMEWORK_WORK_TYPE_WITH_WORK ? isHomeworkLinkedWorkDone(item.id) : true;
+
+  const firstDone = checkedSet.has(manualSteps.firstStep.id);
+  const bagDone = checkedSet.has(manualSteps.secondStep.id);
+  const submitDone = checkedSet.has(manualSteps.thirdStep.id);
+  const reportDone = checkedSet.has(manualSteps.fourthStep.id);
+
+  const rows = [
+    {
+      key: "write",
+      label: manualSteps.firstStep.label,
+      kind: "manual",
+      itemId: manualSteps.firstStep.id,
+      confirmed: firstDone,
+      actionable: !firstDone
+    }
+  ];
+
+  rows.push({
+    key: "bag",
+    label: manualSteps.secondStep.label,
+    kind: "manual",
+    itemId: manualSteps.secondStep.id,
+    confirmed: bagDone,
+    actionable: !bagDone && isFromDeadlineEve && firstDone && (workType === HOMEWORK_WORK_TYPE_NO_WORK || workDone)
+  });
+
+  rows.push({
+    key: "submit",
+    label: manualSteps.thirdStep.label,
+    kind: "manual",
+    itemId: manualSteps.thirdStep.id,
+    confirmed: submitDone,
+    actionable: !submitDone && isFromDeadlineDay && bagDone
+  });
+
+  rows.push({
+    key: "report",
+    label: manualSteps.fourthStep.label,
+    kind: "manual",
+    itemId: manualSteps.fourthStep.id,
+    confirmed: reportDone,
+    actionable: !reportDone && submitDone
+  });
+
+  const nextActionableManualRow = rows.find((row) => row.kind === "manual" && row.actionable && !row.confirmed) || null;
+  return {
+    workType,
+    rows,
+    nextActionableManualRow,
+    complete: rows.every((row) => row.confirmed) && (workType === HOMEWORK_WORK_TYPE_NO_WORK || workDone)
+  };
+}
+
+function updateHomeworkCompletionByStandardFlow(item, baseDateKey = getCurrentHomeDateKey()) {
+  const flow = buildHomeworkStandardFlowState(item, baseDateKey);
+  if (!flow) return false;
+  if (!flow.complete) return false;
+  item.done = true;
+  item.submissionChecklistCompleted = true;
+  return true;
 }
 
 function createSubmissionTemplateFromName(name) {
@@ -2999,53 +3111,24 @@ function getSubmissionChecklistRemainingEntries() {
     const template = findSubmissionTemplate(item.submissionTemplateId);
     if (!template || template.items.length === 0) return;
 
-    const noHomeworkSteps = getNoHomeworkChecklistStepsByTemplateId(item.submissionTemplateId);
-    const isNoHomeworkFlowTarget = normalizeHomeworkWorkType(item.homeworkWorkType) === HOMEWORK_WORK_TYPE_NO_WORK && Boolean(noHomeworkSteps);
-    const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
-
-    if (isNoHomeworkFlowTarget && !item.done) {
-      const firstStep = noHomeworkSteps.firstStep;
-      const secondStep = noHomeworkSteps.secondStep;
-      const thirdStep = noHomeworkSteps.thirdStep;
-      const fourthStep = noHomeworkSteps.fourthStep;
-
-      const specialRemainingLabels = [];
-      if (firstStep && !checkedSet.has(firstStep.id)) {
-        specialRemainingLabels.push(firstStep.label);
-      }
-
-      const executionDayNumber = getDateKeyDayNumber(executionDateKey);
-      const deadlineDayNumber = getDateKeyDayNumber(item.deadlineDate);
-      const shouldShowSecondStep = executionDayNumber !== null
-        && deadlineDayNumber !== null
-        && executionDayNumber >= (deadlineDayNumber - 1);
-      if (secondStep && shouldShowSecondStep && !checkedSet.has(secondStep.id)) {
-        specialRemainingLabels.push(secondStep.label);
-      }
-
-      const shouldShowThirdOrFourth = executionDayNumber !== null
-        && deadlineDayNumber !== null
-        && executionDayNumber >= deadlineDayNumber;
-      if (shouldShowThirdOrFourth) {
-        if (thirdStep && !checkedSet.has(thirdStep.id)) {
-          specialRemainingLabels.push(thirdStep.label);
-        } else if (thirdStep && checkedSet.has(thirdStep.id) && fourthStep && !checkedSet.has(fourthStep.id)) {
-          specialRemainingLabels.push(fourthStep.label);
-        }
-      }
-
-      if (specialRemainingLabels.length > 0) {
+    const standardFlow = buildHomeworkStandardFlowState(item, executionDateKey);
+    if (standardFlow && !item.done) {
+      const remainingLabels = standardFlow.rows
+        .filter((row) => !row.confirmed)
+        .map((row) => row.label);
+      if (remainingLabels.length > 0) {
         entries.push({
           targetType: "homework",
           targetId: item.id,
           title: `${template.name}　${item.name}`,
-          remainingLabels: specialRemainingLabels
+          remainingLabels
         });
       }
       return;
     }
 
     if (!item.done) return;
+    const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
     const remainingItems = template.items.filter((templateItem) => !checkedSet.has(templateItem.id));
     if (remainingItems.length === 0) return;
     entries.push({
@@ -3129,82 +3212,69 @@ function renderSubmissionChecklistOverlay() {
   }
 
   const checkedSet = new Set(normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds));
-  const noHomeworkSteps = context.targetType === "homework"
-    && normalizeHomeworkWorkType(target.homeworkWorkType) === HOMEWORK_WORK_TYPE_NO_WORK
-    ? getNoHomeworkChecklistStepsByTemplateId(target.submissionTemplateId)
+  const standardHomeworkFlow = context.targetType === "homework"
+    ? buildHomeworkStandardFlowState(target, getCurrentHomeDateKey())
     : null;
-  const noHomeworkOrderedItems = noHomeworkSteps ? noHomeworkSteps.ordered : [];
-  const useNoHomeworkStepLock = Boolean(noHomeworkSteps);
 
-  let activeNoHomeworkStepId = "";
-  if (useNoHomeworkStepLock) {
-    const nextItem = noHomeworkOrderedItems.find((item) => !checkedSet.has(item.id));
-    activeNoHomeworkStepId = nextItem?.id || "";
-  }
-
-  const renderLockedNoHomeworkRow = (item) => {
-    const isChecked = checkedSet.has(item.id);
-    const isActive = !isChecked && activeNoHomeworkStepId === item.id;
-    if (isChecked) {
-      return `<div class="option-item" aria-disabled="true"><span>✓ ${escapeHtml(item.label)}</span><span>　操作不可</span></div>`;
+  const renderStandardHomeworkFlowRow = (row, actionableId) => {
+    if (row.confirmed) {
+      return `<div class="option-item" aria-disabled="true"><span>✓ ${escapeHtml(row.label)}</span><span>　操作不可</span></div>`;
     }
-    if (isActive) {
-      return `<label class="option-item"><input type="checkbox" data-submission-item-id="${escapeHtml(item.id)}" /><span>${escapeHtml(item.label)}　操作可</span></label>`;
+    if (row.kind === "auto") {
+      return `<div class="option-item" aria-disabled="true"><span>○ ${escapeHtml(row.label)}</span><span>　自動判定</span></div>`;
     }
-    return `<div class="option-item" aria-disabled="true"><span>○ ${escapeHtml(item.label)}</span><span>　操作不可</span></div>`;
+    if (row.itemId && row.itemId === actionableId) {
+      return `<button type="button" class="btn-quiet" data-submission-manual-item-id="${escapeHtml(row.itemId)}">□ ${escapeHtml(row.label)}　操作可</button>`;
+    }
+    return `<div class="option-item" aria-disabled="true"><span>○ ${escapeHtml(row.label)}</span><span>　操作不可</span></div>`;
   };
 
-  const itemsHtml = useNoHomeworkStepLock
-    ? noHomeworkOrderedItems.map(renderLockedNoHomeworkRow).join("")
+  const actionableManualId = standardHomeworkFlow?.nextActionableManualRow?.itemId || "";
+  const itemsHtml = standardHomeworkFlow
+    ? standardHomeworkFlow.rows.map((row, index) => {
+      const rowHtml = renderStandardHomeworkFlowRow(row, actionableManualId);
+      if (index >= standardHomeworkFlow.rows.length - 1) return `<div class="submission-flow-step">${rowHtml}</div>`;
+      return `<div class="submission-flow-step">${rowHtml}</div><div class="submission-flow-arrow" aria-hidden="true">↓</div>`;
+    }).join("")
     : template.items.map((item) => {
       const checked = checkedSet.has(item.id) ? "checked" : "";
       return `<label class="option-item"><input type="checkbox" data-submission-item-id="${escapeHtml(item.id)}" ${checked} /><span>${escapeHtml(item.label)}</span></label>`;
     }).join("");
-  const allDone = template.items.length > 0 && template.items.every((item) => checkedSet.has(item.id));
+  const allDone = standardHomeworkFlow
+    ? standardHomeworkFlow.complete
+    : (template.items.length > 0 && template.items.every((item) => checkedSet.has(item.id)));
+  const statusDoneCount = standardHomeworkFlow
+    ? standardHomeworkFlow.rows.filter((row) => row.confirmed).length
+    : checkedSet.size;
+  const statusTotalCount = standardHomeworkFlow ? standardHomeworkFlow.rows.length : template.items.length;
 
   const overlay = document.createElement("div");
   overlay.id = "submissionChecklistOverlay";
   overlay.className = "app-modal-overlay";
+  const checklistItemsClassName = standardHomeworkFlow
+    ? "option-group submission-flow-list"
+    : "option-group compact-options";
   overlay.innerHTML = `
     <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="submissionChecklistTitle">
       <h3 id="submissionChecklistTitle">${escapeHtml(template.name)}　${escapeHtml(target.name)}</h3>
-      <div class="option-group compact-options" id="submissionChecklistItems">${itemsHtml}</div>
+      <div class="${checklistItemsClassName}" id="submissionChecklistItems">${itemsHtml}</div>
       <div class="btn-row split compact-stack app-modal-actions">
         <button id="closeSubmissionChecklistBtn" class="btn-quiet" type="button">後で</button>
         <button id="completeSubmissionChecklistBtn" class="btn-main" type="button" ${allDone ? "" : "disabled"}>完了</button>
       </div>
-      <p class="helper" id="submissionChecklistStatus">${allDone ? "すべて確認済みです。" : `確認済み ${checkedSet.size}/${template.items.length}`}</p>
+      <p class="helper" id="submissionChecklistStatus">${allDone ? "すべて確認済みです。" : `確認済み ${statusDoneCount}/${statusTotalCount}`}</p>
     </div>
   `;
   document.body.appendChild(overlay);
 
   const refreshChecklistStatus = () => {
-    if (useNoHomeworkStepLock) {
-      const activeInput = overlay.querySelector("input[data-submission-item-id]");
-      if (!activeInput) return;
-      const activeId = String(activeInput.getAttribute("data-submission-item-id") || "");
-      if (!activeId) return;
-      if (!activeInput.checked) {
-        activeInput.checked = true;
-      }
-      const currentIds = normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds);
-      if (!currentIds.includes(activeId)) {
-        currentIds.push(activeId);
-      }
-      target.submissionCheckedItemIds = currentIds;
-      tryAutoCompleteNoHomeworkByChecklist(context.targetType, target, template, currentIds);
-      target.submissionChecklistCompleted = target.submissionChecklistCompleted
-        || (currentIds.length >= template.items.length && template.items.length > 0);
-      saveState();
-      renderSubmissionChecklistOverlay();
-      return;
-    }
-
     const checkedIds = Array.from(overlay.querySelectorAll("input[data-submission-item-id]:checked"))
       .map((el) => String(el.getAttribute("data-submission-item-id") || ""))
       .filter(Boolean);
     target.submissionCheckedItemIds = checkedIds;
-    tryAutoCompleteNoHomeworkByChecklist(context.targetType, target, template, checkedIds);
+    if (context.targetType === "homework") {
+      updateHomeworkCompletionByStandardFlow(target, getCurrentHomeDateKey());
+    }
     target.submissionChecklistCompleted = target.submissionChecklistCompleted
       || (checkedIds.length >= template.items.length && template.items.length > 0);
     const statusEl = document.getElementById("submissionChecklistStatus");
@@ -3216,8 +3286,30 @@ function renderSubmissionChecklistOverlay() {
     saveState();
   };
 
+  const confirmAndSaveManualStep = (itemId) => {
+    const currentIds = normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds);
+    if (currentIds.includes(itemId)) return;
+    const flow = buildHomeworkStandardFlowState(target, getCurrentHomeDateKey());
+    if (!flow || !flow.nextActionableManualRow || flow.nextActionableManualRow.itemId !== itemId) return;
+    const label = flow.nextActionableManualRow.label;
+    if (!window.confirm(`「${label}」を完了にしますか？`)) return;
+    currentIds.push(itemId);
+    target.submissionCheckedItemIds = currentIds;
+    updateHomeworkCompletionByStandardFlow(target, getCurrentHomeDateKey());
+    saveState();
+    renderSubmissionChecklistOverlay();
+  };
+
   overlay.querySelectorAll("input[data-submission-item-id]").forEach((cb) => {
     cb.addEventListener("change", refreshChecklistStatus);
+  });
+
+  overlay.querySelectorAll("button[data-submission-manual-item-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const itemId = String(btn.getAttribute("data-submission-manual-item-id") || "");
+      if (!itemId) return;
+      confirmAndSaveManualStep(itemId);
+    });
   });
 
   document.getElementById("closeSubmissionChecklistBtn")?.addEventListener("click", () => {
@@ -3522,7 +3614,7 @@ function renderHomeworkWorkTypeEntryScreen() {
     state.homeworkForm = {
       ...createHomeworkForm(),
       homeworkWorkType: HOMEWORK_WORK_TYPE_WITH_WORK,
-      submissionTemplateId: SUBMISSION_TEMPLATE_NONE
+      submissionTemplateId: STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID
     };
     saveState();
     changePhase("homeworkEdit");
@@ -3546,8 +3638,11 @@ function renderHomeworkWorkTypeEntryScreen() {
 function renderHomeworkEditScreen() {
   const editing = state.homeworkForm.mode === "edit";
   const isNoWorkType = normalizeHomeworkWorkType(state.homeworkForm.homeworkWorkType) === HOMEWORK_WORK_TYPE_NO_WORK;
-  if (isNoWorkType && state.homeworkForm.submissionTemplateId !== NO_HOMEWORK_SUBMISSION_TEMPLATE_ID) {
-    state.homeworkForm.submissionTemplateId = NO_HOMEWORK_SUBMISSION_TEMPLATE_ID;
+  const expectedSubmissionTemplateId = isNoWorkType
+    ? NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
+    : STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID;
+  if (state.homeworkForm.submissionTemplateId !== expectedSubmissionTemplateId) {
+    state.homeworkForm.submissionTemplateId = expectedSubmissionTemplateId;
     saveState();
   }
   const selectedHomeworkTemplate = findSubmissionTemplate(state.homeworkForm.submissionTemplateId);
@@ -3561,9 +3656,7 @@ function renderHomeworkEditScreen() {
         <div><label for="homeworkName">課題名</label><input id="homeworkName" type="text" value="${escapeHtml(state.homeworkForm.name)}" maxlength="60" placeholder="例: 理科レポート" /></div>
         <div><label for="homeworkDeadline">締切</label><input id="homeworkDeadline" type="date" value="${escapeHtml(state.homeworkForm.deadlineDate)}" /></div>
         <div><label for="homeworkContent">内容</label><input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="例: 実験レポートを提出" /></div>
-        ${isNoWorkType
-      ? `<div><label>提出・確認テンプレート</label><p class="helper">書類提出・質問・確認（自宅での作業なし）</p></div>`
-      : `<div><label for="homeworkSubmissionTemplate">提出・確認テンプレート</label><select id="homeworkSubmissionTemplate">${renderSubmissionTemplateOptions(state.homeworkForm.submissionTemplateId)}</select></div>`}
+        <div><label>提出・確認テンプレート</label><p class="helper">${isNoWorkType ? "書類提出・質問・確認（自宅での作業なし）" : "通常の提出"}</p></div>
         <div>
           <label>Googleカレンダー同期</label>
           <div class="option-group compact-options">
@@ -3620,10 +3713,6 @@ function bindHomeworkEditEvents() {
       state.homeworkForm.done = e.target.value === "done";
       saveState();
     });
-  });
-  document.getElementById("homeworkSubmissionTemplate")?.addEventListener("change", (e) => {
-    state.homeworkForm.submissionTemplateId = normalizeSubmissionTemplateId(e.target.value);
-    saveState();
   });
   bindProtectedActionButton("saveHomeworkBtn", saveHomeworkItem);
   document.getElementById("deleteHomeworkBtn")?.addEventListener("click", deleteHomeworkItemFromEdit);
@@ -3696,7 +3785,7 @@ async function saveHomeworkItem() {
       const done = Boolean(state.homeworkForm.done);
       const submissionTemplateId = homeworkWorkType === HOMEWORK_WORK_TYPE_NO_WORK
         ? NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
-        : normalizeSubmissionTemplateId(state.homeworkForm.submissionTemplateId);
+        : STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID;
 
       if (state.homeworkForm.mode === "edit") {
         const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
@@ -3731,6 +3820,21 @@ async function saveHomeworkItem() {
         actionHistory: []
       };
       state.homeworkTasks.push(newItem);
+      if (homeworkWorkType === HOMEWORK_WORK_TYPE_WITH_WORK) {
+        state.tasks.push(createTask(`${name}（作業）`, DEFAULT_MINUTES, content, {
+          targetDateKey: getCurrentHomeDateKey(),
+          homeworkId: newItem.id
+        }));
+      }
+
+      const template = findSubmissionTemplate(newItem.submissionTemplateId);
+      if (!newItem.done && template && template.items.length > 0) {
+        state.submissionChecklistTarget = {
+          targetType: "homework",
+          targetId: newItem.id,
+          returnPhase: "homeworkList"
+        };
+      }
     },
     onSuccess: () => {
       state.homeworkForm = createHomeworkForm();
@@ -5234,6 +5338,12 @@ function finalizeTaskCompletion() {
   cancelTaskFinishNotification(task.id);
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
+  if (task.homeworkId) {
+    const linkedHomework = state.homeworkTasks.find((item) => item.id === task.homeworkId);
+    if (linkedHomework) {
+      updateHomeworkCompletionByStandardFlow(linkedHomework, getCurrentHomeDateKey());
+    }
+  }
   if (task.submissionTemplateId && !task.submissionChecklistCompleted) {
     const template = findSubmissionTemplate(task.submissionTemplateId);
     if (template && template.items.length > 0) {

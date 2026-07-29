@@ -1124,6 +1124,28 @@ button:disabled {
   margin-top: 14px;
 }
 
+.submission-flow-list {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.submission-flow-step {
+  display: block;
+}
+
+.submission-flow-list .btn-quiet,
+.submission-flow-list .option-item {
+  width: 100%;
+}
+
+.submission-flow-arrow {
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: 900;
+  color: var(--sub);
+  line-height: 1;
+}
+
 .report-box {
   width: 100%;
   border: 2px solid var(--line);
