@@ -44,6 +44,20 @@ const NO_HOMEWORK_SECOND_STEP_LABEL_LEGACY = "かばんへ入れた";
 const NO_HOMEWORK_THIRD_STEP_LABEL = "提出した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL = "報告した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY = "親へ報告した";
+const CONTENT_ASSIST_EXACT_MATCH_WORDS = new Set([
+  "問題集",
+  "プリント",
+  "教科書",
+  "ワーク",
+  "宿題",
+  "提出",
+  "確認",
+  "質問",
+  "勉強",
+  "やる",
+  "ノート",
+  "テスト"
+]);
 const DEFAULT_SUBMISSION_TEMPLATES = [
   {
     id: STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID,
@@ -734,7 +748,62 @@ function normalizeHomeworkTasks(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .map(normalizeHomeworkTask)
-    .filter((item) => item.name && item.deadlineDate && item.content);
+    .filter((item) => item.name && item.deadlineDate);
+}
+
+function shouldShowContentAssistConfirm(content, itemName = "") {
+  const text = String(content || "").trim();
+  if (!text) return true;
+  if (CONTENT_ASSIST_EXACT_MATCH_WORDS.has(text)) return true;
+  const normalizedItemName = String(itemName || "").trim();
+  if (normalizedItemName && text === normalizedItemName) return true;
+  return false;
+}
+
+function showContentAssistConfirmDialog() {
+  return new Promise((resolve) => {
+    document.getElementById("contentAssistConfirmOverlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "contentAssistConfirmOverlay";
+    overlay.className = "app-modal-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="contentAssistConfirmTitle">
+        <h3 id="contentAssistConfirmTitle">内容の確認</h3>
+        <p>
+          この内容で、<br />
+          あとで自分が見返したときに<br />
+          何をするか思い出せますか？
+        </p>
+        <p>
+          できれば<br />
+          「何をどうする」<br />
+          または<br />
+          「何が何だ」<br />
+          まで書くと、<br />
+          あとで困りません。
+        </p>
+        <div class="btn-row split compact-stack app-modal-actions">
+          <button id="contentAssistSaveAnywayBtn" class="btn-main" type="button">このまま保存</button>
+          <button id="contentAssistReviseBtn" class="btn-quiet" type="button">修正する</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+
+    document.getElementById("contentAssistSaveAnywayBtn")?.addEventListener("click", () => close(true));
+    document.getElementById("contentAssistReviseBtn")?.addEventListener("click", () => close(false));
+  });
+}
+
+async function confirmContentAssistIfNeeded(content, itemName = "") {
+  if (!shouldShowContentAssistConfirm(content, itemName)) return true;
+  return showContentAssistConfirmDialog();
 }
 
 function buildCarryoverTasks(previousState, nextDateKey) {
@@ -3655,7 +3724,11 @@ function renderHomeworkEditScreen() {
       <div class="form-stack">
         <div><label for="homeworkName">課題名</label><input id="homeworkName" type="text" value="${escapeHtml(state.homeworkForm.name)}" maxlength="60" placeholder="例: 理科レポート" /></div>
         <div><label for="homeworkDeadline">締切</label><input id="homeworkDeadline" type="date" value="${escapeHtml(state.homeworkForm.deadlineDate)}" /></div>
-        <div><label for="homeworkContent">内容</label><input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="例: 実験レポートを提出" /></div>
+        <div>
+          <label for="homeworkContent">内容</label>
+          <input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="何をどうするか分かるように書こう" />
+          <p class="helper">例）理科レポートを先生へ提出する / 理科レポートの提出期限を先生に聞く / 保護者印をもらう / 健康診断書類を先生へ提出する（未入力でも保存できます）</p>
+        </div>
         <div><label>提出・確認テンプレート</label><p class="helper">${isNoWorkType ? "書類提出・質問・確認（自宅での作業なし）" : "通常の提出"}</p></div>
         <div>
           <label>Googleカレンダー同期</label>
@@ -3752,16 +3825,21 @@ function deleteHomeworkItemFromEdit() {
 }
 
 async function saveHomeworkItem() {
+  syncHomeworkFormFromDom();
+  if (!(await confirmContentAssistIfNeeded(state.homeworkForm.content, state.homeworkForm.name))) {
+    deferredUiBlockUntil = 0;
+    flushDeferredUiUpdates();
+    return;
+  }
+
   await runProtectedSaveAction({
     key: "homework-save",
     syncFromDom: syncHomeworkFormFromDom,
     validate: () => {
       const name = state.homeworkForm.name.trim();
       const deadlineDate = normalizeDeadlineDate(state.homeworkForm.deadlineDate);
-      const content = state.homeworkForm.content.trim();
       if (!name) return "課題名を入力してください。";
       if (!deadlineDate) return "締切を入力してください。";
-      if (!content) return "内容を入力してください。";
       if (state.homeworkForm.mode === "edit" && !state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId)) {
         return "保存対象の課題が見つかりません。";
       }
@@ -4007,7 +4085,7 @@ function renderPlanning() {
 
   renderScreen(`
     <h2>予定入力</h2>
-    <p class="helper">内容は必須です。例を参考に入力してください。</p>
+    <p class="helper">内容は任意です。あとで見返して分かる書き方がおすすめです。</p>
 
     <p class="legend">予定を作る日</p>
     <div class="option-group compact-options">
@@ -4082,7 +4160,11 @@ function renderPlanning() {
           <div class="btn-row" id="minutePresetRow">${renderMinutePresetButtons()}</div>
         </div>
         <div><label for="minutesInput">自分で入力（分）</label><input id="minutesInput" type="number" min="1" max="600" step="1" value="${escapeHtml(String(minutesValue))}" /></div>
-        <div><label for="taskContent">内容</label><input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="例: 新中学問題集 p54" /></div>
+        <div>
+          <label for="taskContent">内容</label>
+          <input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="あとで何をやるか分かるように書こう" />
+          <p class="helper">例）新中学問題集 p54～59 / 学校プリント No.3 / 教科書 Unit4 リスニング / レンズ実験レポート</p>
+        </div>
       </div>
       <div class="btn-row compact-stack">
         <button id="saveTaskBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-task-save", editingTask ? "修正を保存" : "追加")}</button>
@@ -4406,6 +4488,14 @@ function renderPlanningSubmissionChecklistSummary(task) {
 }
 
 async function savePlanningTask() {
+  syncPlanningFormFromDom();
+  const taskNameForAssist = getPlanningFormTaskName();
+  if (!(await confirmContentAssistIfNeeded(state.planningForm.content, taskNameForAssist))) {
+    deferredUiBlockUntil = 0;
+    flushDeferredUiUpdates();
+    return;
+  }
+
   await runProtectedSaveAction({
     key: "planning-task-save",
     syncFromDom: syncPlanningFormFromDom,
@@ -4413,10 +4503,8 @@ async function savePlanningTask() {
       const planningTasks = getPlanningVisibleTasks();
       const name = getPlanningFormTaskName();
       const minutes = getPlanningFormMinutes();
-      const content = state.planningForm.content.trim();
       if (!name) return "タスク名を入力してください。";
       if (!minutes) return "予定時間を入力してください。";
-      if (!content) return "内容を入力してください。";
       if (state.planningForm.mode === "edit" && !planningTasks.find((task) => task.id === state.planningForm.targetId)) {
         return "保存対象の予定が見つかりません。";
       }
@@ -4472,8 +4560,8 @@ function onGoToPlanConfirm() {
   const planningTasks = getPlanningVisibleTasks();
   if (planningTasks.length === 0) return alert("タスクが0件です。");
 
-  const invalid = planningTasks.find((t) => !t.name.trim() || !t.content.trim());
-  if (invalid) return alert("タスク名と内容を確認してください。");
+  const invalid = planningTasks.find((t) => !t.name.trim());
+  if (invalid) return alert("タスク名を確認してください。");
 
   changePhase("planConfirm");
 }
