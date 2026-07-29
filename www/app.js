@@ -5578,7 +5578,8 @@ function renderDepartureCheck() {
   }
 
   normalizeDepartureCheckQueue();
-  const belongingsSummary = getBelongingsSummaryForDate(state.dateKey);
+  const departureDisplayDateKey = getCurrentHomeDateKey();
+  const belongingsSummary = getBelongingsSummaryForDate(departureDisplayDateKey);
   const queue = Array.isArray(state.departureCheck.remainingIndices) ? state.departureCheck.remainingIndices : [];
   const done = recomputeDepartureCheckCompletion(belongingsSummary.mergedItems);
 
@@ -5611,7 +5612,7 @@ function renderDepartureCheck() {
     return `<li>${item} <span class="status-chip">${status}</span></li>`;
   }).join("");
   const belongingsRows = renderDepartureBelongingsChecklist([
-    ...belongingsSummary.autoItems.filter((item) => item.tagText !== "提出").map((item) => item.name),
+    ...belongingsSummary.autoItems.map((item) => item.name),
     ...belongingsSummary.manualItems
   ]);
   renderScreen(`
