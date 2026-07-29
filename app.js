@@ -33,8 +33,6 @@ const DEFAULT_MINUTES = 30;
 const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
 const SUBMISSION_TEMPLATE_NONE = "";
-const NO_HOMEWORK_TEMPLATE_NAME = "書類提出・質問・確認（自宅での作業なし）";
-const NO_HOMEWORK_TEMPLATE_NAME_LEGACY = "書類提出・質問・確認（自体作業無し）";
 const NO_HOMEWORK_FIRST_STEP_LABEL = "黒の手帳へ書いた";
 const NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY = "黒の手帳へ記録した";
 const NO_HOMEWORK_SECOND_STEP_LABEL = "カバンへ入れた";
@@ -2871,28 +2869,33 @@ function findTemplateItemByLabelVariants(template, labelVariants) {
   }) || null;
 }
 
-function getNoHomeworkTemplateId() {
-  const acceptableNames = [NO_HOMEWORK_TEMPLATE_NAME, NO_HOMEWORK_TEMPLATE_NAME_LEGACY].map(normalizeLooseMatchText);
-  const template = state.submissionTemplates.find((entry) => acceptableNames.includes(normalizeLooseMatchText(entry?.name))) || null;
-  return template?.id || "";
+function getNoHomeworkChecklistStepsByTemplateId(templateId) {
+  const template = findSubmissionTemplate(templateId);
+  if (!template) return null;
+  const firstStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]);
+  const secondStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_SECOND_STEP_LABEL, NO_HOMEWORK_SECOND_STEP_LABEL_LEGACY]);
+  const thirdStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_THIRD_STEP_LABEL]);
+  const fourthStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FOURTH_STEP_LABEL, NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY]);
+  if (!firstStep || !secondStep || !thirdStep || !fourthStep) return null;
+  return {
+    firstStep,
+    secondStep,
+    thirdStep,
+    fourthStep,
+    ordered: [firstStep, secondStep, thirdStep, fourthStep]
+  };
 }
 
 function tryAutoCompleteNoHomeworkByChecklist(targetType, target, template, checkedIds) {
   if (targetType !== "homework" || !target || !template) return;
-  const noHomeworkTemplateId = getNoHomeworkTemplateId();
-  if (!noHomeworkTemplateId || target.submissionTemplateId !== noHomeworkTemplateId) return;
-
-  const firstStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]);
-  const secondStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_SECOND_STEP_LABEL);
-  const thirdStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_THIRD_STEP_LABEL);
-  const fourthStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FOURTH_STEP_LABEL);
-  if (!firstStep || !secondStep || !thirdStep || !fourthStep) return;
+  const noHomeworkSteps = getNoHomeworkChecklistStepsByTemplateId(target.submissionTemplateId);
+  if (!noHomeworkSteps) return;
 
   const checkedSet = new Set(checkedIds);
-  const allNoHomeworkStepsDone = checkedSet.has(firstStep.id)
-    && checkedSet.has(secondStep.id)
-    && checkedSet.has(thirdStep.id)
-    && checkedSet.has(fourthStep.id);
+  const allNoHomeworkStepsDone = checkedSet.has(noHomeworkSteps.firstStep.id)
+    && checkedSet.has(noHomeworkSteps.secondStep.id)
+    && checkedSet.has(noHomeworkSteps.thirdStep.id)
+    && checkedSet.has(noHomeworkSteps.fourthStep.id);
   if (!allNoHomeworkStepsDone) return;
 
   target.done = true;
@@ -2946,7 +2949,6 @@ function getSubmissionChecklistSummary(target) {
 function getSubmissionChecklistRemainingEntries() {
   const entries = [];
   const executionDateKey = getCurrentHomeDateKey();
-  const noHomeworkTemplateId = getNoHomeworkTemplateId();
 
   getTasksForDate(executionDateKey).forEach((task) => {
     if (!task || task.status !== "done") return;
@@ -2968,14 +2970,15 @@ function getSubmissionChecklistRemainingEntries() {
     const template = findSubmissionTemplate(item.submissionTemplateId);
     if (!template || template.items.length === 0) return;
 
-    const isNoHomeworkFlowTarget = Boolean(noHomeworkTemplateId) && item.submissionTemplateId === noHomeworkTemplateId;
+    const noHomeworkSteps = getNoHomeworkChecklistStepsByTemplateId(item.submissionTemplateId);
+    const isNoHomeworkFlowTarget = Boolean(noHomeworkSteps);
     const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
 
     if (isNoHomeworkFlowTarget && !item.done) {
-      const firstStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]);
-      const secondStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_SECOND_STEP_LABEL);
-      const thirdStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_THIRD_STEP_LABEL);
-      const fourthStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FOURTH_STEP_LABEL);
+      const firstStep = noHomeworkSteps.firstStep;
+      const secondStep = noHomeworkSteps.secondStep;
+      const thirdStep = noHomeworkSteps.thirdStep;
+      const fourthStep = noHomeworkSteps.fourthStep;
 
       const specialRemainingLabels = [];
       if (firstStep && !checkedSet.has(firstStep.id)) {
@@ -3097,20 +3100,11 @@ function renderSubmissionChecklistOverlay() {
   }
 
   const checkedSet = new Set(normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds));
-  const noHomeworkTemplateId = getNoHomeworkTemplateId();
-  const isNoHomeworkChecklistTarget = context.targetType === "homework"
-    && Boolean(noHomeworkTemplateId)
-    && target.submissionTemplateId === noHomeworkTemplateId;
-
-  const noHomeworkOrderedItems = isNoHomeworkChecklistTarget
-    ? [
-      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]),
-      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_SECOND_STEP_LABEL, NO_HOMEWORK_SECOND_STEP_LABEL_LEGACY]),
-      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_THIRD_STEP_LABEL]),
-      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FOURTH_STEP_LABEL, NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY])
-    ].filter((item, idx, arr) => item && arr.findIndex((x) => x?.id === item.id) === idx)
-    : [];
-  const useNoHomeworkStepLock = noHomeworkOrderedItems.length === 4;
+  const noHomeworkSteps = context.targetType === "homework"
+    ? getNoHomeworkChecklistStepsByTemplateId(target.submissionTemplateId)
+    : null;
+  const noHomeworkOrderedItems = noHomeworkSteps ? noHomeworkSteps.ordered : [];
+  const useNoHomeworkStepLock = Boolean(noHomeworkSteps);
 
   let activeNoHomeworkStepId = "";
   if (useNoHomeworkStepLock) {
