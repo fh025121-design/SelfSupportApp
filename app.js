@@ -771,17 +771,21 @@ function showContentAssistConfirmDialog() {
       <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="contentAssistConfirmTitle">
         <h3 id="contentAssistConfirmTitle">内容の確認</h3>
         <p>
-          この内容で、<br />
-          あとで自分が見返したときに<br />
-          何をするか思い出せますか？
+          この内容で保存しますか？
         </p>
         <p>
-          できれば<br />
-          「何をどうする」<br />
-          または<br />
-          「何が何だ」<br />
-          まで書くと、<br />
-          あとで困りません。
+          あとで見返したときに、<br />
+          何をするのか分かりますか？
+        </p>
+        <p>
+          教材名、ページ、問題番号、やることなどを<br />
+          少し足すと分かりやすくなります。
+        </p>
+        <p>
+          例）<br />
+          ・新中学問題集 p54～59<br />
+          ・学校プリント No.3<br />
+          ・理科レポートを先生へ提出する
         </p>
         <div class="btn-row split compact-stack app-modal-actions">
           <button id="contentAssistSaveAnywayBtn" class="btn-main" type="button">このまま保存</button>
@@ -3727,7 +3731,8 @@ function renderHomeworkEditScreen() {
         <div>
           <label for="homeworkContent">内容</label>
           <input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="何をどうするか分かるように書こう" />
-          <p class="helper">例）理科レポートを先生へ提出する / 理科レポートの提出期限を先生に聞く / 保護者印をもらう / 健康診断書類を先生へ提出する（未入力でも保存できます）</p>
+          <p class="helper">あとで見返したときに<br />「何を」「どうする」が分かるように書こう</p>
+          <p class="helper">例）<br />・健康診断書類を先生へ提出する<br />・理科レポートの提出期限を先生に聞く<br />・保護者印をもらう<br />・上履きを学校へ持って行く<br />・図工の材料を持って行く<br />・委員会アンケートを提出する</p>
         </div>
         <div><label>提出・確認テンプレート</label><p class="helper">${isNoWorkType ? "書類提出・質問・確認（自宅での作業なし）" : "通常の提出"}</p></div>
         <div>
@@ -3735,13 +3740,6 @@ function renderHomeworkEditScreen() {
           <div class="option-group compact-options">
             <label class="option-item"><input type="radio" name="homeworkGoogleSync" value="on" ${state.homeworkForm.googleSync ? "checked" : ""} /><span>ON</span></label>
             <label class="option-item"><input type="radio" name="homeworkGoogleSync" value="off" ${!state.homeworkForm.googleSync ? "checked" : ""} /><span>OFF</span></label>
-          </div>
-        </div>
-        <div>
-          <label>完了状態</label>
-          <div class="option-group compact-options">
-            <label class="option-item"><input type="radio" name="homeworkDone" value="pending" ${!state.homeworkForm.done ? "checked" : ""} /><span>未完了</span></label>
-            <label class="option-item"><input type="radio" name="homeworkDone" value="done" ${state.homeworkForm.done ? "checked" : ""} /><span>完了</span></label>
           </div>
         </div>
       </div>
@@ -3778,12 +3776,6 @@ function bindHomeworkEditEvents() {
   document.querySelectorAll("input[name='homeworkGoogleSync']").forEach((radio) => {
     radio.addEventListener("change", (e) => {
       state.homeworkForm.googleSync = e.target.value === "on";
-      saveState();
-    });
-  });
-  document.querySelectorAll("input[name='homeworkDone']").forEach((radio) => {
-    radio.addEventListener("change", (e) => {
-      state.homeworkForm.done = e.target.value === "done";
       saveState();
     });
   });
@@ -4163,7 +4155,9 @@ function renderPlanning() {
         <div>
           <label for="taskContent">内容</label>
           <input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="あとで何をやるか分かるように書こう" />
-          <p class="helper">例）新中学問題集 p54～59 / 学校プリント No.3 / 教科書 Unit4 リスニング / レンズ実験レポート</p>
+          <p class="helper">書き方のコツ</p>
+          <p class="helper">・教材名<br />・ページや問題番号<br />・単元<br />・具体的にやること</p>
+          <p class="helper">例）<br />・新中学問題集 p54～59<br />・学校プリント No.3<br />・英検単語 Day12<br />・数学 新A 31～40番<br />・教科書 Unit4 リスニング<br />・理科 レンズ実験レポート</p>
         </div>
       </div>
       <div class="btn-row compact-stack">
