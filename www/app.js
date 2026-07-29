@@ -1871,6 +1871,7 @@ function renderHome() {
   const pendingHomework = isPreviousView ? [] : getSortedPendingHomeworkTasks();
   const homeworkPending = pendingHomework.length;
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
+  const homeworkSummaryHtml = renderHomeHomeworkSummary(pendingHomework);
   const syncText = getSyncStatusText();
   if (todayLabel) {
     todayLabel.textContent = `表示日：${formatHomeDateHeading(homeContext.dateKey)}`;
@@ -1924,6 +1925,8 @@ function renderHome() {
     <div class="btn-row compact-stack">
       <button id="openDayEndBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>1日の終了</button>
     </div>
+
+    ${homeworkSummaryHtml}
 
     <p class="home-sync-footer">同期：${escapeHtml(syncText || "-")}</p>
   `);
