@@ -657,18 +657,16 @@ function normalizeSubmissionChecklistTarget(raw) {
 }
 
 function normalizeHomeworkTask(item) {
-  const submissionChecklistCompleted = Boolean(item?.submissionChecklistCompleted);
-  const done = Boolean(item?.done) || submissionChecklistCompleted;
   return {
     id: item?.id || crypto.randomUUID(),
     name: String(item?.name || "").trim(),
     deadlineDate: normalizeDeadlineDate(item?.deadlineDate),
     content: String(item?.content || "").trim(),
     googleSync: Boolean(item?.googleSync),
-    done,
+    done: Boolean(item?.done),
     submissionTemplateId: normalizeSubmissionTemplateId(item?.submissionTemplateId),
     submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(item?.submissionCheckedItemIds),
-    submissionChecklistCompleted,
+    submissionChecklistCompleted: Boolean(item?.submissionChecklistCompleted),
     actionNoSuppressedDateKey: normalizeTaskDateKey(item?.actionNoSuppressedDateKey) || "",
     actionHistory: Array.isArray(item?.actionHistory)
       ? item.actionHistory.map((entry) => ({
@@ -1870,9 +1868,7 @@ function renderHome() {
   const showReturnCheckHomeButton = !isPreviousView
     && state.departureCheck.done
     && getReturnCheckReminderStatus() !== "none";
-  const todayActionItems = isPreviousView ? [] : getTodayActionHomeworkItems();
-  const homeworkPending = getHomeworkPendingCount();
-  const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
+  const pendingHomework = isPreviousView ? [] : getSortedPendingHomeworkTasks();
   const syncText = getSyncStatusText();
   if (todayLabel) {
     todayLabel.textContent = `表示日：${formatHomeDateHeading(homeContext.dateKey)}`;
@@ -1910,7 +1906,7 @@ function renderHome() {
         <p>勉強 ${formatTimeForDisplay(homeContext.planTimes.studyStart)}</p>
       </div>
       <div class="home-overview-right">
-        ${renderTodayActionSummary(todayActionItems)}
+        ${renderHomeHomeworkSummary(pendingHomework)}
       </div>
     </div>
     <hr class="sep" />
@@ -1922,7 +1918,6 @@ function renderHome() {
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openHomeworkBtn" class="btn-quiet" type="button" ${isPreviousView ? "disabled" : ""}>${homeworkLabel}</button>
       <button id="openDayEndBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>1日の終了</button>
     </div>
 
@@ -1996,7 +1991,6 @@ function renderHome() {
       render();
     });
 
-    document.getElementById("openHomeworkBtn").addEventListener("click", () => changePhase("homeworkList", false));
     document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
     document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
@@ -3014,7 +3008,7 @@ function renderSubmissionChecklistOverlay() {
       <div class="option-group compact-options" id="submissionChecklistItems">${itemsHtml}</div>
       <div class="btn-row split compact-stack app-modal-actions">
         <button id="closeSubmissionChecklistBtn" class="btn-quiet" type="button">後で</button>
-        <button id="completeSubmissionChecklistBtn" class="btn-main" type="button">閉じる</button>
+        <button id="completeSubmissionChecklistBtn" class="btn-main" type="button" ${allDone ? "" : "disabled"}>完了</button>
       </div>
       <p class="helper" id="submissionChecklistStatus">${allDone ? "すべて確認済みです。" : `確認済み ${checkedSet.size}/${template.items.length}`}</p>
     </div>
@@ -3026,8 +3020,11 @@ function renderSubmissionChecklistOverlay() {
       .map((el) => String(el.getAttribute("data-submission-item-id") || ""))
       .filter(Boolean);
     target.submissionCheckedItemIds = checkedIds;
+    target.submissionChecklistCompleted = checkedIds.length >= template.items.length && template.items.length > 0;
     const statusEl = document.getElementById("submissionChecklistStatus");
-    if (statusEl) statusEl.textContent = checkedIds.length >= template.items.length && template.items.length > 0
+    const completeBtn = document.getElementById("completeSubmissionChecklistBtn");
+    if (completeBtn) completeBtn.disabled = !target.submissionChecklistCompleted;
+    if (statusEl) statusEl.textContent = target.submissionChecklistCompleted
       ? "すべて確認済みです。"
       : `確認済み ${checkedIds.length}/${template.items.length}`;
     saveState();
@@ -3043,6 +3040,7 @@ function renderSubmissionChecklistOverlay() {
   });
 
   document.getElementById("completeSubmissionChecklistBtn")?.addEventListener("click", () => {
+    target.submissionChecklistCompleted = true;
     saveState();
     closeSubmissionChecklistTarget();
   });
@@ -3341,10 +3339,10 @@ function renderHomeworkEditScreen() {
           </div>
         </div>
         <div>
-          <label>作業の状態</label>
+          <label>完了状態</label>
           <div class="option-group compact-options">
-            <label class="option-item"><input type="radio" name="homeworkDone" value="working" ${!state.homeworkForm.done ? "checked" : ""} /><span>作業中</span></label>
-            <label class="option-item"><input type="radio" name="homeworkDone" value="action" ${state.homeworkForm.done ? "checked" : ""} /><span>今日のアクションへ送る</span></label>
+            <label class="option-item"><input type="radio" name="homeworkDone" value="pending" ${!state.homeworkForm.done ? "checked" : ""} /><span>未完了</span></label>
+            <label class="option-item"><input type="radio" name="homeworkDone" value="done" ${state.homeworkForm.done ? "checked" : ""} /><span>完了</span></label>
           </div>
         </div>
       </div>
@@ -3386,7 +3384,7 @@ function bindHomeworkEditEvents() {
   });
   document.querySelectorAll("input[name='homeworkDone']").forEach((radio) => {
     radio.addEventListener("change", (e) => {
-      state.homeworkForm.done = e.target.value === "action";
+      state.homeworkForm.done = e.target.value === "done";
       saveState();
     });
   });
@@ -3476,12 +3474,6 @@ async function saveHomeworkItem() {
         if (templateChanged) {
           item.submissionCheckedItemIds = [];
           item.submissionChecklistCompleted = false;
-        }
-        if (!done) {
-          item.submissionChecklistCompleted = false;
-          item.actionNoSuppressedDateKey = "";
-        } else if (item.submissionChecklistCompleted) {
-          item.done = true;
         }
         return;
       }
@@ -5252,7 +5244,6 @@ function renderReturnCheckReminderOverlay() {
 }
 
 function renderReturnCheck() {
-  const todayActionItems = getTodayActionHomeworkItems();
   renderScreen(`
     <h2>帰宅時チェック</h2>
     <div class="task-form-box">
@@ -5268,10 +5259,6 @@ function renderReturnCheck() {
             <label class="option-item"><input type="radio" name="delayedContactAnswer" value="na" ${state.returnCheck.answers.delayedContact === "na" ? "checked" : ""} />該当なし</label>
           </div>
         </div>
-      </div>
-      <div class="task-card action-card">
-        <p>今日のアクション</p>
-        ${renderTodayActionReturnList(todayActionItems)}
       </div>
       <div class="btn-row split compact-stack">
         <button id="copyReturnCheckBtn" class="btn-sub" type="button">チェック内容をコピー</button>
@@ -5315,14 +5302,6 @@ function renderReturnCheck() {
       state.returnCheck.answers.delayedContact = target.value;
       saveState();
       refreshCopyText();
-    });
-  });
-  document.querySelectorAll("button[data-homework-action-result]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const homeworkId = String(btn.getAttribute("data-homework-action-id") || "");
-      const result = String(btn.getAttribute("data-homework-action-result") || "");
-      if (!homeworkId || (result !== "yes" && result !== "no")) return;
-      recordHomeworkActionResult(homeworkId, result);
     });
   });
   document.getElementById("finishReturnCheckBtn").addEventListener("click", finishReturnCheck);
@@ -5632,18 +5611,12 @@ function renderDepartureCheck() {
     ...belongingsSummary.autoItems.filter((item) => item.tagText !== "提出").map((item) => item.name),
     ...belongingsSummary.manualItems
   ]);
-  const todayActionItems = getTodayActionHomeworkItems();
-
   renderScreen(`
     <h2>出発前チェック</h2>
     <div class="task-card">
       <p>📅 今日の予定</p>
       <p>出発 ${formatTimeForDisplay(state.planTimes.departure)}</p>
       <p>帰宅 ${formatTimeForDisplay(state.planTimes.returnHome)}</p>
-    </div>
-    <div class="task-card">
-      <p>今日のアクション</p>
-      ${renderTodayActionSummary(todayActionItems)}
     </div>
     <div class="task-card">
       <p>🎒 今日の持ち物</p>
@@ -6041,7 +6014,7 @@ function isRecurringPlanForWeekday(plan, weekdayKey) {
 
 function getSortedPendingHomeworkTasks() {
   return state.homeworkTasks
-    .filter((item) => !item.submissionChecklistCompleted)
+    .filter((item) => !item.done)
     .slice()
     .sort((a, b) => {
       if (a.deadlineDate === b.deadlineDate) return a.name.localeCompare(b.name, "ja");
@@ -6050,81 +6023,7 @@ function getSortedPendingHomeworkTasks() {
 }
 
 function getHomeworkPendingCount() {
-  return state.homeworkTasks.filter((item) => !item.submissionChecklistCompleted).length;
-}
-
-function getTodayActionHomeworkItems() {
-  const todayKey = getTodayKeyJst();
-  return state.homeworkTasks
-    .filter((item) => item.done && !item.submissionChecklistCompleted && item.actionNoSuppressedDateKey !== todayKey)
-    .slice()
-    .sort((a, b) => {
-      if (a.deadlineDate === b.deadlineDate) return a.name.localeCompare(b.name, "ja");
-      return a.deadlineDate.localeCompare(b.deadlineDate);
-    });
-}
-
-function renderTodayActionSummary(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return `<p class="home-overview-belongings-none">今日のアクション：なし</p>`;
-  }
-  return `<p class="home-overview-belongings-title">今日のアクション</p><ul class="home-belongings-list">${items.map((item) => `<li>・${escapeHtml(item.name)}</li>`).join("")}</ul>`;
-}
-
-function renderTodayActionReturnList(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return `<p class="helper">今日のアクションはありません。</p>`;
-  }
-  return items.map((item) => {
-    const lastNo = Array.isArray(item.actionHistory)
-      ? [...item.actionHistory].reverse().find((entry) => entry.result === "no")
-      : null;
-    const lastNoReason = lastNo?.reason ? escapeHtml(lastNo.reason) : "";
-    return `
-      <div class="task-card action-card" data-homework-action-id="${escapeHtml(item.id)}">
-        <p>${escapeHtml(item.name)}</p>
-        ${lastNoReason ? `<p class="helper">前回の理由: ${lastNoReason}</p>` : ""}
-        <div class="btn-row split compact-stack">
-          <button class="btn-main" type="button" data-homework-action-id="${escapeHtml(item.id)}" data-homework-action-result="yes">はい</button>
-          <button class="btn-sub" type="button" data-homework-action-id="${escapeHtml(item.id)}" data-homework-action-result="no">いいえ</button>
-        </div>
-      </div>
-    `;
-  }).join("");
-}
-
-function recordHomeworkActionResult(homeworkId, result) {
-  const item = state.homeworkTasks.find((entry) => entry.id === homeworkId);
-  if (!item) return;
-  if (!Array.isArray(item.actionHistory)) item.actionHistory = [];
-  const todayKey = getTodayKeyJst();
-
-  if (result === "no") {
-    const existingReason = [...item.actionHistory].reverse().find((entry) => entry.result === "no")?.reason || "";
-    const reason = String(window.prompt(`「${item.name}」が実行できなかった理由を入力してください。`, existingReason) || "").trim();
-    item.actionHistory.push({
-      at: Date.now(),
-      result: "no",
-      reason
-    });
-    item.done = true;
-    item.submissionChecklistCompleted = false;
-    item.actionNoSuppressedDateKey = todayKey;
-    saveState();
-    render();
-    return;
-  }
-
-  item.actionHistory.push({
-    at: Date.now(),
-    result: "yes",
-    reason: ""
-  });
-  item.done = true;
-  item.submissionChecklistCompleted = true;
-  item.actionNoSuppressedDateKey = "";
-  saveState();
-  render();
+  return state.homeworkTasks.filter((item) => !item.done).length;
 }
 
 function getDateKeyDayNumber(dateKey) {
