@@ -33,6 +33,11 @@ const DEFAULT_MINUTES = 30;
 const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
 const SUBMISSION_TEMPLATE_NONE = "";
+const NO_HOMEWORK_TEMPLATE_NAME = "書類提出・質問・確認（自宅での作業なし）";
+const NO_HOMEWORK_FIRST_STEP_LABEL = "黒の手帳へ書いた";
+const NO_HOMEWORK_SECOND_STEP_LABEL = "カバンへ入れた";
+const NO_HOMEWORK_THIRD_STEP_LABEL = "提出した";
+const NO_HOMEWORK_FOURTH_STEP_LABEL = "報告した";
 const DEFAULT_SUBMISSION_TEMPLATES = [
   {
     id: "school-submission",
@@ -2848,6 +2853,33 @@ function findSubmissionTemplate(templateId) {
   return state.submissionTemplates.find((template) => template.id === templateId) || null;
 }
 
+function getNoHomeworkTemplateId() {
+  const template = state.submissionTemplates.find((entry) => entry.name === NO_HOMEWORK_TEMPLATE_NAME) || null;
+  return template?.id || "";
+}
+
+function tryAutoCompleteNoHomeworkByChecklist(targetType, target, template, checkedIds) {
+  if (targetType !== "homework" || !target || !template) return;
+  const noHomeworkTemplateId = getNoHomeworkTemplateId();
+  if (!noHomeworkTemplateId || target.submissionTemplateId !== noHomeworkTemplateId) return;
+
+  const firstStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FIRST_STEP_LABEL);
+  const secondStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_SECOND_STEP_LABEL);
+  const thirdStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_THIRD_STEP_LABEL);
+  const fourthStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FOURTH_STEP_LABEL);
+  if (!firstStep || !secondStep || !thirdStep || !fourthStep) return;
+
+  const checkedSet = new Set(checkedIds);
+  const allNoHomeworkStepsDone = checkedSet.has(firstStep.id)
+    && checkedSet.has(secondStep.id)
+    && checkedSet.has(thirdStep.id)
+    && checkedSet.has(fourthStep.id);
+  if (!allNoHomeworkStepsDone) return;
+
+  target.done = true;
+  target.submissionChecklistCompleted = true;
+}
+
 function createSubmissionTemplateFromName(name) {
   const trimmed = String(name || "").trim();
   if (!trimmed) return null;
@@ -2895,6 +2927,7 @@ function getSubmissionChecklistSummary(target) {
 function getSubmissionChecklistRemainingEntries() {
   const entries = [];
   const executionDateKey = getCurrentHomeDateKey();
+  const noHomeworkTemplateId = getNoHomeworkTemplateId();
 
   getTasksForDate(executionDateKey).forEach((task) => {
     if (!task || task.status !== "done") return;
@@ -2912,10 +2945,56 @@ function getSubmissionChecklistRemainingEntries() {
   });
 
   state.homeworkTasks.forEach((item) => {
-    if (!item || !item.done) return;
+    if (!item) return;
     const template = findSubmissionTemplate(item.submissionTemplateId);
     if (!template || template.items.length === 0) return;
+
+    const isNoHomeworkFlowTarget = Boolean(noHomeworkTemplateId) && item.submissionTemplateId === noHomeworkTemplateId;
     const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
+
+    if (isNoHomeworkFlowTarget && !item.done) {
+      const firstStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FIRST_STEP_LABEL);
+      const secondStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_SECOND_STEP_LABEL);
+      const thirdStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_THIRD_STEP_LABEL);
+      const fourthStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FOURTH_STEP_LABEL);
+
+      const specialRemainingLabels = [];
+      if (firstStep && !checkedSet.has(firstStep.id)) {
+        specialRemainingLabels.push(firstStep.label);
+      }
+
+      const executionDayNumber = getDateKeyDayNumber(executionDateKey);
+      const deadlineDayNumber = getDateKeyDayNumber(item.deadlineDate);
+      const shouldShowSecondStep = executionDayNumber !== null
+        && deadlineDayNumber !== null
+        && executionDayNumber >= (deadlineDayNumber - 1);
+      if (secondStep && shouldShowSecondStep && !checkedSet.has(secondStep.id)) {
+        specialRemainingLabels.push(secondStep.label);
+      }
+
+      const shouldShowThirdOrFourth = executionDayNumber !== null
+        && deadlineDayNumber !== null
+        && executionDayNumber >= deadlineDayNumber;
+      if (shouldShowThirdOrFourth) {
+        if (thirdStep && !checkedSet.has(thirdStep.id)) {
+          specialRemainingLabels.push(thirdStep.label);
+        } else if (thirdStep && checkedSet.has(thirdStep.id) && fourthStep && !checkedSet.has(fourthStep.id)) {
+          specialRemainingLabels.push(fourthStep.label);
+        }
+      }
+
+      if (specialRemainingLabels.length > 0) {
+        entries.push({
+          targetType: "homework",
+          targetId: item.id,
+          title: `${template.name}　${item.name}`,
+          remainingLabels: specialRemainingLabels
+        });
+      }
+      return;
+    }
+
+    if (!item.done) return;
     const remainingItems = template.items.filter((templateItem) => !checkedSet.has(templateItem.id));
     if (remainingItems.length === 0) return;
     entries.push({
@@ -3026,7 +3105,9 @@ function renderSubmissionChecklistOverlay() {
       .map((el) => String(el.getAttribute("data-submission-item-id") || ""))
       .filter(Boolean);
     target.submissionCheckedItemIds = checkedIds;
-    target.submissionChecklistCompleted = checkedIds.length >= template.items.length && template.items.length > 0;
+    tryAutoCompleteNoHomeworkByChecklist(context.targetType, target, template, checkedIds);
+    target.submissionChecklistCompleted = target.submissionChecklistCompleted
+      || (checkedIds.length >= template.items.length && template.items.length > 0);
     const statusEl = document.getElementById("submissionChecklistStatus");
     const completeBtn = document.getElementById("completeSubmissionChecklistBtn");
     if (completeBtn) completeBtn.disabled = !target.submissionChecklistCompleted;
