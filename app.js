@@ -38,8 +38,10 @@ const NO_HOMEWORK_TEMPLATE_NAME_LEGACY = "書類提出・質問・確認（自�
 const NO_HOMEWORK_FIRST_STEP_LABEL = "黒の手帳へ書いた";
 const NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY = "黒の手帳へ記録した";
 const NO_HOMEWORK_SECOND_STEP_LABEL = "カバンへ入れた";
+const NO_HOMEWORK_SECOND_STEP_LABEL_LEGACY = "かばんへ入れた";
 const NO_HOMEWORK_THIRD_STEP_LABEL = "提出した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL = "報告した";
+const NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY = "親へ報告した";
 const DEFAULT_SUBMISSION_TEMPLATES = [
   {
     id: "school-submission",
@@ -3095,10 +3097,45 @@ function renderSubmissionChecklistOverlay() {
   }
 
   const checkedSet = new Set(normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds));
-  const itemsHtml = template.items.map((item) => {
-    const checked = checkedSet.has(item.id) ? "checked" : "";
-    return `<label class="option-item"><input type="checkbox" data-submission-item-id="${escapeHtml(item.id)}" ${checked} /><span>${escapeHtml(item.label)}</span></label>`;
-  }).join("");
+  const noHomeworkTemplateId = getNoHomeworkTemplateId();
+  const isNoHomeworkChecklistTarget = context.targetType === "homework"
+    && Boolean(noHomeworkTemplateId)
+    && target.submissionTemplateId === noHomeworkTemplateId;
+
+  const noHomeworkOrderedItems = isNoHomeworkChecklistTarget
+    ? [
+      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]),
+      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_SECOND_STEP_LABEL, NO_HOMEWORK_SECOND_STEP_LABEL_LEGACY]),
+      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_THIRD_STEP_LABEL]),
+      findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FOURTH_STEP_LABEL, NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY])
+    ].filter((item, idx, arr) => item && arr.findIndex((x) => x?.id === item.id) === idx)
+    : [];
+  const useNoHomeworkStepLock = noHomeworkOrderedItems.length === 4;
+
+  let activeNoHomeworkStepId = "";
+  if (useNoHomeworkStepLock) {
+    const nextItem = noHomeworkOrderedItems.find((item) => !checkedSet.has(item.id));
+    activeNoHomeworkStepId = nextItem?.id || "";
+  }
+
+  const renderLockedNoHomeworkRow = (item) => {
+    const isChecked = checkedSet.has(item.id);
+    const isActive = !isChecked && activeNoHomeworkStepId === item.id;
+    if (isChecked) {
+      return `<div class="option-item" aria-disabled="true"><span>✓ ${escapeHtml(item.label)}</span><span>　操作不可</span></div>`;
+    }
+    if (isActive) {
+      return `<label class="option-item"><input type="checkbox" data-submission-item-id="${escapeHtml(item.id)}" /><span>${escapeHtml(item.label)}　操作可</span></label>`;
+    }
+    return `<div class="option-item" aria-disabled="true"><span>○ ${escapeHtml(item.label)}</span><span>　操作不可</span></div>`;
+  };
+
+  const itemsHtml = useNoHomeworkStepLock
+    ? noHomeworkOrderedItems.map(renderLockedNoHomeworkRow).join("")
+    : template.items.map((item) => {
+      const checked = checkedSet.has(item.id) ? "checked" : "";
+      return `<label class="option-item"><input type="checkbox" data-submission-item-id="${escapeHtml(item.id)}" ${checked} /><span>${escapeHtml(item.label)}</span></label>`;
+    }).join("");
   const allDone = template.items.length > 0 && template.items.every((item) => checkedSet.has(item.id));
 
   const overlay = document.createElement("div");
@@ -3118,6 +3155,27 @@ function renderSubmissionChecklistOverlay() {
   document.body.appendChild(overlay);
 
   const refreshChecklistStatus = () => {
+    if (useNoHomeworkStepLock) {
+      const activeInput = overlay.querySelector("input[data-submission-item-id]");
+      if (!activeInput) return;
+      const activeId = String(activeInput.getAttribute("data-submission-item-id") || "");
+      if (!activeId) return;
+      if (!activeInput.checked) {
+        activeInput.checked = true;
+      }
+      const currentIds = normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds);
+      if (!currentIds.includes(activeId)) {
+        currentIds.push(activeId);
+      }
+      target.submissionCheckedItemIds = currentIds;
+      tryAutoCompleteNoHomeworkByChecklist(context.targetType, target, template, currentIds);
+      target.submissionChecklistCompleted = target.submissionChecklistCompleted
+        || (currentIds.length >= template.items.length && template.items.length > 0);
+      saveState();
+      renderSubmissionChecklistOverlay();
+      return;
+    }
+
     const checkedIds = Array.from(overlay.querySelectorAll("input[data-submission-item-id]:checked"))
       .map((el) => String(el.getAttribute("data-submission-item-id") || ""))
       .filter(Boolean);
