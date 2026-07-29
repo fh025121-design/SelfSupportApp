@@ -301,6 +301,7 @@ function createPlanningForm() {
   return {
     mode: "add",
     targetId: null,
+    taskName: "",
     taskNameChoice: TASK_NAME_NEW,
     customTaskName: "",
     minutesChoice: String(DEFAULT_MINUTES),
@@ -959,6 +960,12 @@ function normalizePlanningForm(raw) {
   base.targetId = base.targetId || null;
   base.taskNameChoice = typeof base.taskNameChoice === "string" ? base.taskNameChoice : TASK_NAME_NEW;
   base.customTaskName = String(base.customTaskName || "");
+  base.taskName = String(base.taskName || "");
+  if (!base.taskName.trim()) {
+    base.taskName = base.taskNameChoice === TASK_NAME_NEW
+      ? base.customTaskName
+      : String(base.taskNameChoice || "");
+  }
   base.minutesChoice = typeof base.minutesChoice === "string" ? base.minutesChoice : String(DEFAULT_MINUTES);
   base.customMinutes = String(base.customMinutes || base.minutesChoice || DEFAULT_MINUTES);
   base.content = String(base.content || "");
@@ -1136,12 +1143,14 @@ function getInputElementValue(id) {
 }
 
 function syncPlanningFormFromDom() {
+  const taskName = getInputElementValue("taskNameInput");
   const taskNameChoice = getInputElementValue("taskNameSelect");
   const customTaskName = getInputElementValue("customTaskName");
   const customMinutes = getInputElementValue("minutesInput");
   const content = getInputElementValue("taskContent");
   const submissionTemplateId = getInputElementValue("planningSubmissionTemplate");
   const dailyBelongingInput = getInputElementValue("dailyBelongingInput");
+  if (taskName !== null) state.planningForm.taskName = taskName;
   if (taskNameChoice !== null) state.planningForm.taskNameChoice = taskNameChoice;
   if (customTaskName !== null) state.planningForm.customTaskName = customTaskName;
   if (customMinutes !== null) {
@@ -3012,17 +3021,6 @@ function getNoHomeworkChecklistStepsByTemplateId(templateId) {
   };
 }
 
-function getHomeworkLinkedWorkTasks(homeworkId) {
-  if (!homeworkId) return [];
-  return state.tasks.filter((task) => String(task?.homeworkId || "") === homeworkId);
-}
-
-function isHomeworkLinkedWorkDone(homeworkId) {
-  const linked = getHomeworkLinkedWorkTasks(homeworkId).filter((task) => task.status !== "discarded");
-  if (linked.length === 0) return false;
-  return linked.every((task) => task.status === "done");
-}
-
 function getStandardHomeworkManualStepsByTemplateId(templateId) {
   const template = findSubmissionTemplate(templateId);
   if (!template) return null;
@@ -3053,7 +3051,6 @@ function buildHomeworkStandardFlowState(item, baseDateKey = getCurrentHomeDateKe
   const baseDayNumber = getDateKeyDayNumber(baseDateKey);
   const isFromDeadlineEve = baseDayNumber !== null && deadlineDayNumber !== null && baseDayNumber >= (deadlineDayNumber - 1);
   const isFromDeadlineDay = baseDayNumber !== null && deadlineDayNumber !== null && baseDayNumber >= deadlineDayNumber;
-  const workDone = workType === HOMEWORK_WORK_TYPE_WITH_WORK ? isHomeworkLinkedWorkDone(item.id) : true;
 
   const firstDone = checkedSet.has(manualSteps.firstStep.id);
   const bagDone = checkedSet.has(manualSteps.secondStep.id);
@@ -3077,7 +3074,7 @@ function buildHomeworkStandardFlowState(item, baseDateKey = getCurrentHomeDateKe
     kind: "manual",
     itemId: manualSteps.secondStep.id,
     confirmed: bagDone,
-    actionable: !bagDone && isFromDeadlineEve && firstDone && (workType === HOMEWORK_WORK_TYPE_NO_WORK || workDone)
+    actionable: !bagDone && isFromDeadlineEve && firstDone
   });
 
   rows.push({
@@ -3103,7 +3100,7 @@ function buildHomeworkStandardFlowState(item, baseDateKey = getCurrentHomeDateKe
     workType,
     rows,
     nextActionableManualRow,
-    complete: rows.every((row) => row.confirmed) && (workType === HOMEWORK_WORK_TYPE_NO_WORK || workDone)
+    complete: rows.every((row) => row.confirmed)
   };
 }
 
@@ -3890,12 +3887,6 @@ async function saveHomeworkItem() {
         actionHistory: []
       };
       state.homeworkTasks.push(newItem);
-      if (homeworkWorkType === HOMEWORK_WORK_TYPE_WITH_WORK) {
-        state.tasks.push(createTask(`${name}（作業）`, DEFAULT_MINUTES, content, {
-          targetDateKey: getCurrentHomeDateKey(),
-          homeworkId: newItem.id
-        }));
-      }
 
       const template = findSubmissionTemplate(newItem.submissionTemplateId);
       if (!newItem.done && template && template.items.length > 0) {
@@ -4065,7 +4056,6 @@ function renderPlanning() {
   const editingTask = state.planningForm.mode === "edit"
     ? planningTasks.find((task) => task.id === state.planningForm.targetId) || null
     : null;
-  const showCustomName = state.planningForm.taskNameChoice === TASK_NAME_NEW;
   const minutesValue = getPlanningFormMinutes() || DEFAULT_MINUTES;
   const wakeParts = getTimeParts(state.planTimes.wakeUp, "06:30");
   const depParts = getTimeParts(state.planTimes.departure === "none" ? "07:30" : state.planTimes.departure, "07:30");
@@ -4077,9 +4067,6 @@ function renderPlanning() {
 
   renderScreen(`
     <h2>予定入力</h2>
-    <p class="helper">内容は任意です。あとで見返して分かる書き方がおすすめです。</p>
-
-    <p class="legend">予定を作る日</p>
     <div class="option-group compact-options">
       <label class="option-item"><input type="radio" name="planFor" value="today" ${state.planFor === "today" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.todayLabel)}</span></label>
       <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.tomorrowLabel)}</span></label>
@@ -4145,8 +4132,11 @@ function renderPlanning() {
     <div class="task-form-box">
       <p class="helper">${editingTask ? "修正内容を入力してください。" : "次の1件を入力してください。"}</p>
       <div class="form-stack">
-        <div><label for="taskNameSelect">タスク名</label><select id="taskNameSelect">${renderTaskNameOptions()}</select></div>
-        <div id="customTaskNameWrap" class="${showCustomName ? "" : "hidden"}"><label for="customTaskName">新しいタスク名</label><input id="customTaskName" type="text" value="${escapeHtml(state.planningForm.customTaskName)}" maxlength="40" placeholder="例: 原田先生" /></div>
+        <div>
+          <label for="taskNameInput">タスク名</label>
+          <input id="taskNameInput" type="text" list="taskNameSuggestions" value="${escapeHtml(state.planningForm.taskName)}" maxlength="40" placeholder="例: 原田先生" autocomplete="off" />
+          <datalist id="taskNameSuggestions">${renderTaskNameSuggestions()}</datalist>
+        </div>
         <div>
           <label>予定時間（分）</label>
           <div class="btn-row" id="minutePresetRow">${renderMinutePresetButtons()}</div>
@@ -4154,7 +4144,7 @@ function renderPlanning() {
         <div><label for="minutesInput">自分で入力（分）</label><input id="minutesInput" type="number" min="1" max="600" step="1" value="${escapeHtml(String(minutesValue))}" /></div>
         <div>
           <label for="taskContent">内容</label>
-          <input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="あとで何をやるか分かるように書こう" />
+          <input id="taskContent" type="text" value="${escapeHtml(state.planningForm.content)}" maxlength="120" placeholder="あとで見返して何をやるか分かるように書こう" />
           <p class="helper">書き方のコツ</p>
           <p class="helper">・教材名<br />・ページや問題番号<br />・単元<br />・具体的にやること</p>
           <p class="helper">例）<br />・新中学問題集 p54～59<br />・学校プリント No.3<br />・英検単語 Day12<br />・数学 新A 31～40番<br />・教科書 Unit4 リスニング<br />・理科 レンズ実験レポート</p>
@@ -4238,12 +4228,10 @@ function renderTaskListForPlanning(planningTasks = getPlanningVisibleTasks()) {
   updateTotalPlanned(planningTasks);
 }
 
-function renderTaskNameOptions() {
-  const options = [`<option value="${TASK_NAME_NEW}" ${state.planningForm.taskNameChoice === TASK_NAME_NEW ? "selected" : ""}>新しいタスク名を入力</option>`];
-  getSortedTaskNameOptions().forEach((opt) => {
-    options.push(`<option value="${escapeHtml(opt.name)}" ${state.planningForm.taskNameChoice === opt.name ? "selected" : ""}>${escapeHtml(opt.name)}</option>`);
-  });
-  return options.join("");
+function renderTaskNameSuggestions() {
+  return getSortedTaskNameOptions()
+    .map((opt) => `<option value="${escapeHtml(opt.name)}"></option>`)
+    .join("");
 }
 
 function renderMinutePresetButtons() {
@@ -4271,14 +4259,9 @@ function bindPlanningEvents() {
   bindTimeSelectInput("departure", true, "departureMode");
   bindTimeSelectInput("returnHome", true, "returnHomeMode");
 
-  document.getElementById("taskNameSelect").addEventListener("change", (e) => {
-    state.planningForm.taskNameChoice = e.target.value;
-    saveState();
-    renderPlanning();
-  });
-  document.getElementById("customTaskName")?.addEventListener("input", (e) => {
+  document.getElementById("taskNameInput")?.addEventListener("input", (e) => {
     if (shouldSkipInputWhileComposing(e)) return;
-    state.planningForm.customTaskName = e.target.value;
+    state.planningForm.taskName = e.target.value;
     saveState();
   });
   document.getElementById("minutesInput").addEventListener("input", (e) => {
@@ -4462,12 +4445,12 @@ function loadTaskIntoForm(taskId) {
   const task = findTask(taskId);
   if (!task) return;
 
-  const knownName = getSortedTaskNameOptions().find((o) => o.name === task.name);
   state.planningForm = {
     mode: "edit",
     targetId: task.id,
-    taskNameChoice: knownName ? task.name : TASK_NAME_NEW,
-    customTaskName: knownName ? "" : task.name,
+    taskName: task.name,
+    taskNameChoice: task.name,
+    customTaskName: task.name,
     minutesChoice: String(task.plannedMinutes),
     customMinutes: String(task.plannedMinutes),
     content: task.content,
@@ -4533,6 +4516,7 @@ async function savePlanningTask() {
           task.submissionCheckedItemIds = [];
           task.submissionChecklistCompleted = false;
         }
+        markTaskNameAsUsed(name);
         return;
       }
 
@@ -4540,6 +4524,7 @@ async function savePlanningTask() {
         targetDateKey,
         submissionTemplateId
       }));
+      markTaskNameAsUsed(name);
     },
     onSuccess: () => {
       state.planningForm = createPlanningForm();
@@ -4574,7 +4559,7 @@ function renderPlanConfirm() {
       <p>勉強開始　　${formatTimeForDisplay(state.planTimes.studyStart)}</p>
     </div>
     <ol class="confirm-list" id="confirmTaskList"></ol>
-    <div class="summary"><p>学習予定時間の合計: ${sumPlanned(planningTasks)}分</p></div>
+    <div class="summary"><p>学習予定時間の合計: ${formatStudyTotalDuration(sumPlanned(planningTasks))}</p></div>
     <div class="btn-row compact-stack">
       <button id="confirmPlanBtn" class="btn-main" type="button">この予定で決定</button>
       <button id="backToPlanningBtn" class="btn-quiet" type="button">戻って修正</button>
@@ -4681,17 +4666,26 @@ function confirmPlan() {
 }
 
 function updateTaskNameStats() {
-  const map = new Map(state.taskNameStats.map((s) => [s.name, { ...s }]));
   const now = Date.now();
-  getPlanningVisibleTasks().forEach((task) => {
-    const name = task.name.trim();
-    if (!name) return;
-    const s = map.get(name) || { name, count: 0, lastUsedAt: 0 };
-    s.count += 1;
-    s.lastUsedAt = now;
-    map.set(name, s);
+  getPlanningVisibleTasks().forEach((task, index) => {
+    markTaskNameAsUsed(task.name, now + index);
   });
-  state.taskNameStats = Array.from(map.values());
+}
+
+function markTaskNameAsUsed(name, usedAt = Date.now()) {
+  const normalizedName = String(name || "").trim();
+  if (!normalizedName) return;
+  const existing = state.taskNameStats.find((item) => item.name === normalizedName);
+  if (existing) {
+    existing.count = Math.max(0, Number(existing.count) || 0) + 1;
+    existing.lastUsedAt = Math.max(Number(existing.lastUsedAt) || 0, Number(usedAt) || 0);
+    return;
+  }
+  state.taskNameStats.push({
+    name: normalizedName,
+    count: 1,
+    lastUsedAt: Number(usedAt) || Date.now()
+  });
 }
 
 function buildPlanReportText() {
@@ -4722,7 +4716,7 @@ function buildPlanReportText() {
   const belongingsLines = buildPlanReportBelongingsLines(getPlanningTargetDateKey());
   belongingsLines.forEach((line) => lines.push(line));
   lines.push("");
-  lines.push(`合計時間　${formatMinutesAsHourMinute(sumPlanned(planningTasks))}`);
+  lines.push(`合計時間　${formatStudyTotalDuration(sumPlanned(planningTasks))}`);
   lines.push("");
   planningTasks.forEach((task, index) => {
     lines.push(`${toCircledNumber(index + 1)} ${task.name}　予定 ${task.plannedMinutes}分`);
@@ -6591,8 +6585,10 @@ function findTask(id) {
 }
 
 function getPlanningFormTaskName() {
-  if (state.planningForm.taskNameChoice === TASK_NAME_NEW) return state.planningForm.customTaskName.trim();
-  return state.planningForm.taskNameChoice.trim();
+  const direct = String(state.planningForm.taskName || "").trim();
+  if (direct) return direct;
+  if (state.planningForm.taskNameChoice === TASK_NAME_NEW) return String(state.planningForm.customTaskName || "").trim();
+  return String(state.planningForm.taskNameChoice || "").trim();
 }
 
 function getPlanningFormMinutes() {
@@ -6600,16 +6596,18 @@ function getPlanningFormMinutes() {
 }
 
 function getSortedTaskNameOptions() {
-  return [...state.taskNameStats].sort((a, b) => {
-    if (b.count !== a.count) return b.count - a.count;
-    return b.lastUsedAt - a.lastUsedAt;
-  });
+  return [...state.taskNameStats]
+    .sort((a, b) => {
+      if (b.lastUsedAt !== a.lastUsedAt) return b.lastUsedAt - a.lastUsedAt;
+      return a.name.localeCompare(b.name, "ja");
+    })
+    .slice(0, 10);
 }
 
 function updateTotalPlanned(tasks = getPlanningVisibleTasks()) {
   const totalEl = document.getElementById("totalPlanned");
   if (!totalEl) return;
-  totalEl.textContent = `学習予定時間の合計 ${sumPlanned(tasks)}分`;
+  totalEl.textContent = `学習予定時間の合計 ${formatStudyTotalDuration(sumPlanned(tasks))}`;
 }
 
 function getCounts(tasks = state.tasks) {
@@ -6638,6 +6636,12 @@ function formatMinutesAsHourMinute(minutes) {
   const hour = Math.floor(total / 60);
   const minute = total % 60;
   return `${hour}時間${minute}分`;
+}
+
+function formatStudyTotalDuration(minutes) {
+  const total = sanitizeMinutesOrZero(minutes);
+  if (total > 60) return formatMinutesAsHourMinute(total);
+  return `${total}分`;
 }
 
 function toCircledNumber(n) {
