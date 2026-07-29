@@ -34,7 +34,9 @@ const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
 const SUBMISSION_TEMPLATE_NONE = "";
 const NO_HOMEWORK_TEMPLATE_NAME = "書類提出・質問・確認（自宅での作業なし）";
+const NO_HOMEWORK_TEMPLATE_NAME_LEGACY = "書類提出・質問・確認（自体作業無し）";
 const NO_HOMEWORK_FIRST_STEP_LABEL = "黒の手帳へ書いた";
+const NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY = "黒の手帳へ記録した";
 const NO_HOMEWORK_SECOND_STEP_LABEL = "カバンへ入れた";
 const NO_HOMEWORK_THIRD_STEP_LABEL = "提出した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL = "報告した";
@@ -2853,8 +2855,23 @@ function findSubmissionTemplate(templateId) {
   return state.submissionTemplates.find((template) => template.id === templateId) || null;
 }
 
+function normalizeLooseMatchText(value) {
+  return String(value || "").replace(/[\s　]+/g, "").trim();
+}
+
+function findTemplateItemByLabelVariants(template, labelVariants) {
+  if (!template || !Array.isArray(template.items)) return null;
+  const normalizedVariants = labelVariants.map(normalizeLooseMatchText).filter(Boolean);
+  if (normalizedVariants.length === 0) return null;
+  return template.items.find((templateItem) => {
+    const normalizedLabel = normalizeLooseMatchText(templateItem?.label);
+    return normalizedVariants.includes(normalizedLabel);
+  }) || null;
+}
+
 function getNoHomeworkTemplateId() {
-  const template = state.submissionTemplates.find((entry) => entry.name === NO_HOMEWORK_TEMPLATE_NAME) || null;
+  const acceptableNames = [NO_HOMEWORK_TEMPLATE_NAME, NO_HOMEWORK_TEMPLATE_NAME_LEGACY].map(normalizeLooseMatchText);
+  const template = state.submissionTemplates.find((entry) => acceptableNames.includes(normalizeLooseMatchText(entry?.name))) || null;
   return template?.id || "";
 }
 
@@ -2863,7 +2880,7 @@ function tryAutoCompleteNoHomeworkByChecklist(targetType, target, template, chec
   const noHomeworkTemplateId = getNoHomeworkTemplateId();
   if (!noHomeworkTemplateId || target.submissionTemplateId !== noHomeworkTemplateId) return;
 
-  const firstStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FIRST_STEP_LABEL);
+  const firstStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]);
   const secondStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_SECOND_STEP_LABEL);
   const thirdStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_THIRD_STEP_LABEL);
   const fourthStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FOURTH_STEP_LABEL);
@@ -2953,7 +2970,7 @@ function getSubmissionChecklistRemainingEntries() {
     const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
 
     if (isNoHomeworkFlowTarget && !item.done) {
-      const firstStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FIRST_STEP_LABEL);
+      const firstStep = findTemplateItemByLabelVariants(template, [NO_HOMEWORK_FIRST_STEP_LABEL, NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY]);
       const secondStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_SECOND_STEP_LABEL);
       const thirdStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_THIRD_STEP_LABEL);
       const fourthStep = template.items.find((templateItem) => templateItem.label === NO_HOMEWORK_FOURTH_STEP_LABEL);
