@@ -6137,11 +6137,11 @@ function getDateKeyDayNumber(dateKey) {
   return Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000);
 }
 
-function getHomeworkRemainingDaysLabel(dateKey) {
+function getHomeworkRemainingDaysLabel(dateKey, baseDateKey = getCurrentHomeDateKey()) {
   const dueDayNumber = getDateKeyDayNumber(dateKey);
-  const todayDayNumber = getDateKeyDayNumber(getTodayKeyJst());
-  if (dueDayNumber === null || todayDayNumber === null) return "";
-  const diffDays = dueDayNumber - todayDayNumber;
+  const baseDayNumber = getDateKeyDayNumber(baseDateKey) ?? getDateKeyDayNumber(getTodayKeyJst());
+  if (dueDayNumber === null || baseDayNumber === null) return "";
+  const diffDays = dueDayNumber - baseDayNumber;
   if (diffDays > 0) return `提出まであと${diffDays}日`;
   if (diffDays === 0) return "今日提出";
   return "提出期限超過";
