@@ -33,6 +33,9 @@ const DEFAULT_MINUTES = 30;
 const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
 const SUBMISSION_TEMPLATE_NONE = "";
+const HOMEWORK_WORK_TYPE_WITH_WORK = "with-work";
+const HOMEWORK_WORK_TYPE_NO_WORK = "no-work";
+const NO_HOMEWORK_SUBMISSION_TEMPLATE_ID = "no-homework-submission";
 const NO_HOMEWORK_FIRST_STEP_LABEL = "黒の手帳へ書いた";
 const NO_HOMEWORK_FIRST_STEP_LABEL_LEGACY = "黒の手帳へ記録した";
 const NO_HOMEWORK_SECOND_STEP_LABEL = "カバンへ入れた";
@@ -41,6 +44,16 @@ const NO_HOMEWORK_THIRD_STEP_LABEL = "提出した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL = "報告した";
 const NO_HOMEWORK_FOURTH_STEP_LABEL_LEGACY = "親へ報告した";
 const DEFAULT_SUBMISSION_TEMPLATES = [
+  {
+    id: NO_HOMEWORK_SUBMISSION_TEMPLATE_ID,
+    name: "書類提出・質問・確認（自宅での作業なし）",
+    items: [
+      { id: "no-homework-1", label: "黒の手帳へ書いた" },
+      { id: "no-homework-2", label: "カバンへ入れた" },
+      { id: "no-homework-3", label: "提出した" },
+      { id: "no-homework-4", label: "報告した" }
+    ]
+  },
   {
     id: "school-submission",
     name: "学校提出物",
@@ -295,6 +308,7 @@ function createHomeworkForm() {
     name: "",
     deadlineDate: "",
     content: "",
+    homeworkWorkType: HOMEWORK_WORK_TYPE_WITH_WORK,
     googleSync: false,
     done: false,
     submissionTemplateId: SUBMISSION_TEMPLATE_NONE
@@ -609,6 +623,10 @@ function normalizeSubmissionTemplateId(value) {
   return value;
 }
 
+function normalizeHomeworkWorkType(value) {
+  return value === HOMEWORK_WORK_TYPE_NO_WORK ? HOMEWORK_WORK_TYPE_NO_WORK : HOMEWORK_WORK_TYPE_WITH_WORK;
+}
+
 function normalizeSubmissionCheckedItemIds(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -640,7 +658,13 @@ function normalizeSubmissionTemplates(rawTemplates) {
   const normalized = base
     .map(normalizeSubmissionTemplate)
     .filter((template) => template.name);
-  if (normalized.length === 0) return createDefaultSubmissionTemplates();
+  const fallback = createDefaultSubmissionTemplates();
+  if (normalized.length === 0) return fallback;
+  const hasNoHomeworkTemplate = normalized.some((template) => template.id === NO_HOMEWORK_SUBMISSION_TEMPLATE_ID);
+  if (!hasNoHomeworkTemplate) {
+    const defaultNoHomeworkTemplate = fallback.find((template) => template.id === NO_HOMEWORK_SUBMISSION_TEMPLATE_ID);
+    if (defaultNoHomeworkTemplate) normalized.push(defaultNoHomeworkTemplate);
+  }
   return normalized;
 }
 
@@ -669,6 +693,7 @@ function normalizeHomeworkTask(item) {
     name: String(item?.name || "").trim(),
     deadlineDate: normalizeDeadlineDate(item?.deadlineDate),
     content: String(item?.content || "").trim(),
+    homeworkWorkType: normalizeHomeworkWorkType(item?.homeworkWorkType),
     googleSync: Boolean(item?.googleSync),
     done: Boolean(item?.done),
     submissionTemplateId: normalizeSubmissionTemplateId(item?.submissionTemplateId),
@@ -759,7 +784,7 @@ function loadState() {
 
     safe.phase = [
       "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
-      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
+      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
@@ -892,6 +917,7 @@ function normalizeHomeworkForm(raw) {
   base.name = String(base.name || "");
   base.deadlineDate = normalizeDeadlineDate(base.deadlineDate);
   base.content = String(base.content || "");
+  base.homeworkWorkType = normalizeHomeworkWorkType(base.homeworkWorkType);
   base.googleSync = Boolean(base.googleSync);
   base.done = Boolean(base.done);
   base.submissionTemplateId = normalizeSubmissionTemplateId(base.submissionTemplateId);
@@ -1260,6 +1286,8 @@ function render() {
       return renderRecurringEditScreen();
     case "homeworkList":
       return renderHomeworkListScreen();
+    case "homeworkWorkType":
+      return renderHomeworkWorkTypeEntryScreen();
     case "homeworkEdit":
       return renderHomeworkEditScreen();
     case "submissionTemplateList":
@@ -1426,7 +1454,7 @@ function normalizeLoadedState(rawState) {
 
   safe.phase = [
     "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
-    "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
+    "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
   safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
@@ -2888,6 +2916,7 @@ function getNoHomeworkChecklistStepsByTemplateId(templateId) {
 
 function tryAutoCompleteNoHomeworkByChecklist(targetType, target, template, checkedIds) {
   if (targetType !== "homework" || !target || !template) return;
+  if (normalizeHomeworkWorkType(target.homeworkWorkType) !== HOMEWORK_WORK_TYPE_NO_WORK) return;
   const noHomeworkSteps = getNoHomeworkChecklistStepsByTemplateId(target.submissionTemplateId);
   if (!noHomeworkSteps) return;
 
@@ -2971,7 +3000,7 @@ function getSubmissionChecklistRemainingEntries() {
     if (!template || template.items.length === 0) return;
 
     const noHomeworkSteps = getNoHomeworkChecklistStepsByTemplateId(item.submissionTemplateId);
-    const isNoHomeworkFlowTarget = Boolean(noHomeworkSteps);
+    const isNoHomeworkFlowTarget = normalizeHomeworkWorkType(item.homeworkWorkType) === HOMEWORK_WORK_TYPE_NO_WORK && Boolean(noHomeworkSteps);
     const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
 
     if (isNoHomeworkFlowTarget && !item.done) {
@@ -3101,6 +3130,7 @@ function renderSubmissionChecklistOverlay() {
 
   const checkedSet = new Set(normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds));
   const noHomeworkSteps = context.targetType === "homework"
+    && normalizeHomeworkWorkType(target.homeworkWorkType) === HOMEWORK_WORK_TYPE_NO_WORK
     ? getNoHomeworkChecklistStepsByTemplateId(target.submissionTemplateId)
     : null;
   const noHomeworkOrderedItems = noHomeworkSteps ? noHomeworkSteps.ordered : [];
@@ -3468,13 +3498,58 @@ function bindHomeworkListEvents() {
   document.getElementById("addHomeworkBtn").addEventListener("click", () => {
     state.homeworkForm = createHomeworkForm();
     saveState();
-    changePhase("homeworkEdit");
+    changePhase("homeworkWorkType");
   });
   document.getElementById("backToHomeFromHomeworkBtn").addEventListener("click", goHome);
 }
 
+function renderHomeworkWorkTypeEntryScreen() {
+  renderScreen(`
+    <h2>宿題・課題を追加</h2>
+    <div class="task-card">
+      <p>この宿題・課題には、自宅で行う作業がありますか？</p>
+      <div class="btn-row compact-stack">
+        <button id="chooseHomeworkWithWorkBtn" class="btn-main" type="button">作業あり</button>
+        <button id="chooseHomeworkNoWorkBtn" class="btn-sub" type="button">作業なし</button>
+      </div>
+    </div>
+    <div class="btn-row compact-stack">
+      <button id="backToHomeworkListFromTypeBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  document.getElementById("chooseHomeworkWithWorkBtn")?.addEventListener("click", () => {
+    state.homeworkForm = {
+      ...createHomeworkForm(),
+      homeworkWorkType: HOMEWORK_WORK_TYPE_WITH_WORK,
+      submissionTemplateId: SUBMISSION_TEMPLATE_NONE
+    };
+    saveState();
+    changePhase("homeworkEdit");
+  });
+
+  document.getElementById("chooseHomeworkNoWorkBtn")?.addEventListener("click", () => {
+    state.homeworkForm = {
+      ...createHomeworkForm(),
+      homeworkWorkType: HOMEWORK_WORK_TYPE_NO_WORK,
+      submissionTemplateId: NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
+    };
+    saveState();
+    changePhase("homeworkEdit");
+  });
+
+  document.getElementById("backToHomeworkListFromTypeBtn")?.addEventListener("click", () => {
+    changePhase("homeworkList");
+  });
+}
+
 function renderHomeworkEditScreen() {
   const editing = state.homeworkForm.mode === "edit";
+  const isNoWorkType = normalizeHomeworkWorkType(state.homeworkForm.homeworkWorkType) === HOMEWORK_WORK_TYPE_NO_WORK;
+  if (isNoWorkType && state.homeworkForm.submissionTemplateId !== NO_HOMEWORK_SUBMISSION_TEMPLATE_ID) {
+    state.homeworkForm.submissionTemplateId = NO_HOMEWORK_SUBMISSION_TEMPLATE_ID;
+    saveState();
+  }
   const selectedHomeworkTemplate = findSubmissionTemplate(state.homeworkForm.submissionTemplateId);
   const canOpenHomeworkChecklist = editing && selectedHomeworkTemplate && selectedHomeworkTemplate.items.length > 0;
   const editingHomeworkItem = editing ? state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId) : null;
@@ -3486,7 +3561,9 @@ function renderHomeworkEditScreen() {
         <div><label for="homeworkName">課題名</label><input id="homeworkName" type="text" value="${escapeHtml(state.homeworkForm.name)}" maxlength="60" placeholder="例: 理科レポート" /></div>
         <div><label for="homeworkDeadline">締切</label><input id="homeworkDeadline" type="date" value="${escapeHtml(state.homeworkForm.deadlineDate)}" /></div>
         <div><label for="homeworkContent">内容</label><input id="homeworkContent" type="text" value="${escapeHtml(state.homeworkForm.content)}" maxlength="160" placeholder="例: 実験レポートを提出" /></div>
-        <div><label for="homeworkSubmissionTemplate">提出・確認テンプレート</label><select id="homeworkSubmissionTemplate">${renderSubmissionTemplateOptions(state.homeworkForm.submissionTemplateId)}</select></div>
+        ${isNoWorkType
+      ? `<div><label>提出・確認テンプレート</label><p class="helper">書類提出・質問・確認（自宅での作業なし）</p></div>`
+      : `<div><label for="homeworkSubmissionTemplate">提出・確認テンプレート</label><select id="homeworkSubmissionTemplate">${renderSubmissionTemplateOptions(state.homeworkForm.submissionTemplateId)}</select></div>`}
         <div>
           <label>Googleカレンダー同期</label>
           <div class="option-group compact-options">
@@ -3566,6 +3643,7 @@ function loadHomeworkIntoForm(id) {
     name: item.name,
     deadlineDate: item.deadlineDate,
     content: item.content,
+    homeworkWorkType: normalizeHomeworkWorkType(item.homeworkWorkType),
     googleSync: Boolean(item.googleSync),
     done: Boolean(item.done),
     submissionTemplateId: normalizeSubmissionTemplateId(item.submissionTemplateId)
@@ -3613,9 +3691,12 @@ async function saveHomeworkItem() {
       const name = state.homeworkForm.name.trim();
       const deadlineDate = normalizeDeadlineDate(state.homeworkForm.deadlineDate);
       const content = state.homeworkForm.content.trim();
+      const homeworkWorkType = normalizeHomeworkWorkType(state.homeworkForm.homeworkWorkType);
       const googleSync = Boolean(state.homeworkForm.googleSync);
       const done = Boolean(state.homeworkForm.done);
-      const submissionTemplateId = normalizeSubmissionTemplateId(state.homeworkForm.submissionTemplateId);
+      const submissionTemplateId = homeworkWorkType === HOMEWORK_WORK_TYPE_NO_WORK
+        ? NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
+        : normalizeSubmissionTemplateId(state.homeworkForm.submissionTemplateId);
 
       if (state.homeworkForm.mode === "edit") {
         const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
@@ -3624,6 +3705,7 @@ async function saveHomeworkItem() {
         item.name = name;
         item.deadlineDate = deadlineDate;
         item.content = content;
+        item.homeworkWorkType = homeworkWorkType;
         item.googleSync = googleSync;
         item.done = done;
         item.submissionTemplateId = submissionTemplateId;
@@ -3639,6 +3721,7 @@ async function saveHomeworkItem() {
         name,
         deadlineDate,
         content,
+        homeworkWorkType,
         googleSync,
         done,
         submissionTemplateId,
