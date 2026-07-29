@@ -1869,6 +1869,8 @@ function renderHome() {
     && state.departureCheck.done
     && getReturnCheckReminderStatus() !== "none";
   const pendingHomework = isPreviousView ? [] : getSortedPendingHomeworkTasks();
+  const homeworkPending = pendingHomework.length;
+  const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const syncText = getSyncStatusText();
   if (todayLabel) {
     todayLabel.textContent = `表示日：${formatHomeDateHeading(homeContext.dateKey)}`;
@@ -1905,9 +1907,7 @@ function renderHome() {
         <p>帰宅 ${formatTimeForDisplay(homeContext.planTimes.returnHome)}</p>
         <p>勉強 ${formatTimeForDisplay(homeContext.planTimes.studyStart)}</p>
       </div>
-      <div class="home-overview-right">
-        ${renderHomeHomeworkSummary(pendingHomework)}
-      </div>
+      <div class="home-overview-right">${belongingsHtml}</div>
     </div>
     <hr class="sep" />
 
@@ -1918,10 +1918,12 @@ function renderHome() {
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openDayEndBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>1日の終了</button>
+      <button id="openHomeworkBtn" class="btn-quiet" type="button" ${isPreviousView ? "disabled" : ""}>${homeworkLabel}</button>
     </div>
 
-    ${belongingsHtml}
+    <div class="btn-row compact-stack">
+      <button id="openDayEndBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>1日の終了</button>
+    </div>
 
     <p class="home-sync-footer">同期：${escapeHtml(syncText || "-")}</p>
   `);
@@ -1992,6 +1994,7 @@ function renderHome() {
     });
 
     document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
+    document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
     document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
