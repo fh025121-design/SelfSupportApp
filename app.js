@@ -205,6 +205,34 @@ const MEDICINE_REMINDER_LAST_HOUR = 23;
 const MEDICINE_REMINDER_LAST_MINUTE = 45;
 const MEDICINE_TYPE_BLUE = "blue";
 const MEDICINE_TYPE_RED = "red";
+const HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED = "check_departure_completed";
+const HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED = "check_return_completed";
+const HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED = "medicine_blue_completed";
+const HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED = "medicine_red_completed";
+const HISTORY_EVENT_TYPE_TASK_STARTED = "task_started";
+const HISTORY_EVENT_TYPE_TASK_PAUSED = "task_paused";
+const HISTORY_EVENT_TYPE_TASK_RESUMED = "task_resumed";
+const HISTORY_EVENT_TYPE_TASK_COMPLETED = "task_completed";
+const HISTORY_EVENT_TYPES = new Set([
+  HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED,
+  HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED,
+  HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED,
+  HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED,
+  HISTORY_EVENT_TYPE_TASK_STARTED,
+  HISTORY_EVENT_TYPE_TASK_PAUSED,
+  HISTORY_EVENT_TYPE_TASK_RESUMED,
+  HISTORY_EVENT_TYPE_TASK_COMPLETED
+]);
+const HISTORY_EVENT_DISPLAYABLE_TYPES = new Set([
+  HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED,
+  HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED,
+  HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED,
+  HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED,
+  HISTORY_EVENT_TYPE_TASK_STARTED,
+  HISTORY_EVENT_TYPE_TASK_PAUSED,
+  HISTORY_EVENT_TYPE_TASK_RESUMED,
+  HISTORY_EVENT_TYPE_TASK_COMPLETED
+]);
 const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 
 const SYNC_SCHEMA_VERSION = 1;
@@ -392,7 +420,9 @@ function createDepartureCheckState() {
     activatedOnce: false,
     belongingChecked: {},
     lastAutoPromptAt: 0,
-    done: false
+    done: false,
+    completedAtMs: 0,
+    completedAtTimeLabel: ""
   };
 }
 
@@ -410,8 +440,14 @@ function createReturnCheckState() {
     reminderVisible: false,
     reminderSnoozeUntil: 0,
     reportText: "",
-    copied: false
+    copied: false,
+    completedAtMs: 0,
+    completedAtTimeLabel: ""
   };
+}
+
+function createHistoryEventsByDate() {
+  return {};
 }
 
 function createDepartureNotificationSettings() {
@@ -437,7 +473,7 @@ function createMedicineReminderState(dateKey = getTodayKeyJst()) {
   };
 }
 
-function createInitialState(dateKey, tasks = []) {
+function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
   return {
     dateKey,
     phase: "planning",
@@ -459,6 +495,7 @@ function createInitialState(dateKey, tasks = []) {
     recurringForm: createRecurringForm(),
     recurringPlansAppliedByDate: {},
     recurringSyncDateKey: null,
+    historyEventsByDate: normalizeHistoryEventsByDate(historyEventsByDate, dateKey),
     dailySpecialBelongingsByDate: {},
     planningDailyBelongingInput: "",
     homeworkTasks: [],
@@ -886,7 +923,7 @@ function loadState() {
     localBootHasValidData = true;
 
     if (parsed.dateKey !== todayKey) {
-      const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey));
+      const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
       nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
       nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
       const summary = buildPastDaySummary(parsed);
@@ -907,7 +944,7 @@ function loadState() {
     };
 
     safe.phase = [
-      "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
+      "home", "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result",
       "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
@@ -916,7 +953,7 @@ function loadState() {
     safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
-      "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
+      "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
     safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
     safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
@@ -936,6 +973,7 @@ function loadState() {
       safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey] = true;
     }
     safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
+    safe.historyEventsByDate = normalizeHistoryEventsByDate(safe.historyEventsByDate, todayKey);
     safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
     safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
     safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
@@ -945,14 +983,7 @@ function loadState() {
     safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
     safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
     safe.medicineReminder = normalizeMedicineReminderState(safe.medicineReminder, todayKey);
-    safe.returnCheck = {
-      ...createReturnCheckState(),
-      ...(safe.returnCheck || {}),
-      answers: {
-        ...createReturnCheckState().answers,
-        ...((safe.returnCheck && safe.returnCheck.answers) || {})
-      }
-    };
+    safe.returnCheck = normalizeReturnCheckState(safe.returnCheck);
     safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
     safe.previousDayPending = safe.previousDayPending || null;
     safe.dayClosed = Boolean(safe.dayClosed);
@@ -1034,6 +1065,95 @@ function normalizeMedicineReminderState(raw, fallbackDateKey = getTodayKeyJst())
   base.snoozeUntil = Number.isFinite(Number(base.snoozeUntil)) ? Math.max(0, Number(base.snoozeUntil)) : 0;
   base.forceOpen = Boolean(base.forceOpen);
   return base;
+}
+
+function normalizeHistoryEvent(raw, fallbackDateKey = getTodayKeyJst()) {
+  if (!raw || typeof raw !== "object") return null;
+  const type = String(raw.type || "");
+  if (!HISTORY_EVENT_TYPES.has(type)) return null;
+  const dateKey = normalizeTaskDateKey(raw.dateKey) || normalizeTaskDateKey(fallbackDateKey) || getTodayKeyJst();
+  const occurredAtMs = Number(raw.occurredAtMs);
+  const normalizedOccurredAtMs = Number.isFinite(occurredAtMs) && occurredAtMs > 0 ? Math.floor(occurredAtMs) : Date.now();
+  const timeLabelRaw = String(raw.timeLabel || "");
+  const timeLabel = /^\d{2}:\d{2}$/.test(timeLabelRaw)
+    ? timeLabelRaw
+    : (() => {
+      const dt = new Date(normalizedOccurredAtMs);
+      return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+    })();
+
+  return {
+    id: String(raw.id || crypto.randomUUID()),
+    dateKey,
+    occurredAtMs: normalizedOccurredAtMs,
+    timeLabel,
+    category: String(raw.category || ""),
+    type,
+    taskId: raw.taskId ? String(raw.taskId) : "",
+    taskNameSnapshot: raw.taskNameSnapshot ? String(raw.taskNameSnapshot) : ""
+  };
+}
+
+function normalizeHistoryEventsByDate(raw, fallbackDateKey = getTodayKeyJst()) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([dateKey, events]) => {
+    const normalizedDateKey = normalizeTaskDateKey(dateKey);
+    if (!normalizedDateKey || !Array.isArray(events)) return;
+    const normalizedEvents = events
+      .map((event) => normalizeHistoryEvent(event, normalizedDateKey || fallbackDateKey))
+      .filter(Boolean)
+      .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+    out[normalizedDateKey] = normalizedEvents;
+  });
+  return out;
+}
+
+function normalizeReturnCheckState(raw) {
+  const base = {
+    ...createReturnCheckState(),
+    ...(raw || {}),
+    answers: {
+      ...createReturnCheckState().answers,
+      ...((raw && raw.answers) || {})
+    }
+  };
+  base.done = Boolean(base.done);
+  base.completedAtMs = Number.isFinite(Number(base.completedAtMs)) ? Math.max(0, Number(base.completedAtMs)) : 0;
+  base.completedAtTimeLabel = base.done ? String(base.completedAtTimeLabel || "") : "";
+  return base;
+}
+
+function getCurrentHistoryDateKey() {
+  return normalizeTaskDateKey(state.dateKey) || getTodayKeyJst();
+}
+
+function appendHistoryEvent(eventInput) {
+  const dateKey = normalizeTaskDateKey(eventInput?.dateKey) || getCurrentHistoryDateKey();
+  const now = getNowInJst();
+  const timeLabel = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const type = String(eventInput?.type || "");
+  if (!HISTORY_EVENT_TYPES.has(type)) return null;
+
+  if (!state.historyEventsByDate || typeof state.historyEventsByDate !== "object" || Array.isArray(state.historyEventsByDate)) {
+    state.historyEventsByDate = {};
+  }
+  if (!Array.isArray(state.historyEventsByDate[dateKey])) {
+    state.historyEventsByDate[dateKey] = [];
+  }
+
+  const event = {
+    id: crypto.randomUUID(),
+    dateKey,
+    occurredAtMs: now.getTime(),
+    timeLabel,
+    category: String(eventInput?.category || ""),
+    type,
+    taskId: eventInput?.taskId ? String(eventInput.taskId) : "",
+    taskNameSnapshot: eventInput?.taskNameSnapshot ? String(eventInput.taskNameSnapshot) : ""
+  };
+  state.historyEventsByDate[dateKey].push(event);
+  return event;
 }
 
 function normalizeConfirmedPlan(raw) {
@@ -1428,6 +1548,8 @@ function render() {
       return renderDepartureCheck();
     case "home":
       return renderHome();
+    case "completionHistory":
+      return renderCompletionHistory();
     case "planning":
       return renderPlanning();
     case "planConfirm":
@@ -1589,6 +1711,7 @@ function hasMeaningfulState(candidate) {
   if (Array.isArray(candidate.tasks) && candidate.tasks.length > 0) return true;
   if (Array.isArray(candidate.recurringPlans) && candidate.recurringPlans.length > 0) return true;
   if (Array.isArray(candidate.homeworkTasks) && candidate.homeworkTasks.length > 0) return true;
+  if (candidate.historyEventsByDate && typeof candidate.historyEventsByDate === "object" && Object.keys(candidate.historyEventsByDate).length > 0) return true;
   if (candidate.confirmedPlan) return true;
   if (candidate.goPressedAt) return true;
   return false;
@@ -1601,7 +1724,7 @@ function normalizeLoadedState(rawState) {
 
   const parsed = rawState;
   if (parsed.dateKey !== todayKey) {
-    const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey));
+    const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
     nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
     nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
     const summary = buildPastDaySummary(parsed);
@@ -1622,7 +1745,7 @@ function normalizeLoadedState(rawState) {
   };
 
   safe.phase = [
-    "home", "planning", "planConfirm", "planReport", "execution", "review", "result",
+    "home", "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result",
     "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
@@ -1631,7 +1754,7 @@ function normalizeLoadedState(rawState) {
   safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
   safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
-    "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
+    "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
   safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
   safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
@@ -1653,6 +1776,7 @@ function normalizeLoadedState(rawState) {
     safe.recurringPlansAppliedByDate[safe.recurringSyncDateKey] = true;
   }
   safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
+  safe.historyEventsByDate = normalizeHistoryEventsByDate(safe.historyEventsByDate, todayKey);
   safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
   safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
   safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
@@ -1660,14 +1784,7 @@ function normalizeLoadedState(rawState) {
   safe.running = { ...createRunningState(), ...(safe.running || {}) };
   safe.review = { ...createReviewState(), ...(safe.review || {}) };
   safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
-  safe.returnCheck = {
-    ...createReturnCheckState(),
-    ...(safe.returnCheck || {}),
-    answers: {
-      ...createReturnCheckState().answers,
-      ...((safe.returnCheck && safe.returnCheck.answers) || {})
-    }
-  };
+  safe.returnCheck = normalizeReturnCheckState(safe.returnCheck);
   safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
   safe.previousDayPending = safe.previousDayPending || null;
   safe.dayClosed = Boolean(safe.dayClosed);
@@ -2129,7 +2246,7 @@ function renderHome() {
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openDayEndBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>1日の終了</button>
+      <button id="openCompletionHistoryBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>完了履歴を見る</button>
     </div>
 
     ${homeworkSummaryHtml}
@@ -2207,10 +2324,206 @@ function renderHome() {
     document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
     document.getElementById("openMedicineReminderBtn")?.addEventListener("click", () => openMedicineReminderOverlay(true));
     bindTextAction("openMedicineReminderCard", () => openMedicineReminderOverlay(true));
-    document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
+    document.getElementById("openCompletionHistoryBtn").addEventListener("click", () => changePhase("completionHistory", false));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
   }
+}
+
+function formatHistoryEventTime(event) {
+  const rawLabel = String(event?.timeLabel || "");
+  if (/^\d{2}:\d{2}$/.test(rawLabel)) return rawLabel;
+  const occurredAtMs = Number(event?.occurredAtMs);
+  if (Number.isFinite(occurredAtMs) && occurredAtMs > 0) {
+    const dt = new Date(occurredAtMs);
+    return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+  }
+  return "--:--";
+}
+
+function getCompletionHistoryEventLabel(event) {
+  const type = String(event?.type || "");
+  if (type === HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED) return "出発前チェック完了";
+  if (type === HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED) return "帰宅後チェック完了";
+  if (type === HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED) return "青の薬　完了";
+  if (type === HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED) return "赤の薬　完了";
+  return "";
+}
+
+function getTaskHistoryActionLabel(type) {
+  if (type === HISTORY_EVENT_TYPE_TASK_STARTED) return "開始";
+  if (type === HISTORY_EVENT_TYPE_TASK_PAUSED) return "中断";
+  if (type === HISTORY_EVENT_TYPE_TASK_RESUMED) return "再開";
+  if (type === HISTORY_EVENT_TYPE_TASK_COMPLETED) return "完了";
+  return "";
+}
+
+function isTaskHistoryEventType(type) {
+  return type === HISTORY_EVENT_TYPE_TASK_STARTED
+    || type === HISTORY_EVENT_TYPE_TASK_PAUSED
+    || type === HISTORY_EVENT_TYPE_TASK_RESUMED
+    || type === HISTORY_EVENT_TYPE_TASK_COMPLETED;
+}
+
+function getTaskHistoryGroupKey(event) {
+  const taskId = String(event?.taskId || "").trim();
+  if (taskId) return `task:${taskId}`;
+  return "";
+}
+
+function getCompletionHistoryEventsForCurrentDate() {
+  const dateKey = normalizeTaskDateKey(state.dateKey);
+  if (!dateKey) return [];
+  const raw = state.historyEventsByDate && typeof state.historyEventsByDate === "object"
+    ? state.historyEventsByDate[dateKey]
+    : [];
+  const list = Array.isArray(raw) ? raw : [];
+  return list
+    .map((event) => normalizeHistoryEvent(event, dateKey))
+    .filter((event) => event && HISTORY_EVENT_DISPLAYABLE_TYPES.has(String(event.type || "")))
+    .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+}
+
+function resolveTaskContentForHistoryEvent(event, dateKey = state.dateKey) {
+  const taskId = String(event?.taskId || "").trim();
+  if (taskId) {
+    const task = findTask(taskId);
+    const content = String(task?.content || "").trim();
+    if (content) return content;
+  }
+
+  const taskName = String(event?.taskNameSnapshot || "").trim();
+  if (!taskName) return "";
+  const tasks = getTasksForDate(dateKey);
+  const matches = tasks.filter((task) => String(task?.name || "").trim() === taskName);
+  if (matches.length !== 1) return "";
+  return String(matches[0]?.content || "").trim();
+}
+
+function buildCompletionHistoryDisplayEntries(events) {
+  const entries = [];
+  const taskBlockByKey = new Map();
+  let lastAnonymousTaskBlock = null;
+
+  events.forEach((event) => {
+    const type = String(event?.type || "");
+    const occurredAtMs = Number(event?.occurredAtMs) || 0;
+    if (!isTaskHistoryEventType(type)) {
+      entries.push({
+        kind: "single",
+        occurredAtMs,
+        timeLabel: formatHistoryEventTime(event),
+        label: getCompletionHistoryEventLabel(event)
+      });
+      return;
+    }
+
+    const key = getTaskHistoryGroupKey(event);
+    const taskName = String(event?.taskNameSnapshot || "").trim() || "（タスク）";
+    const taskContent = resolveTaskContentForHistoryEvent(event, state.dateKey);
+    let block = null;
+
+    if (key) {
+      block = taskBlockByKey.get(key);
+      if (!block) {
+        block = {
+          kind: "task",
+          occurredAtMs,
+          firstTimeLabel: formatHistoryEventTime(event),
+          taskName,
+          taskContent,
+          actions: []
+        };
+        taskBlockByKey.set(key, block);
+        entries.push(block);
+      }
+    } else if (type === HISTORY_EVENT_TYPE_TASK_STARTED) {
+      block = {
+        kind: "task",
+        occurredAtMs,
+        firstTimeLabel: formatHistoryEventTime(event),
+        taskName,
+        taskContent,
+        actions: []
+      };
+      entries.push(block);
+      lastAnonymousTaskBlock = block;
+    } else if (lastAnonymousTaskBlock) {
+      block = lastAnonymousTaskBlock;
+    } else {
+      block = {
+        kind: "task",
+        occurredAtMs,
+        firstTimeLabel: formatHistoryEventTime(event),
+        taskName,
+        taskContent,
+        actions: []
+      };
+      entries.push(block);
+      lastAnonymousTaskBlock = block;
+    }
+
+    const actionLabel = getTaskHistoryActionLabel(type);
+    if (actionLabel) {
+      block.actions.push({
+        occurredAtMs,
+        label: actionLabel,
+        timeLabel: formatHistoryEventTime(event)
+      });
+    }
+
+    if (occurredAtMs < block.occurredAtMs) {
+      block.occurredAtMs = occurredAtMs;
+      block.firstTimeLabel = formatHistoryEventTime(event);
+    }
+
+    const eventTaskName = String(event?.taskNameSnapshot || "").trim();
+    if (eventTaskName && block.taskName === "（タスク）") {
+      block.taskName = eventTaskName;
+    }
+    if (!block.taskContent) {
+      block.taskContent = taskContent;
+    }
+
+    if (!key && type === HISTORY_EVENT_TYPE_TASK_COMPLETED) {
+      lastAnonymousTaskBlock = null;
+    }
+  });
+
+  entries.forEach((entry) => {
+    if (entry.kind !== "task") return;
+    entry.actions.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+  });
+
+  entries.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+  return entries;
+}
+
+function renderCompletionHistory() {
+  const events = getCompletionHistoryEventsForCurrentDate();
+  const entries = buildCompletionHistoryDisplayEntries(events);
+  const rowsHtml = entries.length === 0
+    ? '<p class="helper">今日はまだ完了履歴がありません。</p>'
+    : `<div class="completion-history-text-list">${entries.map((entry) => {
+      if (entry.kind === "single") {
+        return `<p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.label)}</p>`;
+      }
+      const actionLines = entry.actions
+        .map((action) => `<p class="completion-history-subline">　　　${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
+        .join("");
+      const taskHead = entry.taskContent
+        ? `${entry.taskName}：${entry.taskContent}`
+        : entry.taskName;
+      return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.firstTimeLabel)}　${escapeHtml(taskHead)}</p>${actionLines}</div>`;
+    }).join("")}</div>`;
+
+  renderScreen(`
+    <h2>完了履歴</h2>
+    ${rowsHtml}
+    <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
+  `);
+
+  document.getElementById("finishTodayBtn")?.addEventListener("click", startTodayFinishFlow);
 }
 
 function renderSettings() {
@@ -2871,6 +3184,7 @@ function resetDailyStatus() {
   state.planningForm = createPlanningForm();
   state.recurringPlansAppliedByDate = {};
   state.recurringSyncDateKey = null;
+  state.historyEventsByDate = normalizeHistoryEventsByDate(state.historyEventsByDate, state.dateKey);
   delete state.dailySpecialBelongingsByDate[state.dateKey];
   state.planningDailyBelongingInput = "";
   state.running = createRunningState();
@@ -5026,7 +5340,6 @@ function renderExecution() {
     <h2>今やることを選んでください</h2>
     <div id="runArea"></div>
     <hr class="sep" />
-    <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
   `);
 
   const runArea = document.getElementById("runArea");
@@ -5109,7 +5422,6 @@ function renderExecution() {
     });
   }
 
-  document.getElementById("finishTodayBtn").addEventListener("click", startTodayFinishFlow);
 }
 
 function renderOverrunControls(elapsed) {
@@ -5605,6 +5917,12 @@ function startTask(taskId) {
     lastAlertTarget: null,
     customExtendMinutes: ""
   };
+  appendHistoryEvent({
+    category: "task",
+    type: HISTORY_EVENT_TYPE_TASK_STARTED,
+    taskId: task.id,
+    taskNameSnapshot: task.name
+  });
   saveState();
   scheduleTaskFinishNotificationForRunningTask(task);
   if (state.phase !== "execution") return changePhase("execution");
@@ -5633,6 +5951,12 @@ function interruptRunningTask() {
   state.running.baseSeconds = elapsed;
   state.running.startedAt = null;
   state.running.isPaused = true;
+  appendHistoryEvent({
+    category: "task",
+    type: HISTORY_EVENT_TYPE_TASK_PAUSED,
+    taskId: task.id,
+    taskNameSnapshot: task.name
+  });
   clearExecutionConfirmStates();
   state.running.alerting = false;
   goHome();
@@ -5645,6 +5969,12 @@ function resumePausedTask() {
   state.running.startedAt = Date.now();
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
   state.running.isPaused = false;
+  appendHistoryEvent({
+    category: "task",
+    type: HISTORY_EVENT_TYPE_TASK_RESUMED,
+    taskId: task.id,
+    taskNameSnapshot: task.name
+  });
   clearExecutionConfirmStates();
   scheduleTaskFinishNotificationForRunningTask(task);
   changePhase("execution", false);
@@ -5657,6 +5987,12 @@ function finalizeTaskCompletion() {
   cancelTaskFinishNotification(task.id);
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
+  appendHistoryEvent({
+    category: "task",
+    type: HISTORY_EVENT_TYPE_TASK_COMPLETED,
+    taskId: task.id,
+    taskNameSnapshot: task.name
+  });
   if (task.homeworkId) {
     const linkedHomework = state.homeworkTasks.find((item) => item.id === task.homeworkId);
     if (linkedHomework) {
@@ -5871,8 +6207,18 @@ function removeMedicineReminderOverlay() {
 function applyMedicineDoseStatus(type, done) {
   const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
   const target = type === MEDICINE_TYPE_RED ? reminder.red : reminder.blue;
+  const wasDone = Boolean(target.done);
   target.done = Boolean(done);
   target.doneAt = done ? getCurrentJstTimeLabel() : "";
+
+  if (!wasDone && done) {
+    appendHistoryEvent({
+      category: "check",
+      type: type === MEDICINE_TYPE_RED
+        ? HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED
+        : HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED
+    });
+  }
 
   if (isMedicineDoneAll(reminder)) {
     reminder.snoozeUntil = 0;
@@ -6153,6 +6499,12 @@ function renderReturnReport() {
   });
   document.getElementById("sentReturnBtn").addEventListener("click", () => {
     state.returnCheck.done = true;
+    const returnCompletedEvent = appendHistoryEvent({
+      category: "check",
+      type: HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED
+    });
+    state.returnCheck.completedAtMs = Number(returnCompletedEvent?.occurredAtMs || 0);
+    state.returnCheck.completedAtTimeLabel = String(returnCompletedEvent?.timeLabel || "");
     state.returnCheck.reminderVisible = false;
     state.returnCheck.reminderDeferred = false;
     state.returnCheck.reminderPromptTriggered = false;
@@ -6483,6 +6835,8 @@ function normalizeDepartureCheckState(raw) {
   base.belongingChecked = base.belongingChecked && typeof base.belongingChecked === "object" ? { ...base.belongingChecked } : {};
   base.lastAutoPromptAt = typeof base.lastAutoPromptAt === "number" ? base.lastAutoPromptAt : 0;
   base.done = Boolean(base.done) && base.remainingIndices.length === 0;
+  base.completedAtMs = Number.isFinite(Number(base.completedAtMs)) ? Math.max(0, Number(base.completedAtMs)) : 0;
+  base.completedAtTimeLabel = base.done ? String(base.completedAtTimeLabel || "") : "";
   delete base.index;
   return base;
 }
@@ -6583,6 +6937,7 @@ function areDepartureBelongingsComplete(items) {
 }
 
 function recomputeDepartureCheckCompletion(belongingsItems = null) {
+  const wasDone = Boolean(state.departureCheck.done);
   const queue = Array.isArray(state.departureCheck.remainingIndices) ? state.departureCheck.remainingIndices : [];
   const fixedDone = queue.length === 0;
   const resolvedBelongings = Array.isArray(belongingsItems)
@@ -6590,6 +6945,14 @@ function recomputeDepartureCheckCompletion(belongingsItems = null) {
     : getBelongingsSummaryForDate(state.dateKey).mergedItems;
   const belongingsDone = areDepartureBelongingsComplete(resolvedBelongings);
   state.departureCheck.done = fixedDone && belongingsDone;
+  if (!wasDone && state.departureCheck.done) {
+    const departureCompletedEvent = appendHistoryEvent({
+      category: "check",
+      type: HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED
+    });
+    state.departureCheck.completedAtMs = Number(departureCompletedEvent?.occurredAtMs || 0);
+    state.departureCheck.completedAtTimeLabel = String(departureCompletedEvent?.timeLabel || "");
+  }
   if (state.departureCheck.done) {
     state.departureCheck.lastAutoPromptAt = 0;
   }
