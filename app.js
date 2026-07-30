@@ -400,7 +400,8 @@ function createRunningState() {
     alertAtSeconds: null,
     alerting: false,
     lastAlertTarget: null,
-    customExtendMinutes: ""
+    customExtendMinutes: "",
+    activeExtendMinutes: null
   };
 }
 
@@ -3083,8 +3084,15 @@ function scheduleTaskFinishNotificationForRunningTask(task) {
   const target = Number(state.running?.alertAtSeconds);
   if (!task || !Number.isFinite(target)) return;
 
-  const baseSeconds = Math.max(0, Number(state.running?.baseSeconds || 0));
-  const remainingSeconds = Math.max(1, Math.ceil(target - baseSeconds));
+  const isActivelyRunning = Boolean(
+    state.running?.taskId === task.id
+    && state.running?.startedAt
+    && !state.running?.isPaused
+  );
+  const elapsedSeconds = isActivelyRunning
+    ? getRunningElapsedSeconds()
+    : Math.max(0, Number(state.running?.baseSeconds || 0));
+  const remainingSeconds = Math.max(1, Math.ceil(target - elapsedSeconds));
   const notifyAt = new Date(Date.now() + remainingSeconds * 1000);
   const notificationId = getTaskFinishNotificationId(task.id);
 
@@ -5351,6 +5359,7 @@ function renderExecution() {
 
     const elapsed = getRunningElapsedSeconds();
     checkOverrunNotification(elapsed);
+    const activeExtendStatusText = getActiveExtendStatusText(elapsed);
 
     runArea.innerHTML = `
       <div class="timer-box">
@@ -5359,6 +5368,7 @@ function renderExecution() {
         <p>予定時間: ${runningTask.plannedMinutes}分</p>
         <div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(runningTask.content)}</span></div>
         <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
+        <p class="helper${activeExtendStatusText ? "" : " hidden"}" id="activeExtendStatusLabel">${escapeHtml(activeExtendStatusText)}</p>
         ${renderExecutionCompleteControls()}
         ${renderOverrunControls(elapsed)}
       </div>
@@ -5371,6 +5381,7 @@ function renderExecution() {
       const label = document.getElementById("elapsedLabel");
       if (label) label.textContent = formatElapsedSmart(sec);
       checkOverrunNotification(sec);
+      updateActiveExtendStatusLabel(sec);
       saveState();
     }, 1000);
   } else if (pending.length > 0) {
@@ -5553,7 +5564,12 @@ function extendRunningTask(min) {
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
   state.running.customExtendMinutes = "";
+  state.running.activeExtendMinutes = min;
   saveState();
+  const task = getRunningTask();
+  if (task) {
+    scheduleTaskFinishNotificationForRunningTask(task);
+  }
   renderExecution();
 }
 
@@ -5565,6 +5581,7 @@ function checkOverrunNotification(elapsed) {
     console.log("[OverrunCheck] elapsed/target/last/willTrigger", elapsed, target, state.running.lastAlertTarget, willTrigger);
   }
   if (elapsed >= target && state.running.lastAlertTarget !== target) {
+    state.running.activeExtendMinutes = null;
     state.running.alerting = true;
     state.running.lastAlertTarget = target;
     console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
@@ -5915,7 +5932,8 @@ function startTask(taskId) {
     alertAtSeconds: task.plannedMinutes * 60,
     alerting: false,
     lastAlertTarget: null,
-    customExtendMinutes: ""
+    customExtendMinutes: "",
+    activeExtendMinutes: null
   };
   appendHistoryEvent({
     category: "task",
@@ -6019,6 +6037,23 @@ function formatElapsedSmart(sec) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}分${s}秒`;
+}
+
+function getActiveExtendStatusText(elapsed) {
+  const min = Number(state.running?.activeExtendMinutes);
+  const target = Number(state.running?.alertAtSeconds);
+  if (!Number.isFinite(min) || min <= 0) return "";
+  if (!Number.isFinite(target)) return "";
+  if (elapsed >= target) return "";
+  return `${Math.round(min)}分延長中`;
+}
+
+function updateActiveExtendStatusLabel(elapsed) {
+  const label = document.getElementById("activeExtendStatusLabel");
+  if (!label) return;
+  const text = getActiveExtendStatusText(elapsed);
+  label.textContent = text;
+  label.classList.toggle("hidden", !text);
 }
 
 function startTodayFinishFlow() {
