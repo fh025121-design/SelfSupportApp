@@ -6171,6 +6171,10 @@ function renderResult() {
   const totalPlanned = sumPlanned(targetTasks);
   const totalActual = sumActualMinutes(targetTasks);
   const report = buildResultReportText(targetTasks, done, deferred, discarded, unfinished, totalActual);
+  const reportDisplayTasks = targetTasks.map((task) => ({
+    ...task,
+    name: getReportedTaskName(task)
+  }));
 
   renderScreen(`
     <h3>保護者への報告文</h3>
@@ -6195,18 +6199,19 @@ function renderResult() {
 
   const list = document.getElementById("taskResultList");
   targetTasks.forEach((task) => {
+    const reportedName = getReportedTaskName(task);
     const li = document.createElement("li");
     li.className = "result-card result-card-compact";
     li.innerHTML = `
-      <p class="result-item-head">項目：${escapeHtml(task.name)}（${getTaskStatusLabel(task.status)}）</p>
-      <p class="result-item-meta">${escapeHtml(task.name)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分</p>
+      <p class="result-item-head">項目：${escapeHtml(reportedName)}（${getTaskStatusLabel(task.status)}）</p>
+      <p class="result-item-meta">${escapeHtml(reportedName)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分</p>
       <div class="task-content-row result-item-content"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content || "(未入力)")}</span></div>
       ${(task.status === "deferred" || task.status === "discarded") ? `<p class="result-item-content">メモ：${escapeHtml(task.memo || "(未入力)")}</p>` : ""}
     `;
     list.appendChild(li);
   });
 
-  document.getElementById("resultReportText").innerHTML = buildResultReportHtml(targetTasks, done.length, unfinished, totalActual);
+  document.getElementById("resultReportText").innerHTML = buildResultReportHtml(reportDisplayTasks, done.length, unfinished, totalActual);
   document.getElementById("endDayBtn").addEventListener("click", () => changePhase("dayEnd"));
 }
 
@@ -6258,7 +6263,7 @@ function buildResultReportText(targetTasks, done, deferred, discarded, unfinishe
     : "本日結果";
   const unfinishedNames = targetTasks
     .filter((task) => task.status !== "done")
-    .map((task) => task.name)
+    .map((task) => getReportedTaskName(task))
     .join("、");
   const unfinishedLine = unfinishedNames
     ? `未完了：${unfinished}件（${unfinishedNames}）`
@@ -6277,7 +6282,7 @@ function buildResultReportText(targetTasks, done, deferred, discarded, unfinishe
 
   targetTasks.forEach((task, index) => {
     const contentWrapPrefix = `\t${"　".repeat(3)}`;
-    lines.push(`${toCircledNumber(index + 1)}\t${task.name}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分`);
+    lines.push(`${toCircledNumber(index + 1)}\t${getReportedTaskName(task)}　予定 ${task.plannedMinutes}分　実績 ${secondsToMinutes(task.actualSeconds)}分`);
     const contentParts = splitReportContent(task.content || "(未入力)", 30);
     lines.push(`\t内容：${contentParts[0] || "(未入力)"}`);
     for (let i = 1; i < contentParts.length; i += 1) {
@@ -7111,6 +7116,11 @@ function getTaskStatusLabel(status) {
   if (status === "deferred") return "明日に回す";
   if (status === "discarded") return "不要になった";
   return "未完了";
+}
+
+function getReportedTaskName(task) {
+  const taskName = String(task?.name || task?.taskName || "").trim();
+  return task?.recurringPlanId ? `★${taskName}` : taskName;
 }
 
 function clearTickTimer() {
