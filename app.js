@@ -196,6 +196,15 @@ const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
 const TASK_FINISH_NOTIFICATION_ID_RANGE = 60000;
 const DEPARTURE_NOTIFICATION_ID_BASE = 80000;
 const DEPARTURE_NOTIFICATION_ID_RANGE = 60000;
+const MEDICINE_REMINDER_NOTIFICATION_ID_BASE = 140000;
+const MEDICINE_REMINDER_NOTIFICATION_ID_RANGE = 30000;
+const MEDICINE_REMINDER_FIRST_HOUR = 18;
+const MEDICINE_REMINDER_FIRST_MINUTE = 0;
+const MEDICINE_REMINDER_INTERVAL_MINUTES = 15;
+const MEDICINE_REMINDER_LAST_HOUR = 23;
+const MEDICINE_REMINDER_LAST_MINUTE = 45;
+const MEDICINE_TYPE_BLUE = "blue";
+const MEDICINE_TYPE_RED = "red";
 const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 
 const SYNC_SCHEMA_VERSION = 1;
@@ -205,12 +214,15 @@ const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname)
 let localNotificationTestMessage = "";
 let localNotificationsPluginRef = null;
 let planningRecurringPickerOpen = false;
+let localNotificationListenerRegistered = false;
 
 const state = loadState();
 setupInputGuard();
 initializeLocalNotificationTrial();
+setupLocalNotificationActionListener();
 restorePendingTaskFinishNotification();
 restorePendingDepartureNotification();
+requestMedicineReminderNotificationRefresh();
 render();
 
 window.addEventListener("online", () => {
@@ -408,6 +420,23 @@ function createDepartureNotificationSettings() {
   };
 }
 
+function createMedicineDoseState() {
+  return {
+    done: false,
+    doneAt: ""
+  };
+}
+
+function createMedicineReminderState(dateKey = getTodayKeyJst()) {
+  return {
+    dateKey: normalizeTaskDateKey(dateKey) || getTodayKeyJst(),
+    blue: createMedicineDoseState(),
+    red: createMedicineDoseState(),
+    snoozeUntil: 0,
+    forceOpen: false
+  };
+}
+
 function createInitialState(dateKey, tasks = []) {
   return {
     dateKey,
@@ -439,6 +468,7 @@ function createInitialState(dateKey, tasks = []) {
     review: createReviewState(),
     departureCheck: createDepartureCheckState(),
     departureNotification: createDepartureNotificationSettings(),
+    medicineReminder: createMedicineReminderState(dateKey),
     returnCheck: createReturnCheckState(),
     goPressedAt: null,
     dayClosed: false,
@@ -913,6 +943,8 @@ function loadState() {
     safe.running = { ...createRunningState(), ...(safe.running || {}) };
     safe.review = { ...createReviewState(), ...(safe.review || {}) };
     safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
+    safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
+    safe.medicineReminder = normalizeMedicineReminderState(safe.medicineReminder, todayKey);
     safe.returnCheck = {
       ...createReturnCheckState(),
       ...(safe.returnCheck || {}),
@@ -975,6 +1007,32 @@ function normalizePlanningForm(raw) {
   delete base.deadlineType;
   delete base.deadlineDate;
   delete base.googleSync;
+  return base;
+}
+
+function normalizeMedicineDoseState(raw) {
+  const base = { ...createMedicineDoseState(), ...(raw || {}) };
+  base.done = Boolean(base.done);
+  base.doneAt = base.done ? String(base.doneAt || "") : "";
+  return base;
+}
+
+function normalizeMedicineReminderState(raw, fallbackDateKey = getTodayKeyJst()) {
+  const fallback = createMedicineReminderState(fallbackDateKey);
+  const base = { ...fallback, ...(raw || {}) };
+  const fallbackKey = normalizeTaskDateKey(fallbackDateKey) || fallback.dateKey;
+  const dateKey = normalizeTaskDateKey(base.dateKey) || fallbackKey;
+
+  // Safety reset: if persisted data belongs to another day, start fresh for today.
+  if (dateKey !== fallbackKey) {
+    return createMedicineReminderState(fallbackKey);
+  }
+
+  base.dateKey = dateKey;
+  base.blue = normalizeMedicineDoseState(base.blue);
+  base.red = normalizeMedicineDoseState(base.red);
+  base.snoozeUntil = Number.isFinite(Number(base.snoozeUntil)) ? Math.max(0, Number(base.snoozeUntil)) : 0;
+  base.forceOpen = Boolean(base.forceOpen);
   return base;
 }
 
@@ -1291,6 +1349,7 @@ function applyRemoteStateKeepingCurrentPhase(rawState) {
   state.phase = currentPhase;
   saveState({ skipRemote: true });
   isApplyingRemoteState = false;
+  requestMedicineReminderNotificationRefresh();
 }
 
 function flushDeferredUiUpdates() {
@@ -1414,6 +1473,7 @@ function renderAuthSyncing() {
     </div>
   `;
   removeReturnCheckReminderOverlay();
+  removeMedicineReminderOverlay();
 }
 
 function renderAuthChecking() {
@@ -1424,6 +1484,7 @@ function renderAuthChecking() {
     </div>
   `;
   removeReturnCheckReminderOverlay();
+  removeMedicineReminderOverlay();
 }
 
 function renderLogin() {
@@ -1448,6 +1509,7 @@ function renderLogin() {
   `;
 
   removeReturnCheckReminderOverlay();
+  removeMedicineReminderOverlay();
 
   const emailEl = document.getElementById("loginEmail");
   const passEl = document.getElementById("loginPassword");
@@ -1582,6 +1644,7 @@ function normalizeLoadedState(rawState) {
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
   safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
+  safe.medicineReminder = normalizeMedicineReminderState(safe.medicineReminder, todayKey);
   safe.recurringPlansAppliedByDate = {
     ...normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate),
     ...collectAppliedRecurringDatesFromTasks(safe.tasks)
@@ -2014,6 +2077,7 @@ function renderHome() {
   const homeworkPending = pendingHomework.length;
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const homeworkSummaryHtml = renderHomeHomeworkSummary(pendingHomework);
+  const medicineSummaryHtml = isPreviousView ? "" : renderHomeMedicineSummary();
   const syncText = getSyncStatusText();
   if (todayLabel) {
     todayLabel.textContent = `表示日：${formatHomeDateHeading(homeContext.dateKey)}`;
@@ -2069,6 +2133,7 @@ function renderHome() {
     </div>
 
     ${homeworkSummaryHtml}
+    ${medicineSummaryHtml}
 
     <p class="home-sync-footer">同期：${escapeHtml(syncText || "-")}</p>
   `);
@@ -2140,6 +2205,8 @@ function renderHome() {
 
     document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
     document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
+    document.getElementById("openMedicineReminderBtn")?.addEventListener("click", () => openMedicineReminderOverlay(true));
+    bindTextAction("openMedicineReminderCard", () => openMedicineReminderOverlay(true));
     document.getElementById("openDayEndBtn").addEventListener("click", () => changePhase("dayEnd"));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
@@ -2425,6 +2492,180 @@ async function cancelLocalNotificationsByIds(notificationIds) {
   }
 }
 
+function getMedicineNotificationId(dateKey, slotIndex) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey) || state.dateKey;
+  const normalizedSlotIndex = Math.max(0, Number(slotIndex) || 0);
+  const hashed = hashStringToPositiveInt(`${normalizedDateKey}::medicine::${normalizedSlotIndex}`) % MEDICINE_REMINDER_NOTIFICATION_ID_RANGE;
+  return MEDICINE_REMINDER_NOTIFICATION_ID_BASE + hashed;
+}
+
+function getMedicineNotificationIdsForDate(dateKey) {
+  const ids = [];
+  let slotIndex = 0;
+  for (let hour = MEDICINE_REMINDER_FIRST_HOUR; hour <= MEDICINE_REMINDER_LAST_HOUR; hour += 1) {
+    const minStart = hour === MEDICINE_REMINDER_FIRST_HOUR ? MEDICINE_REMINDER_FIRST_MINUTE : 0;
+    const minEnd = hour === MEDICINE_REMINDER_LAST_HOUR ? MEDICINE_REMINDER_LAST_MINUTE : 59;
+    for (let minute = minStart; minute <= minEnd; minute += MEDICINE_REMINDER_INTERVAL_MINUTES) {
+      ids.push(getMedicineNotificationId(dateKey, slotIndex));
+      slotIndex += 1;
+    }
+  }
+  return ids;
+}
+
+function getDateTimeByDateKeyAndTime(dateKey, hour, minute) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(hour), Number(minute), 0, 0);
+}
+
+function getMedicineReminderStartAt(dateKey = state.dateKey) {
+  return getDateTimeByDateKeyAndTime(dateKey, MEDICINE_REMINDER_FIRST_HOUR, MEDICINE_REMINDER_FIRST_MINUTE);
+}
+
+function getMedicineReminderEndAt(dateKey = state.dateKey) {
+  return getDateTimeByDateKeyAndTime(dateKey, MEDICINE_REMINDER_LAST_HOUR, MEDICINE_REMINDER_LAST_MINUTE);
+}
+
+function isMedicineDoneAll(reminder = state.medicineReminder) {
+  return Boolean(reminder?.blue?.done && reminder?.red?.done);
+}
+
+function getIncompleteMedicineLabels(reminder = state.medicineReminder) {
+  const labels = [];
+  if (!reminder?.blue?.done) labels.push("青の薬");
+  if (!reminder?.red?.done) labels.push("赤の薬");
+  return labels;
+}
+
+function buildMedicineReminderNotificationBody(reminder = state.medicineReminder) {
+  const labels = getIncompleteMedicineLabels(reminder);
+  if (labels.length === 0) return "今日の薬は記録済みです。";
+  return `${labels.join("・")}を飲んで記録してください`;
+}
+
+function getNextMedicineReminderSlotAt(baseMs, dateKey = state.dateKey) {
+  const startAt = getMedicineReminderStartAt(dateKey);
+  const endAt = getMedicineReminderEndAt(dateKey);
+  if (!startAt || !endAt) return null;
+
+  const base = Math.max(Number(baseMs) || 0, startAt.getTime());
+  if (base > endAt.getTime()) return null;
+
+  const intervalMs = MEDICINE_REMINDER_INTERVAL_MINUTES * 60 * 1000;
+  const elapsedMs = Math.max(0, base - startAt.getTime());
+  const slotOffset = Math.ceil(elapsedMs / intervalMs) * intervalMs;
+  const slotAt = new Date(startAt.getTime() + slotOffset);
+  if (slotAt.getTime() > endAt.getTime()) return null;
+  return slotAt;
+}
+
+async function refreshMedicineReminderNotifications() {
+  const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  state.medicineReminder = reminder;
+
+  const notificationIds = getMedicineNotificationIdsForDate(reminder.dateKey);
+  await cancelLocalNotificationsByIds(notificationIds);
+
+  if (isMedicineDoneAll(reminder)) return { ok: true, reason: "done" };
+
+  const nowMs = getNowInJst().getTime();
+  const startAt = getMedicineReminderStartAt(reminder.dateKey);
+  const endAt = getMedicineReminderEndAt(reminder.dateKey);
+  if (!startAt || !endAt) return { ok: false, reason: "invalid-date" };
+
+  let firstAt = null;
+  if (reminder.snoozeUntil > nowMs) {
+    firstAt = new Date(reminder.snoozeUntil);
+  } else {
+    firstAt = getNextMedicineReminderSlotAt(nowMs, reminder.dateKey);
+  }
+
+  if (!firstAt || firstAt.getTime() > endAt.getTime()) return { ok: true, reason: "outside-window" };
+
+  const schedules = [];
+  schedules.push(firstAt);
+  const intervalMs = MEDICINE_REMINDER_INTERVAL_MINUTES * 60 * 1000;
+  for (let t = firstAt.getTime() + intervalMs; t <= endAt.getTime(); t += intervalMs) {
+    schedules.push(new Date(t));
+  }
+
+  const uniqueTimes = [];
+  const seen = new Set();
+  schedules.forEach((dt) => {
+    const key = dt.getTime();
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniqueTimes.push(dt);
+  });
+
+  for (let i = 0; i < uniqueTimes.length; i += 1) {
+    const notifyAt = uniqueTimes[i];
+    const result = await scheduleLocalNotification({
+      id: getMedicineNotificationId(reminder.dateKey, i),
+      title: "薬の時間です",
+      body: buildMedicineReminderNotificationBody(reminder),
+      notifyAt,
+      channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+      extra: {
+        source: "medicine-reminder",
+        dateKey: reminder.dateKey
+      }
+    });
+    if (!result.ok && result.reason !== "unsupported") {
+      return result;
+    }
+  }
+
+  return { ok: true };
+}
+
+function shouldShowMedicineReminderOverlayNow() {
+  const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  if (isMedicineDoneAll(reminder)) return Boolean(reminder.forceOpen);
+
+  const nowMs = getNowInJst().getTime();
+  if (reminder.forceOpen) return true;
+  if (reminder.snoozeUntil > nowMs) return false;
+
+  const startAt = getMedicineReminderStartAt(reminder.dateKey);
+  if (!startAt) return false;
+  return nowMs >= startAt.getTime();
+}
+
+function openMedicineReminderOverlay(forceOpen = true) {
+  state.medicineReminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  state.medicineReminder.forceOpen = Boolean(forceOpen);
+  saveState();
+  render();
+}
+
+function closeMedicineReminderOverlay() {
+  state.medicineReminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  state.medicineReminder.forceOpen = false;
+  saveState();
+  render();
+}
+
+function setupLocalNotificationActionListener() {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.addListener || localNotificationListenerRegistered) return;
+
+  localNotificationListenerRegistered = true;
+  plugin.addListener("localNotificationActionPerformed", (event) => {
+    const source = String(event?.notification?.extra?.source || "");
+    if (source !== "medicine-reminder") return;
+    openMedicineReminderOverlay(true);
+  });
+}
+
+function requestMedicineReminderNotificationRefresh() {
+  void refreshMedicineReminderNotifications().catch((error) => {
+    console.error("[MedicineReminder] Failed to refresh notifications", error);
+  });
+}
+
 async function scheduleLocalNotification({ id, title, body, notifyAt, channelId, extra }) {
   const bridge = getCapacitorBridge();
   const plugin = getLocalNotificationsPlugin();
@@ -2636,6 +2877,7 @@ function resetDailyStatus() {
   state.review = createReviewState();
   state.departureCheck = createDepartureCheckState();
   state.returnCheck = createReturnCheckState();
+  state.medicineReminder = createMedicineReminderState(state.dateKey);
   state.confirmedPlan = null;
   state.goPressedAt = null;
   state.dayClosed = false;
@@ -2647,6 +2889,7 @@ function resetDailyStatus() {
   state.lastResultReportText = "";
   state.phase = "home";
   saveState();
+  requestMedicineReminderNotificationRefresh();
   render();
 }
 
@@ -5614,6 +5857,122 @@ function syncReturnCheckReminderState() {
   return changed;
 }
 
+function getCurrentJstTimeLabel() {
+  const now = getNowInJst();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function removeMedicineReminderOverlay() {
+  document.getElementById("medicineReminderOverlay")?.remove();
+}
+
+function applyMedicineDoseStatus(type, done) {
+  const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  const target = type === MEDICINE_TYPE_RED ? reminder.red : reminder.blue;
+  target.done = Boolean(done);
+  target.doneAt = done ? getCurrentJstTimeLabel() : "";
+
+  if (isMedicineDoneAll(reminder)) {
+    reminder.snoozeUntil = 0;
+    reminder.forceOpen = true;
+  }
+
+  state.medicineReminder = reminder;
+  saveState();
+  requestMedicineReminderNotificationRefresh();
+  render();
+}
+
+function snoozeMedicineReminder() {
+  const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  reminder.snoozeUntil = getNowInJst().getTime() + (15 * 60 * 1000);
+  reminder.forceOpen = false;
+  state.medicineReminder = reminder;
+  saveState();
+  requestMedicineReminderNotificationRefresh();
+  render();
+}
+
+function renderMedicineReminderOverlay() {
+  const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  state.medicineReminder = reminder;
+
+  if (!shouldShowMedicineReminderOverlayNow()) {
+    removeMedicineReminderOverlay();
+    return;
+  }
+
+  const allDone = isMedicineDoneAll(reminder);
+  const existing = document.getElementById("medicineReminderOverlay");
+  const overlay = existing || document.createElement("div");
+  overlay.id = "medicineReminderOverlay";
+  overlay.className = "app-modal-overlay medicine-overlay";
+
+  overlay.innerHTML = `
+    <div class="app-modal medicine-modal" role="dialog" aria-modal="true" aria-labelledby="medicineReminderTitle">
+      <h3 id="medicineReminderTitle">💊 薬を飲みましたか？</h3>
+      <p class="medicine-modal-sub">毎日18:00から確認します。両方完了するまで15分おきにお知らせします。</p>
+      <div class="medicine-dose-grid">
+        <div class="medicine-dose-card medicine-dose-blue">
+          <p class="medicine-dose-title">青の薬</p>
+          <p class="medicine-dose-status">${reminder.blue.done ? `完了（${escapeHtml(reminder.blue.doneAt || "時刻なし")}）` : "未完了"}</p>
+          <div class="btn-row compact-stack">
+            ${reminder.blue.done
+    ? '<button class="btn-quiet medicine-action-btn" type="button" data-medicine-undo="blue">取り消し</button>'
+    : '<button class="btn-main medicine-action-btn" type="button" data-medicine-done="blue">飲んだ</button>'}
+          </div>
+        </div>
+        <div class="medicine-dose-card medicine-dose-red">
+          <p class="medicine-dose-title">赤の薬</p>
+          <p class="medicine-dose-status">${reminder.red.done ? `完了（${escapeHtml(reminder.red.doneAt || "時刻なし")}）` : "未完了"}</p>
+          <div class="btn-row compact-stack">
+            ${reminder.red.done
+    ? '<button class="btn-quiet medicine-action-btn" type="button" data-medicine-undo="red">取り消し</button>'
+    : '<button class="btn-main medicine-action-btn" type="button" data-medicine-done="red">飲んだ</button>'}
+          </div>
+        </div>
+      </div>
+      <div class="btn-row split compact-stack app-modal-actions medicine-modal-actions">
+        <button id="medicineSnoozeBtn" class="btn-sub" type="button" ${allDone ? "disabled" : ""}>15分後</button>
+        <button id="closeMedicineReminderBtn" class="btn-main" type="button" ${allDone ? "" : "disabled"}>閉じる</button>
+      </div>
+      <p class="helper medicine-footer">${allDone ? "今日の薬はすべて完了しました。" : "未完了の薬があるため、この画面は閉じられません。"}</p>
+    </div>
+  `;
+
+  if (!existing) {
+    document.body.appendChild(overlay);
+  }
+
+  overlay.querySelectorAll("button[data-medicine-done]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const type = String(btn.getAttribute("data-medicine-done") || "");
+      if (type !== MEDICINE_TYPE_BLUE && type !== MEDICINE_TYPE_RED) return;
+      applyMedicineDoseStatus(type, true);
+    });
+  });
+
+  overlay.querySelectorAll("button[data-medicine-undo]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const type = String(btn.getAttribute("data-medicine-undo") || "");
+      if (type !== MEDICINE_TYPE_BLUE && type !== MEDICINE_TYPE_RED) return;
+      applyMedicineDoseStatus(type, false);
+    });
+  });
+
+  document.getElementById("medicineSnoozeBtn")?.addEventListener("click", () => {
+    if (allDone) return;
+    snoozeMedicineReminder();
+  });
+
+  document.getElementById("closeMedicineReminderBtn")?.addEventListener("click", () => {
+    if (!isMedicineDoneAll(state.medicineReminder)) return;
+    closeMedicineReminderOverlay();
+  });
+}
+
 function removeReturnCheckReminderOverlay() {
   document.getElementById("returnCheckReminderOverlay")?.remove();
 }
@@ -6315,6 +6674,7 @@ function renderScreen(content) {
   bindTopNav();
   renderReturnCheckReminderOverlay();
   renderSubmissionChecklistOverlay();
+  renderMedicineReminderOverlay();
 }
 
 function renderTopNav() {
@@ -6500,6 +6860,30 @@ function renderHomeHomeworkSummary(pendingHomework) {
     <div class="summary home-homework-summary">
       <p>宿題・課題</p>
       ${itemsHtml}
+    </div>
+  `;
+}
+
+function formatMedicineDoseSummaryRow(label, dose) {
+  if (dose?.done && dose?.doneAt) return `${label}：完了（${dose.doneAt}）`;
+  if (dose?.done) return `${label}：完了`;
+  return `${label}：未完了`;
+}
+
+function renderHomeMedicineSummary() {
+  const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+  const allDone = isMedicineDoneAll(reminder);
+  const statusLabel = allDone ? "今日は完了" : "未完了";
+  const cardRoleAttr = allDone
+    ? ""
+    : 'role="button" tabindex="0" id="openMedicineReminderCard" aria-label="今日の薬確認を開く"';
+  return `
+    <div class="summary home-medicine-summary ${allDone ? "is-done" : "is-pending"}" ${cardRoleAttr}>
+      <p class="home-medicine-title">💊 今日の薬（18:00開始）</p>
+      <p class="home-medicine-status">${escapeHtml(statusLabel)}</p>
+      <p class="home-medicine-line">${escapeHtml(formatMedicineDoseSummaryRow("青の薬", reminder.blue))}</p>
+      <p class="home-medicine-line">${escapeHtml(formatMedicineDoseSummaryRow("赤の薬", reminder.red))}</p>
+      ${allDone ? "" : `<div class="btn-row compact-stack"><button id="openMedicineReminderBtn" class="btn-sub" type="button">確認する</button></div>`}
     </div>
   `;
 }
@@ -6745,6 +7129,7 @@ function ensurePhaseRefreshTimer() {
       saveState();
     }
     renderReturnCheckReminderOverlay();
+    renderMedicineReminderOverlay();
     if (state.phase === "execution" && state.running.taskId && !state.running.isPaused) return;
     requestPassiveRender();
   }, 10000);
