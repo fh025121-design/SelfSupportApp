@@ -2198,7 +2198,10 @@ function renderHome() {
   }
   const homeContext = getHomeDisplayContext();
   const isPreviousView = homeContext.isPreviousView;
-  const canExecuteDisplayedTasks = !isPreviousView && canExecuteTasksForDate(homeContext.dateKey);
+  const homeActionAvailability = getHomeActionAvailability();
+  const canExecuteDisplayedTasks = homeActionAvailability.canOpenExecution;
+  const canOpenHomework = homeActionAvailability.canOpenHomework;
+  const canOpenCompletionHistory = homeActionAvailability.canOpenCompletionHistory;
   const showDepartureCheckHomeButton = !isPreviousView && hasPendingDepartureCheck();
   const departureReminder = showDepartureCheckHomeButton ? getDepartureReminderForHome() : null;
   const showReturnCheckHomeButton = !isPreviousView
@@ -2269,11 +2272,11 @@ function renderHome() {
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openHomeworkBtn" class="btn-quiet" type="button" ${isPreviousView ? "disabled" : ""}>${homeworkLabel}</button>
+      <button id="openHomeworkBtn" class="btn-quiet" type="button" ${canOpenHomework ? "" : "disabled"}>${homeworkLabel}</button>
     </div>
 
     <div class="btn-row compact-stack">
-      <button id="openCompletionHistoryBtn" class="btn-danger" type="button" ${isPreviousView ? "disabled" : ""}>完了履歴を見る</button>
+      <button id="openCompletionHistoryBtn" class="btn-danger" type="button" ${canOpenCompletionHistory ? "" : "disabled"}>完了履歴を見る</button>
     </div>
 
     ${homeworkSummaryHtml}
@@ -2347,16 +2350,23 @@ function renderHome() {
       render();
     });
 
-    document.getElementById("openExecutionBtn").addEventListener("click", () => changePhase("execution", false));
-    document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
+    if (canExecuteDisplayedTasks) {
+      document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("execution", false));
+    }
+    if (canOpenHomework) {
+      document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
+    }
     document.getElementById("openMedicineReminderBtn")?.addEventListener("click", () => openMedicineReminderOverlay(true));
     bindTextAction("openMedicineReminderCard", () => openMedicineReminderOverlay(true));
-    document.getElementById("openCompletionHistoryBtn").addEventListener("click", () => changePhase("completionHistory", false));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
     document.getElementById("homeReminderCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
     document.getElementById("homeReminderInterruptBtn")?.addEventListener("click", interruptRunningTask);
     document.getElementById("homeReminderContinueBtn")?.addEventListener("click", continueRunningTaskAfterReminder);
+  }
+
+  if (canOpenCompletionHistory) {
+    document.getElementById("openCompletionHistoryBtn")?.addEventListener("click", () => changePhase("completionHistory", false));
   }
 }
 
@@ -2402,7 +2412,7 @@ function getTaskHistoryGroupKey(event) {
 }
 
 function getCompletionHistoryEventsForCurrentDate() {
-  const dateKey = normalizeTaskDateKey(state.dateKey);
+  const dateKey = getCompletionHistoryTargetDateKey();
   if (!dateKey) return [];
   const raw = state.historyEventsByDate && typeof state.historyEventsByDate === "object"
     ? state.historyEventsByDate[dateKey]
@@ -2414,7 +2424,7 @@ function getCompletionHistoryEventsForCurrentDate() {
     .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
 }
 
-function resolveTaskContentForHistoryEvent(event, dateKey = state.dateKey) {
+function resolveTaskContentForHistoryEvent(event, dateKey = getCompletionHistoryTargetDateKey()) {
   const taskId = String(event?.taskId || "").trim();
   if (taskId) {
     const task = findTask(taskId);
@@ -2431,6 +2441,7 @@ function resolveTaskContentForHistoryEvent(event, dateKey = state.dateKey) {
 }
 
 function buildCompletionHistoryDisplayEntries(events) {
+  const historyDateKey = getCompletionHistoryTargetDateKey();
   const entries = [];
   const taskBlockByKey = new Map();
   let lastAnonymousTaskBlock = null;
@@ -2450,7 +2461,7 @@ function buildCompletionHistoryDisplayEntries(events) {
 
     const key = getTaskHistoryGroupKey(event);
     const taskName = String(event?.taskNameSnapshot || "").trim() || "（タスク）";
-    const taskContent = resolveTaskContentForHistoryEvent(event, state.dateKey);
+    const taskContent = resolveTaskContentForHistoryEvent(event, historyDateKey);
     let block = null;
 
     if (key) {
@@ -4609,6 +4620,79 @@ function getCurrentHomeDateKey() {
   return state.dayClosed ? addDaysToDateKey(state.dateKey, 1) : state.dateKey;
 }
 
+function getDisplayedHomeDateKey() {
+  const archive = normalizePreviousDayArchive(state.previousDayArchive);
+  if (state.homeViewMode === "previous" && archive) {
+    return normalizeTaskDateKey(archive.dateKey);
+  }
+  return normalizeTaskDateKey(getCurrentHomeDateKey());
+}
+
+function isTodayTaskFlowClosed(displayDateKey) {
+  const normalizedDisplayDateKey = normalizeTaskDateKey(displayDateKey);
+  const todayKey = getTodayKeyJst();
+  if (!normalizedDisplayDateKey || normalizedDisplayDateKey !== todayKey) return false;
+  if (state.dayClosed) return true;
+  const tasks = getTasksForDate(todayKey);
+  if (tasks.length === 0) return false;
+  return tasks.every((task) => task.status === "done");
+}
+
+function getHomeActionAvailability() {
+  const displayDateKey = getDisplayedHomeDateKey();
+  const todayKey = getTodayKeyJst();
+  const displayDayNumber = getDateKeyDayNumber(displayDateKey);
+  const todayDayNumber = getDateKeyDayNumber(todayKey);
+  const isPreviousView = state.homeViewMode === "previous";
+  const isTodayView = displayDateKey === todayKey;
+  const isFutureView = Number.isFinite(displayDayNumber)
+    && Number.isFinite(todayDayNumber)
+    && displayDayNumber > todayDayNumber;
+  const isPastView = Number.isFinite(displayDayNumber)
+    && Number.isFinite(todayDayNumber)
+    && displayDayNumber < todayDayNumber;
+  const todayTaskFlowClosed = isTodayTaskFlowClosed(displayDateKey);
+
+  if (isPreviousView || isPastView) {
+    return {
+      displayDateKey,
+      canOpenExecution: false,
+      canOpenHomework: false,
+      canOpenCompletionHistory: true
+    };
+  }
+
+  if (isFutureView) {
+    return {
+      displayDateKey,
+      canOpenExecution: false,
+      canOpenHomework: true,
+      canOpenCompletionHistory: false
+    };
+  }
+
+  if (isTodayView) {
+    return {
+      displayDateKey,
+      canOpenExecution: !todayTaskFlowClosed,
+      canOpenHomework: !todayTaskFlowClosed,
+      canOpenCompletionHistory: true
+    };
+  }
+
+  return {
+    displayDateKey,
+    canOpenExecution: false,
+    canOpenHomework: false,
+    canOpenCompletionHistory: false
+  };
+}
+
+function getCompletionHistoryTargetDateKey() {
+  const availability = getHomeActionAvailability();
+  return normalizeTaskDateKey(availability.displayDateKey) || normalizeTaskDateKey(state.dateKey) || getTodayKeyJst();
+}
+
 function getPlanningVisibleTasks() {
   return getTasksForDate(getPlanningTargetDateKey());
 }
@@ -4624,7 +4708,7 @@ function canExecuteTasksForDate(dateKey) {
 }
 
 function canExecuteCurrentHomeTasks() {
-  return canExecuteTasksForDate(getCurrentHomeDateKey());
+  return getHomeActionAvailability().canOpenExecution;
 }
 
 function getHomeDisplayContext() {
@@ -7149,6 +7233,12 @@ function goBack() {
 }
 
 function changePhase(next, pushHistory = true) {
+  if (next === "execution" || next === "homeworkList" || next === "completionHistory") {
+    const availability = getHomeActionAvailability();
+    if (next === "execution" && !availability.canOpenExecution) return;
+    if (next === "homeworkList" && !availability.canOpenHomework) return;
+    if (next === "completionHistory" && !availability.canOpenCompletionHistory) return;
+  }
   if (pushHistory && state.phase !== next) state.navHistory.push(state.phase);
   if (state.phase !== next && next === "execution") {
     state.executionTaskListExpanded = false;
