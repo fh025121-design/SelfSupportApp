@@ -1061,6 +1061,33 @@ button:disabled {
   margin: 10px 0;
 }
 
+.elapsed-status-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 0;
+  margin: 10px 0;
+}
+
+.elapsed-status-row .elapsed {
+  margin: 0;
+}
+
+.active-extend-status {
+  display: inline-block;
+  margin-left: 1cm;
+  color: #c1121f;
+  font-size: 1.06rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.planned-time-row {
+  display: flex;
+  align-items: baseline;
+  margin: 8px 0;
+}
+
 .sep {
   border: none;
   border-top: 2px dashed var(--line);

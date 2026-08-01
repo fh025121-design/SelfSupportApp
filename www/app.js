@@ -5377,10 +5377,11 @@ function renderExecution() {
       <div class="timer-box">
         <p class="helper">実行中</p>
         <h3>${escapeHtml(runningTask.name)}</h3>
-        <p>予定時間: ${runningTask.plannedMinutes}分</p>
+        <p class="planned-time-row">予定時間: ${runningTask.plannedMinutes}分<span class="active-extend-status${activeExtendStatusText ? "" : " hidden"}" id="activeExtendStatusLabel">${escapeHtml(activeExtendStatusText)}</span></p>
         <div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(runningTask.content)}</span></div>
-        <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
-        <p class="helper${activeExtendStatusText ? "" : " hidden"}" id="activeExtendStatusLabel">${escapeHtml(activeExtendStatusText)}</p>
+        <div class="elapsed-status-row">
+          <p class="elapsed" id="elapsedLabel">${formatExecutionElapsedLabel(runningTask, elapsed)}</p>
+        </div>
         ${renderExecutionCompleteControls()}
         ${renderOverrunControls(elapsed)}
       </div>
@@ -5391,7 +5392,7 @@ function renderExecution() {
     tickTimer = setInterval(() => {
       const sec = getRunningElapsedSeconds();
       const label = document.getElementById("elapsedLabel");
-      if (label) label.textContent = formatElapsedSmart(sec);
+      if (label) label.textContent = formatExecutionElapsedLabel(runningTask, sec);
       checkOverrunNotification(sec);
       updateActiveExtendStatusLabel(sec);
       saveState();
@@ -6049,6 +6050,19 @@ function formatElapsedSmart(sec) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}分${s}秒`;
+}
+
+function formatExecutionElapsedLabel(task, elapsedSeconds) {
+  const elapsed = Math.max(0, Number(elapsedSeconds) || 0);
+  const isExtendActive = Number(state.running?.activeExtendMinutes) > 0;
+  if (!isExtendActive) return formatElapsedSmart(elapsed);
+
+  const plannedMinutes = sanitizeMinutes(task?.plannedMinutes || DEFAULT_MINUTES);
+  const plannedSeconds = plannedMinutes * 60;
+  const overSeconds = Math.max(0, elapsed - plannedSeconds);
+  const overMinutes = Math.floor(overSeconds / 60);
+  const overRemainderSeconds = overSeconds % 60;
+  return `${plannedMinutes}分＋${overMinutes}分${overRemainderSeconds}秒`;
 }
 
 function getActiveExtendStatusText(elapsed) {
