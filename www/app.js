@@ -395,13 +395,9 @@ function createRunningState() {
     baseSeconds: 0,
     isPaused: false,
     confirmingComplete: false,
-    confirmingExtendSource: "",
-    confirmingExtendMinutes: null,
     alertAtSeconds: null,
     alerting: false,
-    lastAlertTarget: null,
-    customExtendMinutes: "",
-    activeExtendMinutes: null
+    lastAlertTarget: null
   };
 }
 
@@ -2196,6 +2192,10 @@ function renderPreviousDayEnd() {
 }
 
 function renderHome() {
+  const runningTask = getRunningTask();
+  if (runningTask && !state.running.isPaused) {
+    checkOverrunNotification(getRunningElapsedSeconds());
+  }
   const homeContext = getHomeDisplayContext();
   const isPreviousView = homeContext.isPreviousView;
   const showDepartureCheckHomeButton = !isPreviousView && hasPendingDepartureCheck();
@@ -2226,6 +2226,8 @@ function renderHome() {
     ? `<p class="home-overview-belongings-none">持ち物：なし</p>`
     : `<p class="home-overview-belongings-title">持ち物</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
   const displayTasks = homeContext.tasks;
+  const showRunningReminder = !isPreviousView && isRunningTaskReminderVisible();
+  const runningReminderLabel = showRunningReminder ? buildRunningReminderTaskLabel(runningTask) : "";
 
   renderScreen(`
     <div class="home-title-row">
@@ -2235,6 +2237,17 @@ function renderHome() {
         : `<p id="openPlanningHeadingBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="予定入力へ">予定入力</p>`}
     </div>
     ${!isPreviousView && state.previousDayArchive ? `<div class="home-task-more-row"><button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button></div>` : ""}
+    ${showRunningReminder ? `
+      <div class="notice warn home-running-reminder">
+        <p>⚠ まだ続いていますか？</p>
+        <p>${escapeHtml(runningReminderLabel)}</p>
+        <div class="btn-row triple compact-stack">
+          <button id="homeReminderCompleteBtn" class="btn-ok" type="button">完了</button>
+          <button id="homeReminderInterruptBtn" class="btn-quiet" type="button">中断</button>
+          <button id="homeReminderContinueBtn" class="btn-sub" type="button">もう少し続ける</button>
+        </div>
+      </div>
+    ` : ""}
     ${showDepartureCheckHomeButton ? `<div class="notice warn"><p>🟡 出発前チェック${departureReminder ? `（あと${departureReminder.minutesLeft}分）` : ""}</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
@@ -2340,6 +2353,9 @@ function renderHome() {
     document.getElementById("openCompletionHistoryBtn").addEventListener("click", () => changePhase("completionHistory", false));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
+    document.getElementById("homeReminderCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
+    document.getElementById("homeReminderInterruptBtn")?.addEventListener("click", interruptRunningTask);
+    document.getElementById("homeReminderContinueBtn")?.addEventListener("click", continueRunningTaskAfterReminder);
   }
 }
 
@@ -2981,8 +2997,21 @@ function setupLocalNotificationActionListener() {
   localNotificationListenerRegistered = true;
   plugin.addListener("localNotificationActionPerformed", (event) => {
     const source = String(event?.notification?.extra?.source || "");
-    if (source !== "medicine-reminder") return;
-    openMedicineReminderOverlay(true);
+    if (source === "medicine-reminder") {
+      openMedicineReminderOverlay(true);
+      return;
+    }
+    if (source === "task-finish") {
+      const notifiedTaskId = String(event?.notification?.extra?.taskId || "");
+      const runningTask = getRunningTask();
+      if (!runningTask || state.running.isPaused || runningTask.id !== notifiedTaskId) return;
+      state.running.alerting = true;
+      if (Number.isFinite(Number(state.running.alertAtSeconds))) {
+        state.running.lastAlertTarget = Number(state.running.alertAtSeconds);
+      }
+      saveState();
+      render();
+    }
   });
 }
 
@@ -5371,16 +5400,15 @@ function renderExecution() {
 
     const elapsed = getRunningElapsedSeconds();
     checkOverrunNotification(elapsed);
-    const activeExtendStatusText = getActiveExtendStatusText(elapsed);
 
     runArea.innerHTML = `
       <div class="timer-box">
         <p class="helper">実行中</p>
         <h3>${escapeHtml(runningTask.name)}</h3>
-        <p class="planned-time-row">予定時間: ${runningTask.plannedMinutes}分<span class="active-extend-status${activeExtendStatusText ? "" : " hidden"}" id="activeExtendStatusLabel">${escapeHtml(activeExtendStatusText)}</span></p>
+        <p class="planned-time-row">予定時間: ${runningTask.plannedMinutes}分</p>
         <div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(runningTask.content)}</span></div>
         <div class="elapsed-status-row">
-          <p class="elapsed" id="elapsedLabel">${formatExecutionElapsedLabel(runningTask, elapsed)}</p>
+          <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
         </div>
         ${renderExecutionCompleteControls()}
         ${renderOverrunControls(elapsed)}
@@ -5392,9 +5420,8 @@ function renderExecution() {
     tickTimer = setInterval(() => {
       const sec = getRunningElapsedSeconds();
       const label = document.getElementById("elapsedLabel");
-      if (label) label.textContent = formatExecutionElapsedLabel(runningTask, sec);
+      if (label) label.textContent = formatElapsedSmart(sec);
       checkOverrunNotification(sec);
-      updateActiveExtendStatusLabel(sec);
       saveState();
     }, 1000);
   } else if (pending.length > 0) {
@@ -5449,55 +5476,21 @@ function renderExecution() {
 }
 
 function renderOverrunControls(elapsed) {
-  if (state.running.alertAtSeconds == null || elapsed < state.running.alertAtSeconds) return "";
-  const confirmingSource = String(state.running.confirmingExtendSource || "");
-  const isPresetConfirming = confirmingSource === "extend10" || confirmingSource === "extend20";
-  const customExtendActionHtml = confirmingSource === "extendCustom"
-    ? '<button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button><button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>'
-    : '<button id="extendCustomBtn" class="btn-sub" type="button">延長する</button>';
-  const presetExtendRowHtml = isPresetConfirming
-    ? renderInlineExtendConfirmButtons()
-    : '<button id="extend10Btn" class="btn-sub" type="button">10分延長</button><button id="extend20Btn" class="btn-sub" type="button">20分延長</button>';
+  if (!state.running.alerting) return "";
   return `
     <div class="notice warn">
-      <p>予定時間を超えました。</p>
-      <div class="btn-row split overrun-extend-row">
-        ${presetExtendRowHtml}
+      <p>予定時間になりました。</p>
+      <div class="btn-row triple compact-stack overrun-choice-row">
+        <button id="overrunCompleteBtn" class="btn-ok" type="button">完了</button>
+        <button id="overrunInterruptBtn" class="btn-quiet" type="button">中断</button>
+        <button id="overrunContinueBtn" class="btn-sub" type="button">もう少し続ける</button>
       </div>
-      <div class="btn-row overrun-stop-row">
-        <button id="stopNotifyBtn" class="btn-quiet" type="button">通知停止</button>
-      </div>
-      <div class="grid-2 custom-extend-grid">
-        <div class="custom-extend-field">
-          <label for="extendCustom">時間指定延長（分）</label>
-          <div class="custom-extend-control${confirmingSource === "extendCustom" ? " is-confirming" : ""}">
-            <input id="extendCustom" type="number" min="1" max="180" value="${escapeHtml(state.running.customExtendMinutes || "")}" />
-            ${customExtendActionHtml}
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderInlineExtendConfirmButtons() {
-  return `
-    <div class="btn-row split compact-stack inline-confirm-row">
-      <button id="cancelExtendBtn" class="btn-quiet" type="button">キャンセル</button>
-      <button id="confirmExtendBtn" class="btn-sub" type="button">延長する</button>
     </div>
   `;
 }
 
 function renderExecutionCompleteControls() {
-  if (state.running.confirmingComplete) {
-    return `
-      <div class="btn-row split compact-stack">
-        <button id="cancelCompleteBtn" class="btn-quiet" type="button">キャンセル</button>
-        <button id="confirmCompleteBtn" class="btn-ok" type="button">完了する</button>
-      </div>
-    `;
-  }
+  if (state.running.alerting) return "";
   return `
     <div class="btn-row split compact-stack execution-main-actions">
       <button id="completeBtn" class="btn-ok" type="button">完了</button>
@@ -5508,82 +5501,14 @@ function renderExecutionCompleteControls() {
 
 function clearExecutionConfirmStates() {
   state.running.confirmingComplete = false;
-  state.running.confirmingExtendSource = "";
-  state.running.confirmingExtendMinutes = null;
-}
-
-function beginExtendConfirmation(source, minutes) {
-  clearExecutionConfirmStates();
-  state.running.confirmingExtendSource = source;
-  state.running.confirmingExtendMinutes = minutes;
-  saveState();
-  renderExecution();
-}
-
-function cancelExtendConfirmation() {
-  state.running.confirmingExtendSource = "";
-  state.running.confirmingExtendMinutes = null;
-  saveState();
-  renderExecution();
 }
 
 function bindExecutionButtons() {
-  document.getElementById("completeBtn")?.addEventListener("click", () => {
-    state.running.confirmingExtendSource = "";
-    state.running.confirmingExtendMinutes = null;
-    state.running.confirmingComplete = true;
-    saveState();
-    renderExecution();
-  });
-  document.getElementById("confirmCompleteBtn")?.addEventListener("click", finalizeTaskCompletion);
-  document.getElementById("cancelCompleteBtn")?.addEventListener("click", () => {
-    state.running.confirmingComplete = false;
-    saveState();
-    renderExecution();
-  });
+  document.getElementById("completeBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
   document.getElementById("interruptBtn")?.addEventListener("click", interruptRunningTask);
-
-  document.getElementById("stopNotifyBtn")?.addEventListener("click", () => {
-    cancelSecondAlertFollowup();
-    state.running.alerting = false;
-    state.running.confirmingExtendSource = "";
-    state.running.confirmingExtendMinutes = null;
-    saveState();
-    renderExecution();
-  });
-  document.getElementById("extend10Btn")?.addEventListener("click", () => beginExtendConfirmation("extend10", 10));
-  document.getElementById("extend20Btn")?.addEventListener("click", () => beginExtendConfirmation("extend20", 20));
-  document.getElementById("extendCustom")?.addEventListener("input", (e) => {
-    state.running.customExtendMinutes = e.target.value;
-    saveState();
-  });
-  document.getElementById("extendCustomBtn")?.addEventListener("click", () => {
-    const n = Number(state.running.customExtendMinutes);
-    if (!Number.isFinite(n) || n <= 0) return alert("延長分を入力してください。");
-    beginExtendConfirmation("extendCustom", Math.round(n));
-  });
-  document.getElementById("cancelExtendBtn")?.addEventListener("click", cancelExtendConfirmation);
-  document.getElementById("confirmExtendBtn")?.addEventListener("click", () => {
-    const min = Number(state.running.confirmingExtendMinutes);
-    if (!Number.isFinite(min) || min <= 0) return;
-    extendRunningTask(Math.round(min));
-  });
-}
-
-function extendRunningTask(min) {
-  cancelSecondAlertFollowup();
-  clearExecutionConfirmStates();
-  state.running.alertAtSeconds = (state.running.alertAtSeconds || 0) + min * 60;
-  state.running.alerting = false;
-  state.running.lastAlertTarget = null;
-  state.running.customExtendMinutes = "";
-  state.running.activeExtendMinutes = min;
-  saveState();
-  const task = getRunningTask();
-  if (task) {
-    scheduleTaskFinishNotificationForRunningTask(task);
-  }
-  renderExecution();
+  document.getElementById("overrunCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
+  document.getElementById("overrunInterruptBtn")?.addEventListener("click", interruptRunningTask);
+  document.getElementById("overrunContinueBtn")?.addEventListener("click", continueRunningTaskAfterReminder);
 }
 
 function checkOverrunNotification(elapsed) {
@@ -5594,12 +5519,13 @@ function checkOverrunNotification(elapsed) {
     console.log("[OverrunCheck] elapsed/target/last/willTrigger", elapsed, target, state.running.lastAlertTarget, willTrigger);
   }
   if (elapsed >= target && state.running.lastAlertTarget !== target) {
-    state.running.activeExtendMinutes = null;
     state.running.alerting = true;
     state.running.lastAlertTarget = target;
     console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
     triggerAlertFeedback();
-    scheduleSecondAlertFollowup();
+    const task = getRunningTask();
+    if (task) cancelTaskFinishNotification(task.id);
+    saveState();
   }
 }
 
@@ -5940,13 +5866,9 @@ function startTask(taskId) {
     baseSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : 0,
     isPaused: false,
     confirmingComplete: false,
-    confirmingExtendSource: "",
-    confirmingExtendMinutes: null,
     alertAtSeconds: task.plannedMinutes * 60,
     alerting: false,
-    lastAlertTarget: null,
-    customExtendMinutes: "",
-    activeExtendMinutes: null
+    lastAlertTarget: null
   };
   appendHistoryEvent({
     category: "task",
@@ -5972,6 +5894,64 @@ function getRunningElapsedSeconds() {
   return Math.max(0, (state.running.baseSeconds || 0) + passed);
 }
 
+function isRunningTaskReminderVisible() {
+  const runningTask = getRunningTask();
+  if (!runningTask) return false;
+  if (state.running.isPaused) return false;
+  return Boolean(state.running.alerting);
+}
+
+function buildRunningReminderTaskLabel(task) {
+  if (!task) return "";
+  const name = String(task.name || "").trim();
+  const content = String(task.content || "").trim();
+  if (!content) return name;
+  return `${name}：${content}`;
+}
+
+function continueRunningTaskAfterReminder() {
+  const task = getRunningTask();
+  if (!task || state.running.isPaused) return;
+  cancelSecondAlertFollowup();
+  state.running.alerting = false;
+  state.running.lastAlertTarget = null;
+  state.running.alertAtSeconds = getRunningElapsedSeconds() + (20 * 60);
+  saveState();
+  scheduleTaskFinishNotificationForRunningTask(task);
+  changePhase("execution", false);
+}
+
+function showTaskCompleteConfirmDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "complete-confirm-overlay";
+    overlay.innerHTML = `
+      <div class="complete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="completeConfirmTitle">
+        <h3 id="completeConfirmTitle">完了しますか？</h3>
+        <div class="btn-row split compact-stack">
+          <button id="confirmTaskCompleteBtn" class="btn-ok" type="button">完了する</button>
+          <button id="cancelTaskCompleteBtn" class="btn-quiet" type="button">戻る</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+
+    document.getElementById("confirmTaskCompleteBtn")?.addEventListener("click", () => close(true));
+    document.getElementById("cancelTaskCompleteBtn")?.addEventListener("click", () => close(false));
+  });
+}
+
+async function openTaskCompleteConfirmDialog() {
+  const ok = await showTaskCompleteConfirmDialog();
+  if (!ok) return;
+  finalizeTaskCompletion();
+}
+
 function interruptRunningTask() {
   const task = getRunningTask();
   if (!task) return;
@@ -5990,6 +5970,8 @@ function interruptRunningTask() {
   });
   clearExecutionConfirmStates();
   state.running.alerting = false;
+  state.running.alertAtSeconds = null;
+  state.running.lastAlertTarget = null;
   goHome();
 }
 
@@ -6000,6 +5982,9 @@ function resumePausedTask() {
   state.running.startedAt = Date.now();
   state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
   state.running.isPaused = false;
+  if (!Number.isFinite(Number(state.running.alertAtSeconds))) {
+    state.running.alertAtSeconds = sanitizeMinutes(task.plannedMinutes) * 60;
+  }
   appendHistoryEvent({
     category: "task",
     type: HISTORY_EVENT_TYPE_TASK_RESUMED,
@@ -6054,24 +6039,11 @@ function formatElapsedSmart(sec) {
 
 function formatExecutionElapsedLabel(task, elapsedSeconds) {
   const elapsed = Math.max(0, Number(elapsedSeconds) || 0);
-  const isExtendActive = Number(state.running?.activeExtendMinutes) > 0;
-  if (!isExtendActive) return formatElapsedSmart(elapsed);
-
-  const plannedMinutes = sanitizeMinutes(task?.plannedMinutes || DEFAULT_MINUTES);
-  const plannedSeconds = plannedMinutes * 60;
-  const overSeconds = Math.max(0, elapsed - plannedSeconds);
-  const overMinutes = Math.floor(overSeconds / 60);
-  const overRemainderSeconds = overSeconds % 60;
-  return `${plannedMinutes}分＋${overMinutes}分${overRemainderSeconds}秒`;
+  return formatElapsedSmart(elapsed);
 }
 
 function getActiveExtendStatusText(elapsed) {
-  const min = Number(state.running?.activeExtendMinutes);
-  const target = Number(state.running?.alertAtSeconds);
-  if (!Number.isFinite(min) || min <= 0) return "";
-  if (!Number.isFinite(target)) return "";
-  if (elapsed >= target) return "";
-  return `${Math.round(min)}分延長中`;
+  return "";
 }
 
 function updateActiveExtendStatusLabel(elapsed) {

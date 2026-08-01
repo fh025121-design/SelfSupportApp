@@ -1134,6 +1134,21 @@ button:disabled {
   color: #155f7a;
 }
 
+.home-running-reminder {
+  border: 3px solid #cf1f1f;
+  background: linear-gradient(135deg, #fff6bf 0%, #ffe39a 100%);
+  color: #7a1a1a;
+}
+
+.home-running-reminder p {
+  margin: 0 0 6px;
+  font-weight: 900;
+}
+
+.home-running-reminder .btn-row {
+  margin-top: 8px;
+}
+
 .app-modal-overlay {
   position: fixed;
   inset: 0;
@@ -1238,6 +1253,33 @@ button:disabled {
 .app-modal-overlay.medicine-overlay {
   padding: 0;
   background: rgba(10, 18, 38, 0.72);
+}
+
+.complete-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  background: rgba(17, 24, 39, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.complete-confirm-card {
+  width: min(360px, 100%);
+  background: #fff;
+  border-radius: 14px;
+  border: 2px solid #d3dbe8;
+  box-shadow: 0 14px 28px rgba(26, 36, 50, 0.22);
+  padding: 16px 14px;
+}
+
+.complete-confirm-card h3 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  font-weight: 900;
+  text-align: center;
 }
 
 .medicine-modal {
