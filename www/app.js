@@ -2198,6 +2198,7 @@ function renderHome() {
   }
   const homeContext = getHomeDisplayContext();
   const isPreviousView = homeContext.isPreviousView;
+  const canExecuteDisplayedTasks = !isPreviousView && canExecuteTasksForDate(homeContext.dateKey);
   const showDepartureCheckHomeButton = !isPreviousView && hasPendingDepartureCheck();
   const departureReminder = showDepartureCheckHomeButton ? getDepartureReminderForHome() : null;
   const showReturnCheckHomeButton = !isPreviousView
@@ -2264,7 +2265,7 @@ function renderHome() {
     <ul class="home-task-list" id="homeTaskList"></ul>
 
     <div class="btn-row">
-      <button id="openExecutionBtn" class="btn-main" type="button" ${isPreviousView ? "disabled" : ""}>タスク実行へ</button>
+      <button id="openExecutionBtn" class="btn-main" type="button" ${canExecuteDisplayedTasks ? "" : "disabled"}>タスク実行へ</button>
     </div>
 
     <div class="btn-row compact-stack">
@@ -2294,14 +2295,14 @@ function renderHome() {
     li.className = "home-task-row";
     const status = getHomeStatusIcon(task);
     const statusClass = status === "【再開】" ? " home-task-status-resume" : "";
-    if (isPreviousView) {
-      li.setAttribute("aria-disabled", "true");
-      li.removeAttribute("tabindex");
-      li.removeAttribute("role");
-    } else {
+    if (canExecuteDisplayedTasks) {
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", "0");
       li.dataset.taskId = task.id;
+    } else {
+      li.setAttribute("aria-disabled", "true");
+      li.removeAttribute("tabindex");
+      li.removeAttribute("role");
     }
     li.innerHTML = `
       <div class="home-task-main">
@@ -2311,7 +2312,7 @@ function renderHome() {
     list.appendChild(li);
   });
 
-  if (!isPreviousView) {
+  if (canExecuteDisplayedTasks) {
     list.querySelectorAll("li[data-task-id]").forEach((row) => {
       row.addEventListener("click", () => {
         const taskId = row.dataset.taskId;
@@ -4616,6 +4617,16 @@ function getExecutionVisibleTasks() {
   return getTasksForDate(getCurrentHomeDateKey());
 }
 
+function canExecuteTasksForDate(dateKey) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey);
+  if (!normalizedDateKey) return false;
+  return normalizedDateKey === getTodayKeyJst();
+}
+
+function canExecuteCurrentHomeTasks() {
+  return canExecuteTasksForDate(getCurrentHomeDateKey());
+}
+
 function getHomeDisplayContext() {
   const archive = normalizePreviousDayArchive(state.previousDayArchive);
   const showPrevious = state.homeViewMode === "previous" && Boolean(archive);
@@ -5353,12 +5364,13 @@ function buildPlanReportBelongingsLines(dateKey) {
 
 function renderPlanReport() {
   const report = buildPlanReportText();
+  const canExecuteFromPlanReport = canExecuteTasksForDate(getPlanningTargetDateKey());
   renderScreen(`
     <h2>親への予定報告</h2>
     <div id="planReportText" class="report-box"></div>
     <div class="btn-row compact-stack">
       <button id="copyPlanBtn" class="btn-main" type="button">予定をコピー</button>
-      <button id="startExecutionBtn" class="btn-quiet" type="button">タスク実行へ進む</button>
+      <button id="startExecutionBtn" class="btn-quiet" type="button" ${canExecuteFromPlanReport ? "" : "disabled"}>タスク実行へ進む</button>
     </div>
     <p id="copyPlanMessage" class="helper" aria-live="polite"></p>
   `);
@@ -5368,7 +5380,9 @@ function renderPlanReport() {
     const ok = await copyToClipboard(report);
     document.getElementById("copyPlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
   });
-  document.getElementById("startExecutionBtn").addEventListener("click", () => changePhase("execution"));
+  if (canExecuteFromPlanReport) {
+    document.getElementById("startExecutionBtn")?.addEventListener("click", () => changePhase("execution"));
+  }
 }
 
 function getExecutionSelectableTasks() {
@@ -5855,6 +5869,7 @@ function startAudioWarmupFromUserAction() {
 }
 
 function startTask(taskId) {
+  if (!canExecuteCurrentHomeTasks()) return;
   const task = findTask(taskId);
   if (!task || task.status !== "pending") return;
   cancelSecondAlertFollowup();
