@@ -879,12 +879,24 @@ async function confirmContentAssistIfNeeded(content, itemName = "") {
   return showContentAssistConfirmDialog();
 }
 
+function getTaskDateKeyForUnfinishedCheck(task) {
+  return normalizeTaskDateKey(task?.targetDateKey) || normalizeTaskDateKey(task?.recurringDateKey);
+}
+
+function isTaskTargetOnOrBefore(task, boundaryDateKey) {
+  const boundaryDayNumber = getDateKeyDayNumber(boundaryDateKey);
+  const taskDateKey = getTaskDateKeyForUnfinishedCheck(task);
+  const taskDayNumber = getDateKeyDayNumber(taskDateKey);
+  if (boundaryDayNumber === null || taskDayNumber === null) return false;
+  return taskDayNumber <= boundaryDayNumber;
+}
+
 function buildCarryoverTasks(previousState, nextDateKey) {
   if (!previousState || !Array.isArray(previousState.tasks)) return [];
   const previousDateKey = normalizeTaskDateKey(previousState.dateKey);
   return previousState.tasks
     .map((task) => normalizeTask(task, previousDateKey))
-    .filter((task) => task && task.status === "deferred" && task.targetDateKey === previousDateKey)
+    .filter((task) => task && task.status === "deferred" && isTaskTargetOnOrBefore(task, previousDateKey))
     .map((task) => createTask(
       String(task.name || "").trim(),
       sanitizeMinutes(task.plannedMinutes),
@@ -1002,7 +1014,7 @@ function buildPastDaySummary(prev) {
   const tasks = Array.isArray(prev?.tasks)
     ? prev.tasks
       .map((task) => normalizeTask(task, prevDateKey))
-      .filter((task) => task.targetDateKey === prevDateKey)
+      .filter((task) => isTaskTargetOnOrBefore(task, prevDateKey))
     : [];
   const done = tasks.filter((t) => t.status === "done").length;
   const total = tasks.length;
