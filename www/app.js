@@ -2935,9 +2935,12 @@ async function stopNotificationSoundPreview() {
 }
 
 async function pickNotificationSound(target, toneType) {
-  const bridge = getCapacitorBridge();
   const plugin = getRingtonePickerPlugin();
-  if (!bridge?.isNativePlatform?.() || !plugin?.pickSound) {
+  if (!plugin) {
+    alert("Androidアプリで設定してください。");
+    return;
+  }
+  if (typeof plugin.pickSound !== "function") {
     alert("Androidアプリで設定してください。");
     return;
   }

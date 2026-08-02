@@ -2935,21 +2935,12 @@ async function stopNotificationSoundPreview() {
 }
 
 async function pickNotificationSound(target, toneType) {
-  const bridge = getCapacitorBridge();
   const plugin = getRingtonePickerPlugin();
-  console.log({
-    isNativePlatform: bridge?.isNativePlatform?.(),
-    platform: bridge?.getPlatform?.(),
-    plugin,
-    typeofPickSound: typeof plugin?.pickSound
-  });
-  if (!bridge?.isNativePlatform?.() || !plugin?.pickSound) {
-    console.log({
-      isNativePlatform: bridge?.isNativePlatform?.(),
-      platform: bridge?.getPlatform?.(),
-      plugin,
-      hasPickSound: typeof plugin?.pickSound
-    });
+  if (!plugin) {
+    alert("Androidアプリで設定してください。");
+    return;
+  }
+  if (typeof plugin.pickSound !== "function") {
     alert("Androidアプリで設定してください。");
     return;
   }

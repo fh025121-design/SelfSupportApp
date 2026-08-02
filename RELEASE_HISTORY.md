@@ -1,6 +1,13 @@
 # Release History
 
 ## 2026-08-02 15:04 JST
+- v1.69
+	- `pickNotificationSound` から `bridge.isNativePlatform()` による分岐を削除し、`RingtonePicker` プラグイン取得後は `plugin.pickSound` を直接呼び出すよう変更。
+	- `Androidアプリで設定してください。` は、`RingtonePicker` プラグインが取得できない場合と `plugin.pickSound` が存在しない場合のみ表示するよう変更。
+	- 例外発生時は `console.error` に出力するよう変更。
+	- 表示バージョンを `1.68` から `1.69` へ更新（+0.01）。
+
+## 2026-08-02 15:04 JST
 - v1.68
 	- 表示バージョンを `1.67` から `1.68` へ更新（+0.01）。
 
