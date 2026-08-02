@@ -254,6 +254,27 @@ let lastAppliedNotificationSoundConfigHash = "";
 const NOTIFICATION_SOUND_TARGET_DEPARTURE = "departure";
 const NOTIFICATION_SOUND_TARGET_TASK_FINISH = "taskFinish";
 const NOTIFICATION_SOUND_TARGET_TASK_RECHECK = "taskRecheck";
+const FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START = "freshStart";
+const FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE = "bicycle";
+const FIXED_NOTIFICATION_SOUND_PRESETS = {
+  [FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START]: {
+    key: FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START,
+    title: "フレッシュスタート",
+    rawName: "fresh_start",
+    toneType: "alarm"
+  },
+  [FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE]: {
+    key: FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE,
+    title: "バイシクル",
+    rawName: "bicycle",
+    toneType: "alarm"
+  }
+};
+const DEFAULT_FIXED_PRESET_BY_TARGET = {
+  [NOTIFICATION_SOUND_TARGET_DEPARTURE]: FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START,
+  [NOTIFICATION_SOUND_TARGET_TASK_FINISH]: FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE,
+  [NOTIFICATION_SOUND_TARGET_TASK_RECHECK]: FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE
+};
 
 function getNotificationSoundTargetPrefix(target) {
   if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) return "departure-alarm";
@@ -484,27 +505,30 @@ function createDepartureNotificationSettings() {
 }
 
 function createNotificationSoundSettings() {
+  const departurePreset = FIXED_NOTIFICATION_SOUND_PRESETS[DEFAULT_FIXED_PRESET_BY_TARGET[NOTIFICATION_SOUND_TARGET_DEPARTURE]];
+  const taskFinishPreset = FIXED_NOTIFICATION_SOUND_PRESETS[DEFAULT_FIXED_PRESET_BY_TARGET[NOTIFICATION_SOUND_TARGET_TASK_FINISH]];
+  const taskRecheckPreset = FIXED_NOTIFICATION_SOUND_PRESETS[DEFAULT_FIXED_PRESET_BY_TARGET[NOTIFICATION_SOUND_TARGET_TASK_RECHECK]];
   return {
     departure: {
       target: NOTIFICATION_SOUND_TARGET_DEPARTURE,
-      uri: "",
-      title: getNotificationSoundFallbackTitle("alarm"),
-      toneType: "alarm",
-      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm", "")
+      uri: departurePreset.rawName,
+      title: departurePreset.title,
+      toneType: departurePreset.toneType,
+      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_DEPARTURE, departurePreset.toneType, departurePreset.rawName)
     },
     taskFinish: {
       target: NOTIFICATION_SOUND_TARGET_TASK_FINISH,
-      uri: "",
-      title: getNotificationSoundFallbackTitle("alarm"),
-      toneType: "alarm",
-      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm", "")
+      uri: taskFinishPreset.rawName,
+      title: taskFinishPreset.title,
+      toneType: taskFinishPreset.toneType,
+      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_FINISH, taskFinishPreset.toneType, taskFinishPreset.rawName)
     },
     taskRecheck: {
       target: NOTIFICATION_SOUND_TARGET_TASK_RECHECK,
-      uri: "",
-      title: getNotificationSoundFallbackTitle("alarm"),
-      toneType: "alarm",
-      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "alarm", "")
+      uri: taskRecheckPreset.rawName,
+      title: taskRecheckPreset.title,
+      toneType: taskRecheckPreset.toneType,
+      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, taskRecheckPreset.toneType, taskRecheckPreset.rawName)
     }
   };
 }
@@ -2783,11 +2807,29 @@ function renderSettings() {
   document.getElementById("pickDepartureSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm");
   });
+  document.getElementById("setDepartureFreshStartBtn")?.addEventListener("click", () => {
+    void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_DEPARTURE, FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START);
+  });
+  document.getElementById("setDepartureBicycleBtn")?.addEventListener("click", () => {
+    void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_DEPARTURE, FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE);
+  });
   document.getElementById("pickTaskFinishSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm");
   });
+  document.getElementById("setTaskFinishFreshStartBtn")?.addEventListener("click", () => {
+    void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_TASK_FINISH, FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START);
+  });
+  document.getElementById("setTaskFinishBicycleBtn")?.addEventListener("click", () => {
+    void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_TASK_FINISH, FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE);
+  });
   document.getElementById("pickTaskRecheckSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "alarm");
+  });
+  document.getElementById("setTaskRecheckFreshStartBtn")?.addEventListener("click", () => {
+    void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START);
+  });
+  document.getElementById("setTaskRecheckBicycleBtn")?.addEventListener("click", () => {
+    void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, FIXED_NOTIFICATION_SOUND_PRESET_BICYCLE);
   });
   document.getElementById("previewDepartureSoundBtn")?.addEventListener("click", () => {
     void previewNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE);
@@ -2876,14 +2918,173 @@ function getNotificationSoundEntry(target) {
   return settings.taskFinish;
 }
 
+function getFixedNotificationPresetForTarget(target) {
+  return FIXED_NOTIFICATION_SOUND_PRESETS[DEFAULT_FIXED_PRESET_BY_TARGET[target] || ""] || null;
+}
+
+function getFixedPresetButtonsHtml(target) {
+  return `
+    <div class="btn-row compact-stack">
+      <button id="set${target}FreshStartBtn" class="btn-quiet" type="button">フレッシュスタート</button>
+      <button id="set${target}BicycleBtn" class="btn-quiet" type="button">バイシクル</button>
+    </div>
+  `;
+}
+
+function applyDefaultFixedPresetIfNeeded(target, entry) {
+  const preset = getFixedNotificationPresetForTarget(target);
+  if (!preset) return entry;
+  const title = String(entry?.title || "").trim();
+  const uri = String(entry?.uri || "").trim();
+  const isDefaultAlarmTitle = title === getNotificationSoundFallbackTitle("alarm") || title === "";
+  if (uri || !isDefaultAlarmTitle) return entry;
+  return {
+    ...entry,
+    uri: preset.rawName,
+    title: preset.title,
+    toneType: preset.toneType,
+    channelId: buildNotificationChannelId(target, preset.toneType, preset.rawName)
+  };
+}
+
+async function resolveFixedNotificationPreset(presetKey, toneType) {
+  const preset = FIXED_NOTIFICATION_SOUND_PRESETS[presetKey];
+  if (!preset) return null;
+  const bridge = getCapacitorBridge();
+  const plugin = getRingtonePickerPlugin();
+  if (bridge?.isNativePlatform?.() && plugin?.resolveFixedSound) {
+    try {
+      const resolved = await plugin.resolveFixedSound({
+        preset: preset.key,
+        toneType: toneType || preset.toneType
+      });
+      const uri = String(resolved?.uri || "").trim();
+      if (uri) {
+        return {
+          uri,
+          title: preset.title,
+          toneType: toneType || preset.toneType
+        };
+      }
+    } catch (error) {
+      console.warn("[NotificationSound] Failed to resolve fixed preset", preset.key, error);
+    }
+  }
+
+  return {
+    uri: preset.rawName,
+    title: preset.title,
+    toneType: toneType || preset.toneType
+  };
+}
+
+async function applyFixedNotificationPreset(target, presetKey) {
+  const current = getNotificationSoundEntry(target);
+  const resolved = await resolveFixedNotificationPreset(presetKey, current.toneType || "alarm");
+  if (!resolved) return;
+
+  const nextSettings = normalizeNotificationSoundSettings(state.notificationSoundSettings);
+  const nextEntry = {
+    target,
+    uri: resolved.uri,
+    title: resolved.title,
+    toneType: resolved.toneType,
+    channelId: buildNotificationChannelId(target, resolved.toneType, resolved.uri)
+  };
+
+  if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) nextSettings.departure = nextEntry;
+  if (target === NOTIFICATION_SOUND_TARGET_TASK_FINISH) nextSettings.taskFinish = nextEntry;
+  if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) nextSettings.taskRecheck = nextEntry;
+
+  state.notificationSoundSettings = nextSettings;
+  lastAppliedNotificationSoundConfigHash = "";
+  await ensureLocalNotificationChannel();
+  saveState();
+  renderSettings();
+}
+
+async function refreshFixedNotificationSoundDefaultsOnNative() {
+  const bridge = getCapacitorBridge();
+  if (!bridge?.isNativePlatform?.()) return;
+
+  const defaults = [
+    NOTIFICATION_SOUND_TARGET_DEPARTURE,
+    NOTIFICATION_SOUND_TARGET_TASK_FINISH,
+    NOTIFICATION_SOUND_TARGET_TASK_RECHECK
+  ];
+  const nextSettings = normalizeNotificationSoundSettings(state.notificationSoundSettings);
+  let changed = false;
+
+  for (const target of defaults) {
+    const current = target === NOTIFICATION_SOUND_TARGET_DEPARTURE
+      ? nextSettings.departure
+      : target === NOTIFICATION_SOUND_TARGET_TASK_FINISH
+        ? nextSettings.taskFinish
+        : nextSettings.taskRecheck;
+    const normalizedCurrent = applyDefaultFixedPresetIfNeeded(target, current);
+    if (normalizedCurrent !== current) {
+      if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) nextSettings.departure = normalizedCurrent;
+      if (target === NOTIFICATION_SOUND_TARGET_TASK_FINISH) nextSettings.taskFinish = normalizedCurrent;
+      if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) nextSettings.taskRecheck = normalizedCurrent;
+      changed = true;
+    }
+
+    const preset = getFixedNotificationPresetForTarget(target);
+    if (!preset) continue;
+    const title = String((target === NOTIFICATION_SOUND_TARGET_DEPARTURE
+      ? nextSettings.departure.title
+      : target === NOTIFICATION_SOUND_TARGET_TASK_FINISH
+        ? nextSettings.taskFinish.title
+        : nextSettings.taskRecheck.title) || "").trim();
+    const isPresetName = title === preset.title;
+    if (!isPresetName) continue;
+
+    const existingEntry = target === NOTIFICATION_SOUND_TARGET_DEPARTURE
+      ? nextSettings.departure
+      : target === NOTIFICATION_SOUND_TARGET_TASK_FINISH
+        ? nextSettings.taskFinish
+        : nextSettings.taskRecheck;
+    const resolved = await resolveFixedNotificationPreset(preset.key, existingEntry.toneType || preset.toneType);
+    if (!resolved || !resolved.uri) continue;
+    if (resolved.uri === existingEntry.uri) continue;
+
+    const nextEntry = {
+      ...existingEntry,
+      uri: resolved.uri,
+      title: preset.title,
+      toneType: existingEntry.toneType || preset.toneType,
+      channelId: buildNotificationChannelId(target, existingEntry.toneType || preset.toneType, resolved.uri)
+    };
+    if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) nextSettings.departure = nextEntry;
+    if (target === NOTIFICATION_SOUND_TARGET_TASK_FINISH) nextSettings.taskFinish = nextEntry;
+    if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) nextSettings.taskRecheck = nextEntry;
+    changed = true;
+  }
+
+  if (!changed) return;
+  state.notificationSoundSettings = nextSettings;
+  lastAppliedNotificationSoundConfigHash = "";
+  saveState();
+}
+
 function getNotificationSoundSettingRowsHtml() {
-  const departure = getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_DEPARTURE);
-  const taskFinish = getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_TASK_FINISH);
-  const taskRecheck = getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_TASK_RECHECK);
+  const departure = applyDefaultFixedPresetIfNeeded(
+    NOTIFICATION_SOUND_TARGET_DEPARTURE,
+    getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_DEPARTURE)
+  );
+  const taskFinish = applyDefaultFixedPresetIfNeeded(
+    NOTIFICATION_SOUND_TARGET_TASK_FINISH,
+    getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_TASK_FINISH)
+  );
+  const taskRecheck = applyDefaultFixedPresetIfNeeded(
+    NOTIFICATION_SOUND_TARGET_TASK_RECHECK,
+    getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_TASK_RECHECK)
+  );
   return `
     <div class="sound-setting-row">
       <p class="helper">出発前通知（アラーム音）</p>
       <p class="helper">選択中: ${escapeHtml(departure.title || getNotificationSoundFallbackTitle("alarm"))}</p>
+      ${getFixedPresetButtonsHtml("Departure")}
       <div class="btn-row compact-stack">
         <button id="pickDepartureSoundBtn" class="btn-sub" type="button">音を選択</button>
         <button id="previewDepartureSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
@@ -2893,6 +3094,7 @@ function getNotificationSoundSettingRowsHtml() {
     <div class="sound-setting-row">
       <p class="helper">タスク予定時間通知（アラーム音）</p>
       <p class="helper">選択中: ${escapeHtml(taskFinish.title || getNotificationSoundFallbackTitle("alarm"))}</p>
+      ${getFixedPresetButtonsHtml("TaskFinish")}
       <div class="btn-row compact-stack">
         <button id="pickTaskFinishSoundBtn" class="btn-sub" type="button">音を選択</button>
         <button id="previewTaskFinishSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
@@ -2902,6 +3104,7 @@ function getNotificationSoundSettingRowsHtml() {
     <div class="sound-setting-row">
       <p class="helper">20分後の再確認通知（アラーム音）</p>
       <p class="helper">選択中: ${escapeHtml(taskRecheck.title || getNotificationSoundFallbackTitle("alarm"))}</p>
+      ${getFixedPresetButtonsHtml("TaskRecheck")}
       <div class="btn-row compact-stack">
         <button id="pickTaskRecheckSoundBtn" class="btn-sub" type="button">音を選択</button>
         <button id="previewTaskRecheckSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
@@ -3065,6 +3268,7 @@ async function removeUnusedManagedNotificationChannels(activeChannelIds = []) {
 }
 
 async function initializeLocalNotificationTrial() {
+  await refreshFixedNotificationSoundDefaultsOnNative();
   await ensureLocalNotificationChannel();
   await cancelLegacyTaskRecheckNotificationsFromPending();
 }

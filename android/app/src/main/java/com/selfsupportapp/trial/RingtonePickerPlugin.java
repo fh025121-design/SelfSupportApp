@@ -1,6 +1,8 @@
 package com.selfsupportapp.trial;
 
+import android.content.ContentResolver;
 import android.content.Intent;
+import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
@@ -12,9 +14,15 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.util.Locale;
 
 @CapacitorPlugin(name = "RingtonePicker")
 public class RingtonePickerPlugin extends Plugin {
+
+    private static final String PRESET_FRESH_START = "freshStart";
+    private static final String PRESET_BICYCLE = "bicycle";
+    private static final String BUNDLED_FRESH_START_RAW = "fresh_start";
+    private static final String BUNDLED_BICYCLE_RAW = "bicycle";
 
     private Ringtone previewRingtone;
 
@@ -69,6 +77,15 @@ public class RingtonePickerPlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void resolveFixedSound(PluginCall call) {
+        String preset = call.getString("preset", PRESET_BICYCLE);
+        String toneType = call.getString("toneType", "alarm");
+
+        JSObject payload = resolveFixedSoundPayload(preset, toneType);
+        call.resolve(payload);
+    }
+
     @ActivityCallback
     private void handlePickSoundResult(PluginCall call, ActivityResult result) {
         if (call == null) {
@@ -112,9 +129,16 @@ public class RingtonePickerPlugin extends Plugin {
     }
 
     private Uri resolveRingtoneUri(String rawUri, String toneType) {
-        Uri selectedUri = null;
-        if (rawUri != null && !rawUri.trim().isEmpty()) {
-            selectedUri = Uri.parse(rawUri.trim());
+        String normalizedRawUri = rawUri != null ? rawUri.trim() : "";
+        if (!normalizedRawUri.isEmpty()) {
+            if (BUNDLED_FRESH_START_RAW.equals(normalizedRawUri)) {
+                return buildBundledRawResourceUri(BUNDLED_FRESH_START_RAW);
+            }
+            if (BUNDLED_BICYCLE_RAW.equals(normalizedRawUri)) {
+                return buildBundledRawResourceUri(BUNDLED_BICYCLE_RAW);
+            }
+
+            Uri selectedUri = Uri.parse(normalizedRawUri);
             Ringtone ringtone = RingtoneManager.getRingtone(getContext(), selectedUri);
             if (ringtone != null) {
                 return selectedUri;
@@ -135,5 +159,92 @@ public class RingtonePickerPlugin extends Plugin {
             previewRingtone.stop();
         }
         previewRingtone = null;
+    }
+
+    private JSObject resolveFixedSoundPayload(String preset, String toneType) {
+        JSObject payload = new JSObject();
+        String normalizedToneType = "alarm".equals(toneType) ? "alarm" : "notification";
+        String normalizedPreset = PRESET_FRESH_START.equals(preset) ? PRESET_FRESH_START : PRESET_BICYCLE;
+
+        Uri systemUri = findSystemPresetUri(normalizedPreset, normalizedToneType);
+        if (systemUri != null) {
+            payload.put("uri", systemUri.toString());
+            payload.put("title", getPresetDisplayName(normalizedPreset));
+            payload.put("source", "system");
+            return payload;
+        }
+
+        String bundledRaw = PRESET_FRESH_START.equals(normalizedPreset) ? BUNDLED_FRESH_START_RAW : BUNDLED_BICYCLE_RAW;
+        Uri bundledUri = buildBundledRawResourceUri(bundledRaw);
+        Ringtone bundledRingtone = bundledUri != null ? RingtoneManager.getRingtone(getContext(), bundledUri) : null;
+        if (bundledUri != null && bundledRingtone != null) {
+            payload.put("uri", bundledUri.toString());
+            payload.put("title", getPresetDisplayName(normalizedPreset));
+            payload.put("source", "bundled");
+            return payload;
+        }
+
+        Uri defaultUri = resolveRingtoneUri("", normalizedToneType);
+        payload.put("uri", defaultUri != null ? defaultUri.toString() : "");
+        payload.put("title", getPresetDisplayName(normalizedPreset));
+        payload.put("source", "default");
+        return payload;
+    }
+
+    private Uri findSystemPresetUri(String preset, String toneType) {
+        int[] ringtoneTypes = "alarm".equals(toneType)
+            ? new int[] { RingtoneManager.TYPE_ALARM, RingtoneManager.TYPE_NOTIFICATION }
+            : new int[] { RingtoneManager.TYPE_NOTIFICATION, RingtoneManager.TYPE_ALARM };
+
+        for (int ringtoneType : ringtoneTypes) {
+            RingtoneManager manager = new RingtoneManager(getContext());
+            manager.setType(ringtoneType);
+            Cursor cursor = manager.getCursor();
+            if (cursor == null) continue;
+            try {
+                int count = cursor.getCount();
+                for (int i = 0; i < count; i++) {
+                    if (!cursor.moveToPosition(i)) continue;
+                    Uri uri = manager.getRingtoneUri(i);
+                    if (uri == null) continue;
+                    Ringtone ringtone = RingtoneManager.getRingtone(getContext(), uri);
+                    if (ringtone == null) continue;
+                    String title = ringtone.getTitle(getContext());
+                    if (matchesPresetTitle(preset, title)) {
+                        return uri;
+                    }
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+        return null;
+    }
+
+    private boolean matchesPresetTitle(String preset, String title) {
+        String normalizedTitle = normalizeTitle(title);
+        if (normalizedTitle.isEmpty()) return false;
+        if (PRESET_FRESH_START.equals(preset)) {
+            return normalizedTitle.contains("freshstart") || normalizedTitle.contains("フレッシュスタート");
+        }
+        return normalizedTitle.contains("bicycle") || normalizedTitle.contains("バイシクル");
+    }
+
+    private String normalizeTitle(String title) {
+        if (title == null) return "";
+        String normalized = title.toLowerCase(Locale.ROOT).trim();
+        normalized = normalized.replace(" ", "");
+        normalized = normalized.replace("-", "");
+        normalized = normalized.replace("_", "");
+        return normalized;
+    }
+
+    private String getPresetDisplayName(String preset) {
+        return PRESET_FRESH_START.equals(preset) ? "フレッシュスタート" : "バイシクル";
+    }
+
+    private Uri buildBundledRawResourceUri(String rawName) {
+        if (rawName == null || rawName.trim().isEmpty()) return null;
+        return Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + getContext().getPackageName() + "/raw/" + rawName.trim());
     }
 }
