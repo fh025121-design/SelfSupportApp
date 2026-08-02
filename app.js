@@ -190,7 +190,8 @@ let devAlertTestConfig = {
 
 const SECOND_ALERT_DELAY_MS = 30 * 1000;
 const SECOND_ALERT_DURATION_SECONDS = 10;
-const LOCAL_NOTIFICATION_TEST_CHANNEL_ID = "task-finish-test";
+const UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID = "task-alert-v2";
+const LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS = ["task-finish-test"];
 const LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID = 10001;
 const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
 const TASK_FINISH_NOTIFICATION_ID_RANGE = 60000;
@@ -2751,10 +2752,19 @@ async function ensureLocalNotificationChannel() {
   if (!bridge?.isNativePlatform?.() || !plugin?.createChannel) return false;
 
   try {
+    if (plugin.deleteChannel) {
+      for (const channelId of LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS) {
+        try {
+          await plugin.deleteChannel({ id: channelId });
+        } catch (error) {
+          console.warn("[LocalNotificationTest] Failed to delete legacy channel", channelId, error);
+        }
+      }
+    }
     await plugin.createChannel({
-      id: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
-      name: "Task Finish Test",
-      description: "10-second local notification trial for Android testing",
+      id: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
+      name: "Task / Departure Alert",
+      description: "Unified alert channel for task, continue, and departure notifications",
       importance: 5,
       visibility: 1,
       vibration: true
@@ -2960,7 +2970,7 @@ async function refreshMedicineReminderNotifications() {
       title: "薬の時間です",
       body: buildMedicineReminderNotificationBody(reminder),
       notifyAt,
-      channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+      channelId: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
       extra: {
         source: "medicine-reminder",
         dateKey: reminder.dateKey
@@ -3007,6 +3017,11 @@ function setupLocalNotificationActionListener() {
   if (!bridge?.isNativePlatform?.() || !plugin?.addListener || localNotificationListenerRegistered) return;
 
   localNotificationListenerRegistered = true;
+  plugin.addListener("localNotificationReceived", (event) => {
+    const source = String(event?.notification?.extra?.source || "");
+    if (source !== "task-finish" && source !== "departure-reminder" && source !== "local-notification-test") return;
+    runVibrationFeedback("received");
+  });
   plugin.addListener("localNotificationActionPerformed", (event) => {
     const source = String(event?.notification?.extra?.source || "");
     if (source === "medicine-reminder") {
@@ -3107,7 +3122,7 @@ async function scheduleDepartureNotificationForCurrentPlan() {
       title: getDepartureNotificationTitle(),
       body: getDepartureNotificationBody(departureAt),
       notifyAt,
-      channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+      channelId: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
       extra: {
         source: "departure-reminder",
         dateKey: state.dateKey,
@@ -3157,7 +3172,7 @@ function scheduleTaskFinishNotificationForRunningTask(task) {
         title: "時間になりました",
         body: buildTaskFinishNotificationBody(task),
         notifyAt,
-        channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+        channelId: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
         extra: {
           source: "task-finish",
           taskId: task.id
@@ -3203,7 +3218,7 @@ async function runLocalNotificationTest() {
       title: "タスク終了",
       body: "数学の終了時間です",
       notifyAt,
-      channelId: LOCAL_NOTIFICATION_TEST_CHANNEL_ID,
+      channelId: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
       extra: {
         source: "local-notification-test"
       }
@@ -5842,7 +5857,7 @@ function runVibrationFeedback(stage = "first") {
       console.log("[Vibrate] navigator.vibrate is not available.");
       return;
     }
-    const pattern = [300, 150, 300];
+    const pattern = [0, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500];
     const result = navigator.vibrate(pattern);
     console.log("[Vibrate] navigator.vibrate result:", result);
   } catch (error) {
