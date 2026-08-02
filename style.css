@@ -1149,6 +1149,15 @@ button:disabled {
   margin-top: 8px;
 }
 
+.continue-running-notice {
+  margin-bottom: 10px;
+}
+
+.continue-running-notice p {
+  margin: 0 0 6px;
+  font-weight: 900;
+}
+
 .app-modal-overlay {
   position: fixed;
   inset: 0;
@@ -1295,6 +1304,48 @@ button:disabled {
   flex-direction: column;
   justify-content: center;
   padding: 24px;
+}
+
+.task-priority-modal {
+  align-items: center;
+  text-align: center;
+}
+
+.task-priority-modal h3 {
+  margin-bottom: 12px;
+}
+
+.task-priority-label {
+  font-size: 1.3rem;
+  font-weight: 900;
+  color: #1f2937;
+  margin-bottom: 16px;
+}
+
+.task-priority-message {
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: #1f2937;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.task-priority-caption {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #475569;
+}
+
+.task-priority-elapsed {
+  margin: 8px 0 0;
+  font-size: 2.2rem;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.task-priority-actions {
+  width: min(560px, 100%);
 }
 
 .medicine-modal h3 {

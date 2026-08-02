@@ -212,6 +212,7 @@ const MEDICINE_TYPE_BLUE = "blue";
 const MEDICINE_TYPE_RED = "red";
 const HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED = "check_departure_completed";
 const HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED = "check_return_completed";
+const HISTORY_EVENT_TYPE_CLUB_AFTER_CHECK_COMPLETED = "club_after_check_completed";
 const HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED = "medicine_blue_completed";
 const HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED = "medicine_red_completed";
 const HISTORY_EVENT_TYPE_TASK_STARTED = "task_started";
@@ -221,6 +222,7 @@ const HISTORY_EVENT_TYPE_TASK_COMPLETED = "task_completed";
 const HISTORY_EVENT_TYPES = new Set([
   HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED,
   HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED,
+  HISTORY_EVENT_TYPE_CLUB_AFTER_CHECK_COMPLETED,
   HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED,
   HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED,
   HISTORY_EVENT_TYPE_TASK_STARTED,
@@ -231,6 +233,7 @@ const HISTORY_EVENT_TYPES = new Set([
 const HISTORY_EVENT_DISPLAYABLE_TYPES = new Set([
   HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED,
   HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED,
+  HISTORY_EVENT_TYPE_CLUB_AFTER_CHECK_COMPLETED,
   HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED,
   HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED,
   HISTORY_EVENT_TYPE_TASK_STARTED,
@@ -239,6 +242,7 @@ const HISTORY_EVENT_DISPLAYABLE_TYPES = new Set([
   HISTORY_EVENT_TYPE_TASK_COMPLETED
 ]);
 const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
+const DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START = "verify-seconds-before-start";
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
@@ -446,11 +450,30 @@ function createRunningState() {
     baseSeconds: 0,
     isPaused: false,
     confirmingComplete: false,
+    awaitingStartSupportConfirmation: false,
+    startSupportId: "",
     alertAtSeconds: null,
     nextAlertKind: "task-finish",
     alerting: false,
     lastAlertTarget: null
   };
+}
+
+function createDailySupportByDate() {
+  return {};
+}
+
+function normalizeDailySupportByDate(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([dateKey, value]) => {
+    const normalizedDateKey = normalizeTaskDateKey(dateKey);
+    if (!normalizedDateKey) return;
+    const activeSupportId = String(value?.activeSupportId || "").trim();
+    if (!activeSupportId) return;
+    out[normalizedDateKey] = { activeSupportId };
+  });
+  return out;
 }
 
 function createReviewState() {
@@ -482,7 +505,8 @@ function createReturnCheckState() {
       homework: "",
       trouble: "",
       reply: "",
-      delayedContact: ""
+      delayedContact: "",
+      clubActivityDay: ""
     },
     reminderPromptTriggered: false,
     reminderDeferred: false,
@@ -490,6 +514,16 @@ function createReturnCheckState() {
     reminderSnoozeUntil: 0,
     reportText: "",
     copied: false,
+    completedAtMs: 0,
+    completedAtTimeLabel: ""
+  };
+}
+
+function createClubAfterCheckState(dateKey = getTodayKeyJst()) {
+  return {
+    dateKey: normalizeTaskDateKey(dateKey) || getTodayKeyJst(),
+    wasClubDay: false,
+    done: false,
     completedAtMs: 0,
     completedAtTimeLabel: ""
   };
@@ -601,6 +635,7 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     recurringPlansAppliedByDate: {},
     recurringSyncDateKey: null,
     historyEventsByDate: normalizeHistoryEventsByDate(historyEventsByDate, dateKey),
+    dailySupportByDate: createDailySupportByDate(),
     dailySpecialBelongingsByDate: {},
     planningDailyBelongingInput: "",
     homeworkTasks: [],
@@ -613,6 +648,7 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     notificationSoundSettings: createNotificationSoundSettings(),
     medicineReminder: createMedicineReminderState(dateKey),
     returnCheck: createReturnCheckState(),
+    clubAfterCheck: createClubAfterCheckState(dateKey),
     goPressedAt: null,
     dayClosed: false,
     previousDayPending: null,
@@ -1063,7 +1099,7 @@ function loadState() {
 
     safe.phase = [
       "home", "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result",
-      "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
+      "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
@@ -1071,7 +1107,7 @@ function loadState() {
     safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
-      "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
+      "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
     safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
     safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
@@ -1092,6 +1128,7 @@ function loadState() {
     }
     safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
     safe.historyEventsByDate = normalizeHistoryEventsByDate(safe.historyEventsByDate, todayKey);
+    safe.dailySupportByDate = normalizeDailySupportByDate(safe.dailySupportByDate);
     safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
     safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
     safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
@@ -1103,6 +1140,7 @@ function loadState() {
     safe.notificationSoundSettings = normalizeNotificationSoundSettings(safe.notificationSoundSettings);
     safe.medicineReminder = normalizeMedicineReminderState(safe.medicineReminder, todayKey);
     safe.returnCheck = normalizeReturnCheckState(safe.returnCheck);
+    safe.clubAfterCheck = normalizeClubAfterCheckState(safe.clubAfterCheck, todayKey);
     safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
     safe.previousDayPending = safe.previousDayPending || null;
     safe.dayClosed = Boolean(safe.dayClosed);
@@ -1237,6 +1275,22 @@ function normalizeReturnCheckState(raw) {
       ...((raw && raw.answers) || {})
     }
   };
+  base.done = Boolean(base.done);
+  base.completedAtMs = Number.isFinite(Number(base.completedAtMs)) ? Math.max(0, Number(base.completedAtMs)) : 0;
+  base.completedAtTimeLabel = base.done ? String(base.completedAtTimeLabel || "") : "";
+  return base;
+}
+
+function normalizeClubAfterCheckState(raw, fallbackDateKey = getTodayKeyJst()) {
+  const fallback = createClubAfterCheckState(fallbackDateKey);
+  const base = { ...fallback, ...(raw || {}) };
+  const fallbackKey = normalizeTaskDateKey(fallbackDateKey) || fallback.dateKey;
+  const dateKey = normalizeTaskDateKey(base.dateKey) || fallbackKey;
+  if (dateKey !== fallbackKey) {
+    return createClubAfterCheckState(fallbackKey);
+  }
+  base.dateKey = dateKey;
+  base.wasClubDay = Boolean(base.wasClubDay);
   base.done = Boolean(base.done);
   base.completedAtMs = Number.isFinite(Number(base.completedAtMs)) ? Math.max(0, Number(base.completedAtMs)) : 0;
   base.completedAtTimeLabel = base.done ? String(base.completedAtTimeLabel || "") : "";
@@ -1683,6 +1737,10 @@ function render() {
       return renderReturnCheck();
     case "returnReport":
       return renderReturnReport();
+    case "clubAfterCheck":
+      return renderClubAfterCheck();
+    case "clubAfterCheckConfirm":
+      return renderClubAfterCheckConfirm();
     case "dayEnd":
       return renderDayEnd();
     case "settings":
@@ -1715,6 +1773,8 @@ function renderAuthSyncing() {
   `;
   removeReturnCheckReminderOverlay();
   removeMedicineReminderOverlay();
+  removeStartSupportOverlay();
+  removeRunningAlertOverlay();
 }
 
 function renderAuthChecking() {
@@ -1726,6 +1786,8 @@ function renderAuthChecking() {
   `;
   removeReturnCheckReminderOverlay();
   removeMedicineReminderOverlay();
+  removeStartSupportOverlay();
+  removeRunningAlertOverlay();
 }
 
 function renderLogin() {
@@ -1865,7 +1927,7 @@ function normalizeLoadedState(rawState) {
 
   safe.phase = [
     "home", "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result",
-    "departureCheck", "returnCheck", "returnReport", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
+    "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
   safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
@@ -1873,7 +1935,7 @@ function normalizeLoadedState(rawState) {
   safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
   safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
-    "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
+    "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
   safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
   safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
@@ -1897,6 +1959,7 @@ function normalizeLoadedState(rawState) {
   }
   safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
   safe.historyEventsByDate = normalizeHistoryEventsByDate(safe.historyEventsByDate, todayKey);
+  safe.dailySupportByDate = normalizeDailySupportByDate(safe.dailySupportByDate);
   safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
   safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
   safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
@@ -1905,6 +1968,7 @@ function normalizeLoadedState(rawState) {
   safe.review = { ...createReviewState(), ...(safe.review || {}) };
   safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
   safe.returnCheck = normalizeReturnCheckState(safe.returnCheck);
+  safe.clubAfterCheck = normalizeClubAfterCheckState(safe.clubAfterCheck, todayKey);
   safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
   safe.previousDayPending = safe.previousDayPending || null;
   safe.dayClosed = Boolean(safe.dayClosed);
@@ -2318,6 +2382,7 @@ function renderHome() {
   const showReturnCheckHomeButton = !isPreviousView
     && state.departureCheck.done
     && getReturnCheckReminderStatus() !== "none";
+  const showClubAfterCheckHomeButton = !isPreviousView && shouldShowClubAfterCheckHomeNotice();
   const pendingHomework = isPreviousView ? [] : getSortedPendingHomeworkTasks();
   const homeworkPending = pendingHomework.length;
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
@@ -2354,17 +2419,17 @@ function renderHome() {
     ${!isPreviousView && state.previousDayArchive ? `<div class="home-task-more-row"><button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button></div>` : ""}
     ${showRunningReminder ? `
       <div class="notice warn home-running-reminder">
-        <p>⚠ まだ続いていますか？</p>
+        <p>🟡 もう少し続けています</p>
         <p>${escapeHtml(runningReminderLabel)}</p>
-        <div class="btn-row triple compact-stack">
+        <div class="btn-row split compact-stack">
           <button id="homeReminderCompleteBtn" class="btn-ok" type="button">完了</button>
           <button id="homeReminderInterruptBtn" class="btn-quiet" type="button">中断</button>
-          <button id="homeReminderContinueBtn" class="btn-sub" type="button">もう少し続ける</button>
         </div>
       </div>
     ` : ""}
     ${showDepartureCheckHomeButton ? `<div class="notice warn"><p>🟡 出発前チェック${departureReminder ? `（あと${departureReminder.minutesLeft}分）` : ""}</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
+    ${showClubAfterCheckHomeButton ? `<div class="notice warn return-check-notice"><p>⚾ 部活後チェック（未完了）</p><div class="btn-row compact-stack"><button id="openClubAfterCheckBtn" class="btn-sub" type="button">部活後チェックをする</button></div></div>` : ""}
     <div class="home-overview">
       <div class="home-overview-left">
         <p>起床 ${formatTimeForDisplay(homeContext.planTimes.wakeUp)}</p>
@@ -2471,9 +2536,9 @@ function renderHome() {
     bindTextAction("openMedicineReminderCard", () => openMedicineReminderOverlay(true));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
+    document.getElementById("openClubAfterCheckBtn")?.addEventListener("click", () => changePhase("clubAfterCheck", false));
     document.getElementById("homeReminderCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
     document.getElementById("homeReminderInterruptBtn")?.addEventListener("click", interruptRunningTask);
-    document.getElementById("homeReminderContinueBtn")?.addEventListener("click", continueRunningTaskAfterReminder);
   }
 
   if (canOpenCompletionHistory) {
@@ -2496,6 +2561,7 @@ function getCompletionHistoryEventLabel(event) {
   const type = String(event?.type || "");
   if (type === HISTORY_EVENT_TYPE_CHECK_DEPARTURE_COMPLETED) return "出発前チェック完了";
   if (type === HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED) return "帰宅後チェック完了";
+  if (type === HISTORY_EVENT_TYPE_CLUB_AFTER_CHECK_COMPLETED) return "部活後チェック完了";
   if (type === HISTORY_EVENT_TYPE_MEDICINE_BLUE_COMPLETED) return "青の薬　完了";
   if (type === HISTORY_EVENT_TYPE_MEDICINE_RED_COMPLETED) return "赤の薬　完了";
   return "";
@@ -2651,9 +2717,40 @@ function buildCompletionHistoryDisplayEntries(events) {
   return entries;
 }
 
+function buildCompletionHistoryCopyText(entries) {
+  const dateKey = getCompletionHistoryTargetDateKey();
+  const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const title = dateMatch
+    ? `【${Number(dateMatch[2])}月${Number(dateMatch[3])}日 完了履歴】`
+    : "【完了履歴】";
+  const lines = [title, ""];
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    lines.push("（履歴なし）");
+    return lines.join("\n");
+  }
+
+  entries.forEach((entry) => {
+    if (entry.kind === "single") {
+      lines.push(`${entry.timeLabel}　${entry.label}`);
+      return;
+    }
+    const taskHead = entry.taskContent
+      ? `${entry.taskName}：${entry.taskContent}`
+      : entry.taskName;
+    lines.push(`${entry.firstTimeLabel}　${taskHead}`);
+    entry.actions.forEach((action) => {
+      lines.push(`　${action.label}　${action.timeLabel}`);
+    });
+  });
+
+  return lines.join("\n");
+}
+
 function renderCompletionHistory() {
   const events = getCompletionHistoryEventsForCurrentDate();
   const entries = buildCompletionHistoryDisplayEntries(events);
+  const copyText = buildCompletionHistoryCopyText(entries);
   const rowsHtml = entries.length === 0
     ? '<p class="helper">今日はまだ完了履歴がありません。</p>'
     : `<div class="completion-history-text-list">${entries.map((entry) => {
@@ -2672,10 +2769,60 @@ function renderCompletionHistory() {
   renderScreen(`
     <h2>完了履歴</h2>
     ${rowsHtml}
+    <div class="btn-row compact-stack"><button id="copyCompletionHistoryBtn" class="btn-main" type="button">履歴をコピー</button></div>
+    <p id="completionHistoryCopyMsg" class="helper" aria-live="polite"></p>
     <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
   `);
 
-  document.getElementById("finishTodayBtn")?.addEventListener("click", startTodayFinishFlow);
+  let completionHistoryCopied = false;
+  const copyMsgEl = document.getElementById("completionHistoryCopyMsg");
+
+  const handleCopyCompletionHistory = async () => {
+    const ok = await copyToClipboard(copyText);
+    if (ok) {
+      completionHistoryCopied = true;
+      if (copyMsgEl) copyMsgEl.textContent = "✅ コピーしました";
+      return;
+    }
+    if (copyMsgEl) copyMsgEl.textContent = "コピーに失敗しました";
+  };
+
+  const showFinishBeforeCopyDialog = () => {
+    document.getElementById("completionHistoryFinishConfirmOverlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "completionHistoryFinishConfirmOverlay";
+    overlay.className = "app-modal-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="completionHistoryFinishConfirmTitle">
+        <h3 id="completionHistoryFinishConfirmTitle">まだ履歴をコピーしていません。</h3>
+        <div class="btn-row split compact-stack app-modal-actions">
+          <button id="copyBeforeFinishBtn" class="btn-main" type="button">コピーする</button>
+          <button id="finishWithoutCopyBtn" class="btn-danger" type="button">そのまま終了</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    document.getElementById("copyBeforeFinishBtn")?.addEventListener("click", async () => {
+      await handleCopyCompletionHistory();
+      overlay.remove();
+    });
+    document.getElementById("finishWithoutCopyBtn")?.addEventListener("click", () => {
+      overlay.remove();
+      startTodayFinishFlow();
+    });
+  };
+
+  document.getElementById("copyCompletionHistoryBtn")?.addEventListener("click", handleCopyCompletionHistory);
+
+  document.getElementById("finishTodayBtn")?.addEventListener("click", () => {
+    if (completionHistoryCopied) {
+      startTodayFinishFlow();
+      return;
+    }
+    showFinishBeforeCopyDialog();
+  });
 }
 
 function renderSettings() {
@@ -3748,6 +3895,7 @@ function setupLocalNotificationActionListener() {
       const runningTask = getRunningTask();
       if (!runningTask || state.running.isPaused || runningTask.id !== notifiedTaskId) return;
       state.running.alerting = true;
+      state.running.nextAlertKind = source;
       if (Number.isFinite(Number(state.running.alertAtSeconds))) {
         state.running.lastAlertTarget = Number(state.running.alertAtSeconds);
       }
@@ -6256,6 +6404,7 @@ function renderExecution() {
 
     runArea.innerHTML = `
       <div class="timer-box">
+        ${renderExecutionContinueModeNotice(runningTask)}
         <p class="helper">実行中</p>
         <h3>${escapeHtml(runningTask.name)}</h3>
         <p class="planned-time-row">予定時間: ${runningTask.plannedMinutes}分</p>
@@ -6264,7 +6413,6 @@ function renderExecution() {
           <p class="elapsed" id="elapsedLabel">${formatElapsedSmart(elapsed)}</p>
         </div>
         ${renderExecutionCompleteControls()}
-        ${renderOverrunControls(elapsed)}
       </div>
     `;
 
@@ -6272,8 +6420,7 @@ function renderExecution() {
 
     tickTimer = setInterval(() => {
       const sec = getRunningElapsedSeconds();
-      const label = document.getElementById("elapsedLabel");
-      if (label) label.textContent = formatElapsedSmart(sec);
+      updateRunningElapsedLabels(sec);
       checkOverrunNotification(sec);
       saveState();
     }, 1000);
@@ -6328,26 +6475,35 @@ function renderExecution() {
 
 }
 
-function renderOverrunControls(elapsed) {
-  if (!state.running.alerting) return "";
-  return `
-    <div class="notice warn">
-      <p>予定時間になりました。</p>
-      <div class="btn-row triple compact-stack overrun-choice-row">
-        <button id="overrunCompleteBtn" class="btn-ok" type="button">完了</button>
-        <button id="overrunInterruptBtn" class="btn-quiet" type="button">中断</button>
-        <button id="overrunContinueBtn" class="btn-sub" type="button">もう少し続ける</button>
-      </div>
-    </div>
-  `;
+function updateRunningElapsedLabels(seconds) {
+  const text = formatElapsedSmart(seconds);
+  const mainLabel = document.getElementById("elapsedLabel");
+  if (mainLabel) mainLabel.textContent = text;
+  const supportLabel = document.getElementById("startSupportElapsedLabel");
+  if (supportLabel) supportLabel.textContent = text;
 }
 
 function renderExecutionCompleteControls() {
+  if (isRunningTaskInContinueMode()) return "";
   if (state.running.alerting) return "";
   return `
     <div class="btn-row split compact-stack execution-main-actions">
       <button id="completeBtn" class="btn-ok" type="button">完了</button>
       <button id="interruptBtn" class="btn-quiet" type="button">中断</button>
+    </div>
+  `;
+}
+
+function renderExecutionContinueModeNotice(task) {
+  if (!isRunningTaskInContinueMode()) return "";
+  return `
+    <div class="notice warn continue-running-notice">
+      <p>🟡 もう少し続けています</p>
+      <p>${escapeHtml(buildRunningReminderTaskLabel(task))}</p>
+      <div class="btn-row split compact-stack">
+        <button id="continueModeCompleteBtn" class="btn-ok" type="button">完了</button>
+        <button id="continueModeInterruptBtn" class="btn-quiet" type="button">中断</button>
+      </div>
     </div>
   `;
 }
@@ -6359,15 +6515,13 @@ function clearExecutionConfirmStates() {
 function bindExecutionButtons() {
   document.getElementById("completeBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
   document.getElementById("interruptBtn")?.addEventListener("click", interruptRunningTask);
-  document.getElementById("overrunCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
-  document.getElementById("overrunInterruptBtn")?.addEventListener("click", interruptRunningTask);
-  document.getElementById("overrunContinueBtn")?.addEventListener("click", continueRunningTaskAfterReminder);
+  document.getElementById("continueModeCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
+  document.getElementById("continueModeInterruptBtn")?.addEventListener("click", interruptRunningTask);
 }
 
 function checkOverrunNotification(elapsed) {
   const target = state.running.alertAtSeconds;
   if (target == null) return;
-  if (state.running.nextAlertKind === "task-recheck") return;
   if (elapsed >= target) {
     const willTrigger = state.running.lastAlertTarget !== target;
     console.log("[OverrunCheck] elapsed/target/last/willTrigger", elapsed, target, state.running.lastAlertTarget, willTrigger);
@@ -6380,6 +6534,7 @@ function checkOverrunNotification(elapsed) {
     const task = getRunningTask();
     if (task) cancelTaskFinishNotification(task.id);
     saveState();
+    requestPassiveRender();
   }
 }
 
@@ -6715,12 +6870,16 @@ function startTask(taskId) {
   cancelSecondAlertFollowup();
   cancelTaskFinishNotification(task.id);
   startAudioWarmupFromUserAction();
+  const startSupportId = getActiveDailySupportId(getTodayKeyJst());
+  const needsStartSupportConfirmation = startSupportId === DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START;
   state.running = {
     taskId,
     startedAt: Date.now(),
     baseSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : 0,
     isPaused: false,
     confirmingComplete: false,
+    awaitingStartSupportConfirmation: needsStartSupportConfirmation,
+    startSupportId: needsStartSupportConfirmation ? startSupportId : "",
     alertAtSeconds: task.plannedMinutes * 60,
     nextAlertKind: "task-finish",
     alerting: false,
@@ -6750,11 +6909,39 @@ function getRunningElapsedSeconds() {
   return Math.max(0, (state.running.baseSeconds || 0) + passed);
 }
 
-function isRunningTaskReminderVisible() {
-  const runningTask = getRunningTask();
-  if (!runningTask) return false;
+function getActiveDailySupportId(dateKey = getTodayKeyJst()) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey) || getTodayKeyJst();
+  const support = state.dailySupportByDate?.[normalizedDateKey];
+  return String(support?.activeSupportId || "").trim();
+}
+
+function isStartSupportModeActiveForToday() {
+  return getActiveDailySupportId(getTodayKeyJst()) === DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START;
+}
+
+function activateStartSupportModeForTodayIfNeeded(actualSeconds) {
+  if (!Number.isFinite(Number(actualSeconds))) return;
+  if (Number(actualSeconds) >= 60) return;
+  const todayKey = getTodayKeyJst();
+  if (!state.dailySupportByDate || typeof state.dailySupportByDate !== "object" || Array.isArray(state.dailySupportByDate)) {
+    state.dailySupportByDate = createDailySupportByDate();
+  }
+  if (getActiveDailySupportId(todayKey) === DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START) return;
+  state.dailySupportByDate[todayKey] = {
+    activeSupportId: DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START
+  };
+}
+
+function isRunningTaskInContinueMode() {
+  const task = getRunningTask();
+  if (!task) return false;
   if (state.running.isPaused) return false;
-  return Boolean(state.running.alerting);
+  if (state.running.alerting) return false;
+  return state.running.nextAlertKind === "task-recheck";
+}
+
+function isRunningTaskReminderVisible() {
+  return isRunningTaskInContinueMode();
 }
 
 function buildRunningReminderTaskLabel(task) {
@@ -6763,6 +6950,91 @@ function buildRunningReminderTaskLabel(task) {
   const content = String(task.content || "").trim();
   if (!content) return name;
   return `${name}：${content}`;
+}
+
+function removeStartSupportOverlay() {
+  document.getElementById("startSupportOverlay")?.remove();
+}
+
+function removeRunningAlertOverlay() {
+  document.getElementById("runningAlertOverlay")?.remove();
+}
+
+function getRunningAlertTitle() {
+  return state.running.nextAlertKind === "task-recheck"
+    ? "まだ続いていますか？"
+    : "予定時間になりました";
+}
+
+function renderTaskPriorityOverlay() {
+  const runningTask = getRunningTask();
+  if (!runningTask || state.running.isPaused) {
+    removeStartSupportOverlay();
+    removeRunningAlertOverlay();
+    return;
+  }
+
+  if (state.running.alerting) {
+    removeStartSupportOverlay();
+    const existing = document.getElementById("runningAlertOverlay");
+    const overlay = existing || document.createElement("div");
+    overlay.id = "runningAlertOverlay";
+    overlay.className = "app-modal-overlay medicine-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal medicine-modal task-priority-modal" role="dialog" aria-modal="true" aria-labelledby="runningAlertTitle">
+        <h3 id="runningAlertTitle">${escapeHtml(getRunningAlertTitle())}</h3>
+        <p class="task-priority-label">${escapeHtml(buildRunningReminderTaskLabel(runningTask))}</p>
+        <div class="btn-row triple compact-stack app-modal-actions task-priority-actions">
+          <button id="runningAlertCompleteBtn" class="btn-ok" type="button">完了</button>
+          <button id="runningAlertInterruptBtn" class="btn-quiet" type="button">中断</button>
+          <button id="runningAlertContinueBtn" class="btn-sub" type="button">もうちょっと</button>
+        </div>
+      </div>
+    `;
+    if (!existing) {
+      document.body.appendChild(overlay);
+    }
+    document.getElementById("runningAlertCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
+    document.getElementById("runningAlertInterruptBtn")?.addEventListener("click", interruptRunningTask);
+    document.getElementById("runningAlertContinueBtn")?.addEventListener("click", continueRunningTaskAfterReminder);
+    return;
+  }
+
+  removeRunningAlertOverlay();
+  const shouldShowStartSupport = state.running.awaitingStartSupportConfirmation
+    && state.running.startSupportId === DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START;
+  if (!shouldShowStartSupport) {
+    removeStartSupportOverlay();
+    return;
+  }
+
+  const existing = document.getElementById("startSupportOverlay");
+  const overlay = existing || document.createElement("div");
+  overlay.id = "startSupportOverlay";
+  overlay.className = "app-modal-overlay medicine-overlay";
+  overlay.innerHTML = `
+    <div class="app-modal medicine-modal task-priority-modal" role="dialog" aria-modal="true" aria-labelledby="startSupportTitle">
+      <h3 id="startSupportTitle">🟡 今日のサポート</h3>
+      <p class="task-priority-message">秒が動いたことを確認してから<br />始めてください</p>
+      <p class="task-priority-caption">経過時間</p>
+      <p id="startSupportElapsedLabel" class="task-priority-elapsed">${escapeHtml(formatElapsedSmart(getRunningElapsedSeconds()))}</p>
+      <div class="btn-row compact-stack app-modal-actions task-priority-actions">
+        <button id="confirmStartSupportBtn" class="btn-main" type="button">確認しました</button>
+      </div>
+    </div>
+  `;
+  if (!existing) {
+    document.body.appendChild(overlay);
+  }
+  document.getElementById("confirmStartSupportBtn")?.addEventListener("click", () => {
+    state.running.awaitingStartSupportConfirmation = false;
+    saveState();
+    if (state.phase !== "execution") {
+      changePhase("execution", false);
+      return;
+    }
+    render();
+  });
 }
 
 function continueRunningTaskAfterReminder() {
@@ -6863,6 +7135,7 @@ function finalizeTaskCompletion() {
   cancelTaskFinishNotification(task.id);
   task.actualSeconds = Math.max(1, getRunningElapsedSeconds());
   task.status = "done";
+  activateStartSupportModeForTodayIfNeeded(task.actualSeconds);
   appendHistoryEvent({
     category: "task",
     type: HISTORY_EVENT_TYPE_TASK_COMPLETED,
@@ -7267,6 +7540,7 @@ function renderReturnCheckReminderOverlay() {
 }
 
 function renderReturnCheck() {
+  const shouldShowClubQuestion = getCurrentHomeDateKey() === getTodayKeyJst();
   renderScreen(`
     <h2>帰宅時チェック</h2>
     <div class="task-form-box">
@@ -7282,6 +7556,15 @@ function renderReturnCheck() {
             <label class="option-item"><input type="radio" name="delayedContactAnswer" value="na" ${state.returnCheck.answers.delayedContact === "na" ? "checked" : ""} />該当なし</label>
           </div>
         </div>
+        ${shouldShowClubQuestion ? `
+        <div>
+          <p class="legend">今日は部活動の日でしたか？</p>
+          <div class="option-group">
+            <label class="option-item"><input type="radio" name="clubActivityDayAnswer" value="yes" ${state.returnCheck.answers.clubActivityDay === "yes" ? "checked" : ""} />はい</label>
+            <label class="option-item"><input type="radio" name="clubActivityDayAnswer" value="no" ${state.returnCheck.answers.clubActivityDay === "no" ? "checked" : ""} />いいえ</label>
+          </div>
+        </div>
+        ` : ""}
       </div>
       <div class="btn-row split compact-stack">
         <button id="copyReturnCheckBtn" class="btn-sub" type="button">チェック内容をコピー</button>
@@ -7327,6 +7610,15 @@ function renderReturnCheck() {
       refreshCopyText();
     });
   });
+  document.querySelectorAll("input[name='clubActivityDayAnswer']").forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      state.returnCheck.answers.clubActivityDay = target.value;
+      saveState();
+      refreshCopyText();
+    });
+  });
   document.getElementById("finishReturnCheckBtn").addEventListener("click", finishReturnCheck);
 }
 
@@ -7344,7 +7636,8 @@ function buildReturnCheckCopyText() {
     `宿題の有無: ${a.homework || "(未入力)"}`,
     `困ったことの有無: ${a.trouble || "(未入力)"}`,
     `家庭教師・親への返信: ${a.reply || "(未入力)"}`,
-    `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`
+    `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`,
+    `部活動の日: ${a.clubActivityDay === "yes" ? "はい" : a.clubActivityDay === "no" ? "いいえ" : "(未選択)"}`
   ].join("\n");
 }
 
@@ -7362,8 +7655,17 @@ function finishReturnCheck() {
     `宿題: ${a.homework || "(未入力)"}`,
     `困ったこと: ${a.trouble || "(未入力)"}`,
     `返信: ${a.reply || "(未入力)"}`,
-    `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`
+    `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`,
+    `部活動の日: ${a.clubActivityDay === "yes" ? "はい" : a.clubActivityDay === "no" ? "いいえ" : "(未選択)"}`
   ].join("\n");
+  state.clubAfterCheck = normalizeClubAfterCheckState({
+    ...state.clubAfterCheck,
+    dateKey: getTodayKeyJst(),
+    wasClubDay: a.clubActivityDay === "yes",
+    done: a.clubActivityDay === "yes" ? Boolean(state.clubAfterCheck?.done) : false,
+    completedAtMs: a.clubActivityDay === "yes" ? Number(state.clubAfterCheck?.completedAtMs || 0) : 0,
+    completedAtTimeLabel: a.clubActivityDay === "yes" ? String(state.clubAfterCheck?.completedAtTimeLabel || "") : ""
+  }, getTodayKeyJst());
   state.phase = "returnReport";
   saveState();
   cancelDepartureNotification();
@@ -7405,6 +7707,62 @@ function renderReturnReport() {
     saveState();
     changePhase("home", false);
   });
+}
+
+function shouldShowClubAfterCheckHomeNotice() {
+  const clubAfterCheck = normalizeClubAfterCheckState(state.clubAfterCheck, getTodayKeyJst());
+  state.clubAfterCheck = clubAfterCheck;
+  if (getCurrentHomeDateKey() !== getTodayKeyJst()) return false;
+  if (!state.returnCheck.done) return false;
+  if (!clubAfterCheck.wasClubDay) return false;
+  return !clubAfterCheck.done;
+}
+
+function renderClubAfterCheck() {
+  renderScreen(`
+    <h2>⚾ 部活後チェック</h2>
+    <div class="task-card">
+      <p>① グラウンドで泥や砂をできるだけ落とし、自宅前でもう一度確認して落とし切った</p>
+      <p>② 野球バッグを決めた場所へ置いた</p>
+      <p>③ ユニフォーム・靴下の泥を風呂場で落とした</p>
+      <p>④ 水筒・弁当箱を出した</p>
+      <p>⑤ プリントを出し、伝えることは親へ直ちに共有した</p>
+    </div>
+    <div class="btn-row compact-stack">
+      <button id="openClubAfterCheckConfirmBtn" class="btn-main" type="button">親に確認してもらう</button>
+    </div>
+  `);
+
+  document.getElementById("openClubAfterCheckConfirmBtn")?.addEventListener("click", () => changePhase("clubAfterCheckConfirm"));
+}
+
+function renderClubAfterCheckConfirm() {
+  renderScreen(`
+    <h2>⚾ 部活後チェック</h2>
+    <div class="task-card">
+      <p>①〜⑤が終わっているか確認してください。</p>
+    </div>
+    <div class="btn-row split compact-stack">
+      <button id="completeClubAfterCheckBtn" class="btn-main" type="button">完了</button>
+      <button id="backToClubAfterCheckBtn" class="btn-quiet" type="button">戻る</button>
+    </div>
+  `);
+
+  document.getElementById("completeClubAfterCheckBtn")?.addEventListener("click", completeClubAfterCheck);
+  document.getElementById("backToClubAfterCheckBtn")?.addEventListener("click", () => changePhase("home", false));
+}
+
+function completeClubAfterCheck() {
+  const completedEvent = appendHistoryEvent({
+    category: "check",
+    type: HISTORY_EVENT_TYPE_CLUB_AFTER_CHECK_COMPLETED
+  });
+  state.clubAfterCheck.wasClubDay = true;
+  state.clubAfterCheck.done = true;
+  state.clubAfterCheck.completedAtMs = Number(completedEvent?.occurredAtMs || 0);
+  state.clubAfterCheck.completedAtTimeLabel = String(completedEvent?.timeLabel || "");
+  saveState();
+  changePhase("home", false);
 }
 
 function renderResult() {
@@ -7936,6 +8294,7 @@ function renderScreen(content) {
   renderReturnCheckReminderOverlay();
   renderSubmissionChecklistOverlay();
   renderMedicineReminderOverlay();
+  renderTaskPriorityOverlay();
 }
 
 function renderTopNav() {
@@ -8408,7 +8767,10 @@ function ensurePhaseRefreshTimer() {
     }
     renderReturnCheckReminderOverlay();
     renderMedicineReminderOverlay();
-    if (state.phase === "execution" && state.running.taskId && !state.running.isPaused) return;
+    if (state.running.taskId && !state.running.isPaused) {
+      checkOverrunNotification(getRunningElapsedSeconds());
+      if (state.phase === "execution") return;
+    }
     requestPassiveRender();
   }, 10000);
 }
