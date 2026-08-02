@@ -197,6 +197,8 @@ const LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS = ["task-finish-test"];
 const LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID = 10001;
 const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
 const TASK_FINISH_NOTIFICATION_ID_RANGE = 60000;
+const TASK_RECHECK_NOTIFICATION_ID_BASE = 260000;
+const TASK_RECHECK_NOTIFICATION_ID_RANGE = 60000;
 const DEPARTURE_NOTIFICATION_ID_BASE = 80000;
 const DEPARTURE_NOTIFICATION_ID_RANGE = 60000;
 const MEDICINE_REMINDER_NOTIFICATION_ID_BASE = 140000;
@@ -3018,6 +3020,7 @@ function getNotificationChannelIdForTarget(target) {
 
 async function initializeLocalNotificationTrial() {
   await ensureLocalNotificationChannel();
+  await cancelLegacyTaskRecheckNotificationsFromPending();
 }
 
 function restorePendingTaskFinishNotification() {
@@ -3166,6 +3169,15 @@ function getTaskFinishNotificationId(taskId) {
   return TASK_FINISH_NOTIFICATION_ID_BASE + hashed;
 }
 
+function getTaskRecheckNotificationId(taskId) {
+  const hashed = hashStringToPositiveInt(taskId) % TASK_RECHECK_NOTIFICATION_ID_RANGE;
+  return TASK_RECHECK_NOTIFICATION_ID_BASE + hashed;
+}
+
+function getLegacyTaskRecheckNotificationIds(taskId) {
+  return [getTaskFinishNotificationId(taskId)];
+}
+
 function getDepartureNotificationId(dateKey = state.dateKey) {
   const hashed = hashStringToPositiveInt(`${dateKey || ""}::departure`) % DEPARTURE_NOTIFICATION_ID_RANGE;
   return DEPARTURE_NOTIFICATION_ID_BASE + hashed;
@@ -3196,6 +3208,33 @@ async function cancelLocalNotificationsByIds(notificationIds) {
     return true;
   } catch (error) {
     console.error("[LocalNotification] Failed to cancel notifications", error);
+    return false;
+  }
+}
+
+async function cancelLegacyTaskRecheckNotificationsFromPending() {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.getPending) return false;
+
+  try {
+    const pending = await plugin.getPending();
+    const pendingNotifications = Array.isArray(pending?.notifications) ? pending.notifications : [];
+    const legacyRecheckIds = pendingNotifications
+      .filter((notification) => {
+        const source = String(notification?.extra?.source || "");
+        const id = Number(notification?.id);
+        return source === "task-recheck"
+          && Number.isInteger(id)
+          && id >= TASK_FINISH_NOTIFICATION_ID_BASE
+          && id < (TASK_FINISH_NOTIFICATION_ID_BASE + TASK_FINISH_NOTIFICATION_ID_RANGE);
+      })
+      .map((notification) => Number(notification.id));
+
+    if (legacyRecheckIds.length === 0) return false;
+    return cancelLocalNotificationsByIds(legacyRecheckIds);
+  } catch (error) {
+    console.error("[TaskRecheckNotification] Failed to cancel legacy notifications", error);
     return false;
   }
 }
@@ -3509,10 +3548,16 @@ function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-fi
     : Math.max(0, Number(state.running?.baseSeconds || 0));
   const remainingSeconds = Math.max(1, Math.ceil(target - elapsedSeconds));
   const notifyAt = new Date(Date.now() + remainingSeconds * 1000);
-  const notificationId = getTaskFinishNotificationId(task.id);
+  const isTaskRecheck = normalizedAlertKind === "task-recheck";
+  const notificationId = isTaskRecheck
+    ? getTaskRecheckNotificationId(task.id)
+    : getTaskFinishNotificationId(task.id);
+  const notificationIdsToCancel = isTaskRecheck
+    ? [notificationId, ...getLegacyTaskRecheckNotificationIds(task.id)]
+    : [notificationId];
 
   (async () => {
-    await cancelLocalNotificationsByIds([notificationId]);
+    await cancelLocalNotificationsByIds(notificationIdsToCancel);
     try {
       const result = await scheduleLocalNotification({
         id: notificationId,
@@ -3538,8 +3583,12 @@ function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-fi
 
 function cancelTaskFinishNotification(taskId) {
   if (!taskId) return;
-  const notificationId = getTaskFinishNotificationId(taskId);
-  cancelLocalNotificationsByIds([notificationId]).catch((error) => {
+  const notificationIds = [
+    getTaskFinishNotificationId(taskId),
+    getTaskRecheckNotificationId(taskId),
+    ...getLegacyTaskRecheckNotificationIds(taskId)
+  ];
+  cancelLocalNotificationsByIds(notificationIds).catch((error) => {
     console.error("[TaskFinishNotification] Failed to cancel notification", error);
   });
 }
@@ -5976,6 +6025,7 @@ function bindExecutionButtons() {
 function checkOverrunNotification(elapsed) {
   const target = state.running.alertAtSeconds;
   if (target == null) return;
+  if (state.running.nextAlertKind === "task-recheck") return;
   if (elapsed >= target) {
     const willTrigger = state.running.lastAlertTarget !== target;
     console.log("[OverrunCheck] elapsed/target/last/willTrigger", elapsed, target, state.running.lastAlertTarget, willTrigger);
