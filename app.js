@@ -2854,8 +2854,15 @@ function getLocalNotificationsPlugin() {
 function getRingtonePickerPlugin() {
   const bridge = getCapacitorBridge();
   if (!bridge) return null;
+  const pluginFromPlugins = bridge.Plugins?.RingtonePicker;
+  if (pluginFromPlugins) {
+    ringtonePickerPluginRef = pluginFromPlugins;
+    return ringtonePickerPluginRef;
+  }
   if (!ringtonePickerPluginRef && typeof bridge.registerPlugin === "function") {
     ringtonePickerPluginRef = bridge.registerPlugin("RingtonePicker");
+    if (!bridge.Plugins) bridge.Plugins = {};
+    if (!bridge.Plugins.RingtonePicker) bridge.Plugins.RingtonePicker = ringtonePickerPluginRef;
   }
   return ringtonePickerPluginRef || bridge.Plugins?.RingtonePicker || null;
 }
@@ -2935,19 +2942,24 @@ async function stopNotificationSoundPreview() {
 }
 
 async function pickNotificationSound(target, toneType) {
+  const capacitorPlugins = window.Capacitor?.Plugins;
+  const pluginFromPlugins = capacitorPlugins?.RingtonePicker;
   const plugin = getRingtonePickerPlugin();
-  if (!plugin) {
-    alert("Androidアプリで設定してください。");
-    return;
-  }
-  if (typeof plugin.pickSound !== "function") {
+  const resolvedPlugin = pluginFromPlugins || plugin;
+  if (!resolvedPlugin || typeof resolvedPlugin.pickSound !== "function") {
+    console.error("RingtonePicker", {
+      plugin: resolvedPlugin,
+      typeofPlugin: typeof resolvedPlugin,
+      typeofPickSound: typeof resolvedPlugin?.pickSound,
+      CapacitorPlugins: Object.keys(window.Capacitor?.Plugins ?? {})
+    });
     alert("Androidアプリで設定してください。");
     return;
   }
 
   const current = getNotificationSoundEntry(target);
   try {
-    const result = await plugin.pickSound({
+    const result = await resolvedPlugin.pickSound({
       toneType,
       existingUri: current.uri || ""
     });

@@ -1,5 +1,12 @@
 # Release History
 
+## 2026-08-02 15:35 JST
+- v1.70
+	- `pickNotificationSound` で `Androidアプリで設定してください。` を表示する直前に、`RingtonePicker` の解決状態（`plugin`、`typeof plugin`、`typeof plugin.pickSound`、`window.Capacitor.Plugins` のキー一覧）を `console.error` 出力するよう追加。
+	- `RingtonePicker` 取得処理を補強し、`window.Capacitor.Plugins.RingtonePicker` を優先参照し、`registerPlugin("RingtonePicker")` で取得できたプロキシを `window.Capacitor.Plugins.RingtonePicker` に反映するよう変更。
+	- `pickNotificationSound` は `window.Capacitor.Plugins.RingtonePicker` を含む解決済みプラグインへ直接 `pickSound` を呼び出すよう変更。
+	- 表示バージョンを `1.69` から `1.70` へ更新（+0.01）。
+
 ## 2026-08-02 15:04 JST
 - v1.69
 	- `pickNotificationSound` から `bridge.isNativePlatform()` による分岐を削除し、`RingtonePicker` プラグイン取得後は `plugin.pickSound` を直接呼び出すよう変更。
