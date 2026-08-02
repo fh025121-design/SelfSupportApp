@@ -3018,6 +3018,52 @@ function getNotificationChannelIdForTarget(target) {
   return resolveChannelConfig(target).channelId;
 }
 
+function isManagedAlertChannelId(channelId) {
+  const id = String(channelId || "").trim();
+  if (!id) return false;
+  if (id === UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID) return true;
+  if (LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS.includes(id)) return true;
+  if ([
+    "departure-alert-sound-v1",
+    "task-finish-alert-sound-v1",
+    "task-recheck-alert-sound-v1",
+    "task-alarm-alert-v1"
+  ].includes(id)) return true;
+  return id.startsWith("departure-alarm-")
+    || id.startsWith("task-finish-alarm-")
+    || id.startsWith("task-finish-sound-")
+    || id.startsWith("task-recheck-sound-");
+}
+
+async function removeUnusedManagedNotificationChannels(activeChannelIds = []) {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.listChannels || !plugin?.deleteChannel) return;
+
+  const activeSet = new Set(
+    (Array.isArray(activeChannelIds) ? activeChannelIds : [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+  );
+
+  try {
+    const listed = await plugin.listChannels();
+    const channels = Array.isArray(listed?.channels) ? listed.channels : [];
+    for (const channel of channels) {
+      const channelId = String(channel?.id || "").trim();
+      if (!channelId || !isManagedAlertChannelId(channelId)) continue;
+      if (activeSet.has(channelId)) continue;
+      try {
+        await plugin.deleteChannel({ id: channelId });
+      } catch (_) {
+        // Ignore individual delete failures so other stale channels can still be cleaned up.
+      }
+    }
+  } catch (error) {
+    console.warn("[LocalNotificationTest] Failed to prune stale channels", error);
+  }
+}
+
 async function initializeLocalNotificationTrial() {
   await ensureLocalNotificationChannel();
   await cancelLegacyTaskRecheckNotificationsFromPending();
@@ -3044,6 +3090,13 @@ async function ensureLocalNotificationChannel() {
     const departureConfig = resolveChannelConfig(NOTIFICATION_SOUND_TARGET_DEPARTURE);
     const taskFinishConfig = resolveChannelConfig(NOTIFICATION_SOUND_TARGET_TASK_FINISH);
     const taskRecheckConfig = resolveChannelConfig(NOTIFICATION_SOUND_TARGET_TASK_RECHECK);
+
+    await removeUnusedManagedNotificationChannels([
+      UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
+      departureConfig.channelId,
+      taskFinishConfig.channelId,
+      taskRecheckConfig.channelId
+    ]);
 
     if (plugin.deleteChannel) {
       for (const channelId of LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS) {

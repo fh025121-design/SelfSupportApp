@@ -1,5 +1,12 @@
 # Release History
 
+## 2026-08-02 19:57 JST
+- v1.77
+	- 起動時の通知チャネル整理処理を追加し、`listChannels` で取得した channelId を基準に、現在設定で使用していない古いチャネルのみ削除するよう変更。
+	- 削除判定はチャネル名ではなく channelId で実施し、現在使用中の `General Alert` / 出発前 / タスク完了 / Recheck の最新 channelId は保持。
+	- 削除処理は `deleteChannel` 経由で Android の `NotificationManager.deleteNotificationChannel()` を利用。
+	- 表示バージョンを `1.76` から `1.77` へ更新（+0.01）。
+
 ## 2026-08-02 16:41 JST
 - v1.76
 	- タスク編集の「修正を保存」時に、保存処理内で編集中フォーム状態（mode/targetId/入力項目）を新規入力用へ初期化してから保存するよう変更。
