@@ -1,5 +1,11 @@
 # Release History
 
+## 2026-08-02 15:48 JST
+- v1.72
+	- `pickNotificationSound` の `catch` で `console.error` を `JSON.stringify(error, Object.getOwnPropertyNames(error))` 出力へ変更。
+	- `pickNotificationSound` の `catch` で、`alert` を一時的に同じ JSON 文字列を表示する形式へ変更。
+	- 表示バージョンを `1.71` から `1.72` へ更新（+0.01）。
+
 ## 2026-08-02 15:44 JST
 - v1.71
 	- `pickNotificationSound` の `catch` で、例外をオブジェクト直出しせず、`message` と `stack` を `console.error` に出力する形式へ変更。

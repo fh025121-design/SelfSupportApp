@@ -2988,10 +2988,12 @@ async function pickNotificationSound(target, toneType) {
   } catch (error) {
     console.error(
       "RingtonePicker error:",
-      error?.message || String(error),
-      error?.stack || ""
+      JSON.stringify(error, Object.getOwnPropertyNames(error))
     );
-    alert("音の選択に失敗しました。もう一度お試しください。");
+    alert(
+      "RingtonePicker error: " +
+      JSON.stringify(error, Object.getOwnPropertyNames(error))
+    );
   }
 }
 
