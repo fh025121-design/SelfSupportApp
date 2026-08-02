@@ -191,6 +191,11 @@ let devAlertTestConfig = {
 const SECOND_ALERT_DELAY_MS = 30 * 1000;
 const SECOND_ALERT_DURATION_SECONDS = 10;
 const UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID = "task-alert-v2";
+const DEFAULT_ALARM_SOUND_MARKER = "__DEFAULT_ALARM__";
+const DEFAULT_NOTIFICATION_SOUND_MARKER = "__DEFAULT_NOTIFICATION__";
+const DEPARTURE_ALERT_NOTIFICATION_CHANNEL_ID = "departure-alert-sound-v1";
+const TASK_FINISH_ALERT_NOTIFICATION_CHANNEL_ID = "task-finish-alert-sound-v1";
+const TASK_RECHECK_ALERT_NOTIFICATION_CHANNEL_ID = "task-recheck-alert-sound-v1";
 const LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS = ["task-finish-test"];
 const LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID = 10001;
 const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
@@ -242,8 +247,14 @@ const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname)
 
 let localNotificationTestMessage = "";
 let localNotificationsPluginRef = null;
+let ringtonePickerPluginRef = null;
 let planningRecurringPickerOpen = false;
 let localNotificationListenerRegistered = false;
+let lastAppliedNotificationSoundConfigHash = "";
+
+const NOTIFICATION_SOUND_TARGET_DEPARTURE = "departure";
+const NOTIFICATION_SOUND_TARGET_TASK_FINISH = "taskFinish";
+const NOTIFICATION_SOUND_TARGET_TASK_RECHECK = "taskRecheck";
 
 const state = loadState();
 setupInputGuard();
@@ -397,6 +408,7 @@ function createRunningState() {
     isPaused: false,
     confirmingComplete: false,
     alertAtSeconds: null,
+    nextAlertKind: "task-finish",
     alerting: false,
     lastAlertTarget: null
   };
@@ -454,6 +466,47 @@ function createDepartureNotificationSettings() {
   };
 }
 
+function createNotificationSoundSettings() {
+  return {
+    departure: {
+      uri: "",
+      title: "端末の既定アラーム",
+      toneType: "alarm"
+    },
+    taskFinish: {
+      uri: "",
+      title: "端末の既定通知",
+      toneType: "notification"
+    },
+    taskRecheck: {
+      uri: "",
+      title: "端末の既定通知",
+      toneType: "notification"
+    }
+  };
+}
+
+function normalizeNotificationSoundEntry(raw, fallbackToneType) {
+  const toneType = fallbackToneType === "alarm" ? "alarm" : "notification";
+  const uri = typeof raw?.uri === "string" ? raw.uri.trim() : "";
+  const title = typeof raw?.title === "string" && raw.title.trim()
+    ? raw.title.trim()
+    : (toneType === "alarm" ? "端末の既定アラーム" : "端末の既定通知");
+  return {
+    uri,
+    title,
+    toneType
+  };
+}
+
+function normalizeNotificationSoundSettings(raw) {
+  return {
+    departure: normalizeNotificationSoundEntry(raw?.departure, "alarm"),
+    taskFinish: normalizeNotificationSoundEntry(raw?.taskFinish, "notification"),
+    taskRecheck: normalizeNotificationSoundEntry(raw?.taskRecheck, "notification")
+  };
+}
+
 function createMedicineDoseState() {
   return {
     done: false,
@@ -503,6 +556,7 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     review: createReviewState(),
     departureCheck: createDepartureCheckState(),
     departureNotification: createDepartureNotificationSettings(),
+    notificationSoundSettings: createNotificationSoundSettings(),
     medicineReminder: createMedicineReminderState(dateKey),
     returnCheck: createReturnCheckState(),
     goPressedAt: null,
@@ -992,6 +1046,7 @@ function loadState() {
     safe.review = { ...createReviewState(), ...(safe.review || {}) };
     safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
     safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
+    safe.notificationSoundSettings = normalizeNotificationSoundSettings(safe.notificationSoundSettings);
     safe.medicineReminder = normalizeMedicineReminderState(safe.medicineReminder, todayKey);
     safe.returnCheck = normalizeReturnCheckState(safe.returnCheck);
     safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
@@ -1777,6 +1832,7 @@ function normalizeLoadedState(rawState) {
   safe.recurringPlans = normalizeRecurringPlans(safe.recurringPlans);
   safe.recurringForm = normalizeRecurringForm(safe.recurringForm);
   safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
+  safe.notificationSoundSettings = normalizeNotificationSoundSettings(safe.notificationSoundSettings);
   safe.medicineReminder = normalizeMedicineReminderState(safe.medicineReminder, todayKey);
   safe.recurringPlansAppliedByDate = {
     ...normalizeRecurringPlansAppliedByDate(safe.recurringPlansAppliedByDate),
@@ -2601,6 +2657,15 @@ function renderSettings() {
     </div>
     <div class="btn-row compact-stack">
       <div class="task-card">
+        <h3>通知音の個別設定（Android）</h3>
+        <p class="helper">端末内の音一覧を開き、試聴して選択できます。</p>
+        <div class="form-stack">
+          ${getNotificationSoundSettingRowsHtml()}
+        </div>
+      </div>
+    </div>
+    <div class="btn-row compact-stack">
+      <div class="task-card">
         <h3>アラートテスト設定（開発用）</h3>
         <div class="form-stack">
           <div>
@@ -2686,6 +2751,15 @@ function renderSettings() {
   document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
   document.getElementById("localNotificationTestBtn")?.addEventListener("click", runLocalNotificationTest);
   document.getElementById("resetDailyStatusBtn").addEventListener("click", resetDailyStatus);
+  document.getElementById("pickDepartureSoundBtn")?.addEventListener("click", () => {
+    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm");
+  });
+  document.getElementById("pickTaskFinishSoundBtn")?.addEventListener("click", () => {
+    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "notification");
+  });
+  document.getElementById("pickTaskRecheckSoundBtn")?.addEventListener("click", () => {
+    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "notification");
+  });
 }
 
 function renderDepartureNotificationLeadOptions() {
@@ -2732,6 +2806,98 @@ function getLocalNotificationsPlugin() {
   return localNotificationsPluginRef || bridge.Plugins?.LocalNotifications || null;
 }
 
+function getRingtonePickerPlugin() {
+  const bridge = getCapacitorBridge();
+  if (!bridge) return null;
+  if (!ringtonePickerPluginRef && typeof bridge.registerPlugin === "function") {
+    ringtonePickerPluginRef = bridge.registerPlugin("RingtonePicker");
+  }
+  return ringtonePickerPluginRef || bridge.Plugins?.RingtonePicker || null;
+}
+
+function getNotificationSoundEntry(target) {
+  const settings = normalizeNotificationSoundSettings(state.notificationSoundSettings);
+  if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) return settings.departure;
+  if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) return settings.taskRecheck;
+  return settings.taskFinish;
+}
+
+function getNotificationSoundSettingRowsHtml() {
+  const departure = getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_DEPARTURE);
+  const taskFinish = getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_TASK_FINISH);
+  const taskRecheck = getNotificationSoundEntry(NOTIFICATION_SOUND_TARGET_TASK_RECHECK);
+  return `
+    <div class="sound-setting-row">
+      <p class="helper">出発前通知（アラーム音）</p>
+      <p class="helper">選択中: ${escapeHtml(departure.title || "端末の既定アラーム")}</p>
+      <button id="pickDepartureSoundBtn" class="btn-sub" type="button">音を選択</button>
+    </div>
+    <div class="sound-setting-row">
+      <p class="helper">タスク予定時間通知（通知音）</p>
+      <p class="helper">選択中: ${escapeHtml(taskFinish.title || "端末の既定通知")}</p>
+      <button id="pickTaskFinishSoundBtn" class="btn-sub" type="button">音を選択</button>
+    </div>
+    <div class="sound-setting-row">
+      <p class="helper">20分後の再確認通知（通知音）</p>
+      <p class="helper">選択中: ${escapeHtml(taskRecheck.title || "端末の既定通知")}</p>
+      <button id="pickTaskRecheckSoundBtn" class="btn-sub" type="button">音を選択</button>
+    </div>
+  `;
+}
+
+async function pickNotificationSound(target, toneType) {
+  const bridge = getCapacitorBridge();
+  const plugin = getRingtonePickerPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.pickSound) {
+    alert("Android実機のCapacitorアプリ上で確認してください。");
+    return;
+  }
+
+  const current = getNotificationSoundEntry(target);
+  try {
+    const result = await plugin.pickSound({
+      toneType,
+      existingUri: current.uri || ""
+    });
+    if (!result?.selected || !result?.uri) return;
+
+    const nextSettings = normalizeNotificationSoundSettings(state.notificationSoundSettings);
+    const nextTitle = String(result.title || "").trim() || (toneType === "alarm" ? "端末の既定アラーム" : "端末の既定通知");
+    const nextEntry = {
+      uri: String(result.uri || ""),
+      title: nextTitle,
+      toneType
+    };
+
+    if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) nextSettings.departure = nextEntry;
+    if (target === NOTIFICATION_SOUND_TARGET_TASK_FINISH) nextSettings.taskFinish = nextEntry;
+    if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) nextSettings.taskRecheck = nextEntry;
+
+    state.notificationSoundSettings = nextSettings;
+    lastAppliedNotificationSoundConfigHash = "";
+    await ensureLocalNotificationChannel();
+    saveState();
+    renderSettings();
+  } catch (error) {
+    console.error("[NotificationSound] Failed to pick sound", error);
+    alert("音の選択に失敗しました。もう一度お試しください。");
+  }
+}
+
+function getChannelSoundConfigHash() {
+  return JSON.stringify(normalizeNotificationSoundSettings(state.notificationSoundSettings));
+}
+
+function resolveChannelSoundAndUsage(target) {
+  const entry = getNotificationSoundEntry(target);
+  const isAlarm = entry.toneType === "alarm";
+  const sound = entry.uri || (isAlarm ? DEFAULT_ALARM_SOUND_MARKER : DEFAULT_NOTIFICATION_SOUND_MARKER);
+  return {
+    sound,
+    audioUsage: isAlarm ? "alarm" : "notification"
+  };
+}
+
 async function initializeLocalNotificationTrial() {
   await ensureLocalNotificationChannel();
 }
@@ -2739,7 +2905,7 @@ async function initializeLocalNotificationTrial() {
 function restorePendingTaskFinishNotification() {
   const task = getRunningTask();
   if (!task || state.running.isPaused) return;
-  scheduleTaskFinishNotificationForRunningTask(task);
+  scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
 }
 
 function restorePendingDepartureNotification() {
@@ -2752,6 +2918,7 @@ async function ensureLocalNotificationChannel() {
   if (!bridge?.isNativePlatform?.() || !plugin?.createChannel) return false;
 
   try {
+    const nextHash = getChannelSoundConfigHash();
     if (plugin.deleteChannel) {
       for (const channelId of LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS) {
         try {
@@ -2760,15 +2927,68 @@ async function ensureLocalNotificationChannel() {
           console.warn("[LocalNotificationTest] Failed to delete legacy channel", channelId, error);
         }
       }
+
+      if (nextHash !== lastAppliedNotificationSoundConfigHash) {
+        const configurableChannelIds = [
+          DEPARTURE_ALERT_NOTIFICATION_CHANNEL_ID,
+          TASK_FINISH_ALERT_NOTIFICATION_CHANNEL_ID,
+          TASK_RECHECK_ALERT_NOTIFICATION_CHANNEL_ID
+        ];
+        for (const channelId of configurableChannelIds) {
+          try {
+            await plugin.deleteChannel({ id: channelId });
+          } catch (error) {
+            // Ignore delete errors when channel does not exist.
+          }
+        }
+      }
     }
+
     await plugin.createChannel({
       id: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
-      name: "Task / Departure Alert",
-      description: "Unified alert channel for task, continue, and departure notifications",
+      name: "General Alert",
+      description: "General alert channel for medicine and local notification tests",
       importance: 5,
       visibility: 1,
       vibration: true
     });
+
+    const departureConfig = resolveChannelSoundAndUsage(NOTIFICATION_SOUND_TARGET_DEPARTURE);
+    await plugin.createChannel({
+      id: DEPARTURE_ALERT_NOTIFICATION_CHANNEL_ID,
+      name: "Departure Alert",
+      description: "Departure reminder notification channel",
+      importance: 5,
+      visibility: 1,
+      sound: departureConfig.sound,
+      audioUsage: departureConfig.audioUsage,
+      vibration: true
+    });
+
+    const taskFinishConfig = resolveChannelSoundAndUsage(NOTIFICATION_SOUND_TARGET_TASK_FINISH);
+    await plugin.createChannel({
+      id: TASK_FINISH_ALERT_NOTIFICATION_CHANNEL_ID,
+      name: "Task Finish Alert",
+      description: "Task scheduled-time notification channel",
+      importance: 5,
+      visibility: 1,
+      sound: taskFinishConfig.sound,
+      audioUsage: taskFinishConfig.audioUsage,
+      vibration: true
+    });
+
+    const taskRecheckConfig = resolveChannelSoundAndUsage(NOTIFICATION_SOUND_TARGET_TASK_RECHECK);
+    await plugin.createChannel({
+      id: TASK_RECHECK_ALERT_NOTIFICATION_CHANNEL_ID,
+      name: "Task Recheck Alert",
+      description: "Task recheck notification channel after continue",
+      importance: 5,
+      visibility: 1,
+      sound: taskRecheckConfig.sound,
+      audioUsage: taskRecheckConfig.audioUsage,
+      vibration: true
+    });
+    lastAppliedNotificationSoundConfigHash = nextHash;
     return true;
   } catch (error) {
     console.error("[LocalNotificationTest] Failed to create channel", error);
@@ -3019,7 +3239,7 @@ function setupLocalNotificationActionListener() {
   localNotificationListenerRegistered = true;
   plugin.addListener("localNotificationReceived", (event) => {
     const source = String(event?.notification?.extra?.source || "");
-    if (source !== "task-finish" && source !== "departure-reminder" && source !== "local-notification-test") return;
+    if (source !== "task-finish" && source !== "task-recheck" && source !== "departure-reminder" && source !== "local-notification-test") return;
     runVibrationFeedback("received");
   });
   plugin.addListener("localNotificationActionPerformed", (event) => {
@@ -3028,7 +3248,7 @@ function setupLocalNotificationActionListener() {
       openMedicineReminderOverlay(true);
       return;
     }
-    if (source === "task-finish") {
+    if (source === "task-finish" || source === "task-recheck") {
       const notifiedTaskId = String(event?.notification?.extra?.taskId || "");
       const runningTask = getRunningTask();
       if (!runningTask || state.running.isPaused || runningTask.id !== notifiedTaskId) return;
@@ -3122,7 +3342,7 @@ async function scheduleDepartureNotificationForCurrentPlan() {
       title: getDepartureNotificationTitle(),
       body: getDepartureNotificationBody(departureAt),
       notifyAt,
-      channelId: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
+      channelId: DEPARTURE_ALERT_NOTIFICATION_CHANNEL_ID,
       extra: {
         source: "departure-reminder",
         dateKey: state.dateKey,
@@ -3148,9 +3368,12 @@ function refreshDepartureNotification() {
   void scheduleDepartureNotificationForCurrentPlan();
 }
 
-function scheduleTaskFinishNotificationForRunningTask(task) {
+function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-finish") {
   const target = Number(state.running?.alertAtSeconds);
   if (!task || !Number.isFinite(target)) return;
+
+  const normalizedAlertKind = alertKind === "task-recheck" ? "task-recheck" : "task-finish";
+  state.running.nextAlertKind = normalizedAlertKind;
 
   const isActivelyRunning = Boolean(
     state.running?.taskId === task.id
@@ -3172,9 +3395,11 @@ function scheduleTaskFinishNotificationForRunningTask(task) {
         title: "時間になりました",
         body: buildTaskFinishNotificationBody(task),
         notifyAt,
-        channelId: UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID,
+        channelId: normalizedAlertKind === "task-recheck"
+          ? TASK_RECHECK_ALERT_NOTIFICATION_CHANNEL_ID
+          : TASK_FINISH_ALERT_NOTIFICATION_CHANNEL_ID,
         extra: {
-          source: "task-finish",
+          source: normalizedAlertKind,
           taskId: task.id
         }
       });
@@ -5981,6 +6206,7 @@ function startTask(taskId) {
     isPaused: false,
     confirmingComplete: false,
     alertAtSeconds: task.plannedMinutes * 60,
+    nextAlertKind: "task-finish",
     alerting: false,
     lastAlertTarget: null
   };
@@ -5991,7 +6217,7 @@ function startTask(taskId) {
     taskNameSnapshot: task.name
   });
   saveState();
-  scheduleTaskFinishNotificationForRunningTask(task);
+  scheduleTaskFinishNotificationForRunningTask(task, "task-finish");
   if (state.phase !== "execution") return changePhase("execution");
   renderExecution();
 }
@@ -6030,8 +6256,9 @@ function continueRunningTaskAfterReminder() {
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
   state.running.alertAtSeconds = getRunningElapsedSeconds() + (20 * 60);
+  state.running.nextAlertKind = "task-recheck";
   saveState();
-  scheduleTaskFinishNotificationForRunningTask(task);
+  scheduleTaskFinishNotificationForRunningTask(task, "task-recheck");
   changePhase("execution", false);
 }
 
@@ -6099,6 +6326,9 @@ function resumePausedTask() {
   if (!Number.isFinite(Number(state.running.alertAtSeconds))) {
     state.running.alertAtSeconds = sanitizeMinutes(task.plannedMinutes) * 60;
   }
+  if (state.running.nextAlertKind !== "task-recheck") {
+    state.running.nextAlertKind = "task-finish";
+  }
   appendHistoryEvent({
     category: "task",
     type: HISTORY_EVENT_TYPE_TASK_RESUMED,
@@ -6106,7 +6336,7 @@ function resumePausedTask() {
     taskNameSnapshot: task.name
   });
   clearExecutionConfirmStates();
-  scheduleTaskFinishNotificationForRunningTask(task);
+  scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
   changePhase("execution", false);
 }
 
