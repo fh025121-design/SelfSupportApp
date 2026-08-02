@@ -2986,7 +2986,11 @@ async function pickNotificationSound(target, toneType) {
     saveState();
     renderSettings();
   } catch (error) {
-    console.error("[NotificationSound] Failed to pick sound", error);
+    console.error(
+      "RingtonePicker error:",
+      error?.message || String(error),
+      error?.stack || ""
+    );
     alert("音の選択に失敗しました。もう一度お試しください。");
   }
 }

@@ -1,5 +1,10 @@
 # Release History
 
+## 2026-08-02 15:44 JST
+- v1.71
+	- `pickNotificationSound` の `catch` で、例外をオブジェクト直出しせず、`message` と `stack` を `console.error` に出力する形式へ変更。
+	- 表示バージョンを `1.70` から `1.71` へ更新（+0.01）。
+
 ## 2026-08-02 15:35 JST
 - v1.70
 	- `pickNotificationSound` で `Androidアプリで設定してください。` を表示する直前に、`RingtonePicker` の解決状態（`plugin`、`typeof plugin`、`typeof plugin.pickSound`、`window.Capacitor.Plugins` のキー一覧）を `console.error` 出力するよう追加。
