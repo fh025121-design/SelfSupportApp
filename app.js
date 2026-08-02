@@ -256,7 +256,7 @@ const NOTIFICATION_SOUND_TARGET_TASK_RECHECK = "taskRecheck";
 function getNotificationSoundTargetPrefix(target) {
   if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) return "departure-alarm";
   if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) return "task-recheck-sound";
-  return "task-finish-sound";
+  return "task-finish-alarm";
 }
 
 function getNotificationSoundFallbackTitle(toneType) {
@@ -493,9 +493,9 @@ function createNotificationSoundSettings() {
     taskFinish: {
       target: NOTIFICATION_SOUND_TARGET_TASK_FINISH,
       uri: "",
-      title: getNotificationSoundFallbackTitle("notification"),
-      toneType: "notification",
-      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "notification", "")
+      title: getNotificationSoundFallbackTitle("alarm"),
+      toneType: "alarm",
+      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm", "")
     },
     taskRecheck: {
       target: NOTIFICATION_SOUND_TARGET_TASK_RECHECK,
@@ -513,7 +513,8 @@ function normalizeNotificationSoundEntry(raw, target, fallbackToneType) {
   const title = typeof raw?.title === "string" && raw.title.trim()
     ? raw.title.trim()
     : getNotificationSoundFallbackTitle(toneType);
-  const channelId = typeof raw?.channelId === "string" && raw.channelId.trim()
+  const storedToneType = raw?.toneType === "alarm" ? "alarm" : raw?.toneType === "notification" ? "notification" : "";
+  const channelId = storedToneType === toneType && typeof raw?.channelId === "string" && raw.channelId.trim()
     ? raw.channelId.trim()
     : buildNotificationChannelId(target, toneType, uri);
   return {
@@ -528,7 +529,7 @@ function normalizeNotificationSoundEntry(raw, target, fallbackToneType) {
 function normalizeNotificationSoundSettings(raw) {
   return {
     departure: normalizeNotificationSoundEntry(raw?.departure, NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm"),
-    taskFinish: normalizeNotificationSoundEntry(raw?.taskFinish, NOTIFICATION_SOUND_TARGET_TASK_FINISH, "notification"),
+    taskFinish: normalizeNotificationSoundEntry(raw?.taskFinish, NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm"),
     taskRecheck: normalizeNotificationSoundEntry(raw?.taskRecheck, NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "notification")
   };
 }
@@ -2781,10 +2782,28 @@ function renderSettings() {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm");
   });
   document.getElementById("pickTaskFinishSoundBtn")?.addEventListener("click", () => {
-    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "notification");
+    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm");
   });
   document.getElementById("pickTaskRecheckSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "notification");
+  });
+  document.getElementById("previewDepartureSoundBtn")?.addEventListener("click", () => {
+    void previewNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE);
+  });
+  document.getElementById("previewTaskFinishSoundBtn")?.addEventListener("click", () => {
+    void previewNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_FINISH);
+  });
+  document.getElementById("previewTaskRecheckSoundBtn")?.addEventListener("click", () => {
+    void previewNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_RECHECK);
+  });
+  document.getElementById("stopPreviewDepartureSoundBtn")?.addEventListener("click", () => {
+    void stopNotificationSoundPreview();
+  });
+  document.getElementById("stopPreviewTaskFinishSoundBtn")?.addEventListener("click", () => {
+    void stopNotificationSoundPreview();
+  });
+  document.getElementById("stopPreviewTaskRecheckSoundBtn")?.addEventListener("click", () => {
+    void stopNotificationSoundPreview();
   });
 }
 
@@ -2856,19 +2875,63 @@ function getNotificationSoundSettingRowsHtml() {
     <div class="sound-setting-row">
       <p class="helper">出発前通知（アラーム音）</p>
       <p class="helper">選択中: ${escapeHtml(departure.title || getNotificationSoundFallbackTitle("alarm"))}</p>
-      <button id="pickDepartureSoundBtn" class="btn-sub" type="button">音を選択</button>
+      <div class="btn-row compact-stack">
+        <button id="pickDepartureSoundBtn" class="btn-sub" type="button">音を選択</button>
+        <button id="previewDepartureSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
+        <button id="stopPreviewDepartureSoundBtn" class="btn-quiet" type="button">停止</button>
+      </div>
     </div>
     <div class="sound-setting-row">
-      <p class="helper">タスク予定時間通知（通知音）</p>
-      <p class="helper">選択中: ${escapeHtml(taskFinish.title || getNotificationSoundFallbackTitle("notification"))}</p>
-      <button id="pickTaskFinishSoundBtn" class="btn-sub" type="button">音を選択</button>
+      <p class="helper">タスク予定時間通知（アラーム音）</p>
+      <p class="helper">選択中: ${escapeHtml(taskFinish.title || getNotificationSoundFallbackTitle("alarm"))}</p>
+      <div class="btn-row compact-stack">
+        <button id="pickTaskFinishSoundBtn" class="btn-sub" type="button">音を選択</button>
+        <button id="previewTaskFinishSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
+        <button id="stopPreviewTaskFinishSoundBtn" class="btn-quiet" type="button">停止</button>
+      </div>
     </div>
     <div class="sound-setting-row">
       <p class="helper">20分後の再確認通知（通知音）</p>
       <p class="helper">選択中: ${escapeHtml(taskRecheck.title || getNotificationSoundFallbackTitle("notification"))}</p>
-      <button id="pickTaskRecheckSoundBtn" class="btn-sub" type="button">音を選択</button>
+      <div class="btn-row compact-stack">
+        <button id="pickTaskRecheckSoundBtn" class="btn-sub" type="button">音を選択</button>
+        <button id="previewTaskRecheckSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
+        <button id="stopPreviewTaskRecheckSoundBtn" class="btn-quiet" type="button">停止</button>
+      </div>
     </div>
   `;
+}
+
+async function previewNotificationSound(target) {
+  const bridge = getCapacitorBridge();
+  const plugin = getRingtonePickerPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.previewSound) {
+    alert("Androidアプリで設定してください。");
+    return;
+  }
+
+  const entry = getNotificationSoundEntry(target);
+  try {
+    await plugin.previewSound({
+      uri: entry.uri || "",
+      toneType: entry.toneType
+    });
+  } catch (error) {
+    console.error("[NotificationSound] Failed to preview sound", error);
+    alert("試し鳴らしに失敗しました。もう一度お試しください。");
+  }
+}
+
+async function stopNotificationSoundPreview() {
+  const bridge = getCapacitorBridge();
+  const plugin = getRingtonePickerPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.stopPreview) return;
+
+  try {
+    await plugin.stopPreview();
+  } catch (error) {
+    console.error("[NotificationSound] Failed to stop preview", error);
+  }
 }
 
 async function pickNotificationSound(target, toneType) {
@@ -7504,6 +7567,9 @@ async function performLogout() {
 
 function goHome() {
   if (state.phase === "home") return;
+  if (state.phase === "settings") {
+    void stopNotificationSoundPreview();
+  }
   state.homeReturnPhase = state.phase;
   state.navHistory.push(state.phase);
   state.phase = "home";
@@ -7519,6 +7585,9 @@ function goBack() {
 }
 
 function changePhase(next, pushHistory = true) {
+  if (state.phase === "settings" && next !== "settings") {
+    void stopNotificationSoundPreview();
+  }
   if (next === "execution" || next === "homeworkList" || next === "completionHistory") {
     const availability = getHomeActionAvailability();
     if (next === "execution" && !availability.canOpenExecution) return;
