@@ -245,6 +245,7 @@ const SYNC_SAVE_DEBOUNCE_MS = 700;
 const SYNC_DEBUG = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 let localNotificationTestMessage = "";
+let notificationChannelDebugMessage = "";
 let localNotificationsPluginRef = null;
 let ringtonePickerPluginRef = null;
 let planningRecurringPickerOpen = false;
@@ -2754,8 +2755,10 @@ function renderSettings() {
         <p class="helper">Capacitorアプリ上で押すと、10秒後にローカル通知を予約します。</p>
         <div class="btn-row compact-stack">
           <button id="localNotificationTestBtn" class="btn-sub" type="button">10秒後に通知</button>
+          <button id="dumpNotificationChannelsBtn" class="btn-quiet" type="button">チャネル一覧を取得</button>
         </div>
         <p id="localNotificationTestMsg" class="helper" aria-live="polite">${escapeHtml(localNotificationTestMessage)}</p>
+        <pre id="notificationChannelDebugMsg" class="helper" aria-live="polite">${escapeHtml(notificationChannelDebugMessage)}</pre>
       </div>
     </div>
     <div class="btn-row compact-stack">
@@ -2803,6 +2806,9 @@ function renderSettings() {
   });
   document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
   document.getElementById("localNotificationTestBtn")?.addEventListener("click", runLocalNotificationTest);
+  document.getElementById("dumpNotificationChannelsBtn")?.addEventListener("click", () => {
+    void dumpRegisteredNotificationChannels();
+  });
   document.getElementById("resetDailyStatusBtn").addEventListener("click", resetDailyStatus);
   document.getElementById("pickDepartureSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm");
@@ -2879,6 +2885,12 @@ function setLocalNotificationTestMessage(message) {
   localNotificationTestMessage = String(message || "");
   const el = document.getElementById("localNotificationTestMsg");
   if (el) el.textContent = localNotificationTestMessage;
+}
+
+function setNotificationChannelDebugMessage(message) {
+  notificationChannelDebugMessage = String(message || "");
+  const el = document.getElementById("notificationChannelDebugMsg");
+  if (el) el.textContent = notificationChannelDebugMessage;
 }
 
 function getCapacitorBridge() {
@@ -3221,6 +3233,62 @@ function getNotificationChannelIdForTarget(target) {
   return resolveChannelConfig(target).channelId;
 }
 
+function getNotificationTargetLabel(target) {
+  if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) return "Departure Alert";
+  if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) return "20分後再確認";
+  return "Task Finish Alert";
+}
+
+function logCurrentNotificationChannelConfig(target) {
+  const entry = getNotificationSoundEntry(target);
+  const config = resolveChannelConfig(target);
+  const payload = {
+    label: getNotificationTargetLabel(target),
+    target,
+    channelId: config.channelId,
+    soundUri: config.sound,
+    audioAttributes: {
+      usage: config.audioUsage,
+      contentType: "sonification"
+    },
+    toneType: entry.toneType,
+    title: entry.title,
+    entryUri: entry.uri
+  };
+  console.log("[NotificationChannelConfig]", payload);
+  return payload;
+}
+
+async function dumpRegisteredNotificationChannels() {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.listChannels) {
+    setNotificationChannelDebugMessage("Android実機のCapacitorアプリ上で確認してください。");
+    return;
+  }
+
+  try {
+    const result = await plugin.listChannels();
+    const channels = Array.isArray(result?.channels) ? result.channels : [];
+    const formatted = channels.map((channel) => ({
+      channelId: channel.id ?? "",
+      name: channel.name ?? "",
+      importance: channel.importance,
+      soundUri: channel.sound ?? "",
+      audioUsage: channel.audioUsage ?? "",
+      audioUsageValue: channel.audioUsageValue,
+      vibration: channel.vibration,
+      vibrationPattern: Array.isArray(channel.vibrationPattern) ? channel.vibrationPattern : [],
+      bypassDnd: channel.bypassDnd
+    }));
+    console.log("[NotificationChannels:list]", formatted);
+    setNotificationChannelDebugMessage(JSON.stringify(formatted, null, 2));
+  } catch (error) {
+    console.error("[NotificationChannels:list] failed", error);
+    setNotificationChannelDebugMessage("チャネル一覧取得に失敗しました。");
+  }
+}
+
 function isManagedAlertChannelId(channelId) {
   const id = String(channelId || "").trim();
   if (!id) return false;
@@ -3289,6 +3357,7 @@ async function ensureLocalNotificationChannel() {
   if (!bridge?.isNativePlatform?.() || !plugin?.createChannel) return false;
 
   try {
+    await refreshFixedNotificationSoundDefaultsOnNative();
     const nextHash = getChannelSoundConfigHash();
 
     const departureConfig = resolveChannelConfig(NOTIFICATION_SOUND_TARGET_DEPARTURE);
@@ -3659,6 +3728,12 @@ function setupLocalNotificationActionListener() {
   localNotificationListenerRegistered = true;
   plugin.addListener("localNotificationReceived", (event) => {
     const source = String(event?.notification?.extra?.source || "");
+    const channelId = String(event?.notification?.channelId || event?.channelId || event?.notification?.data?.channelId || "");
+    console.log("[NotificationReceived]", {
+      source,
+      channelId,
+      event
+    });
     if (source !== "task-finish" && source !== "task-recheck" && source !== "departure-reminder" && source !== "local-notification-test") return;
     runVibrationFeedback("received");
   });
@@ -3757,6 +3832,7 @@ async function scheduleDepartureNotificationForCurrentPlan() {
   if (notifyAt.getTime() <= Date.now()) return { ok: false, reason: "past" };
 
   try {
+    logCurrentNotificationChannelConfig(NOTIFICATION_SOUND_TARGET_DEPARTURE);
     const result = await scheduleLocalNotification({
       id: notificationId,
       title: getDepartureNotificationTitle(),
@@ -3816,6 +3892,11 @@ function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-fi
   (async () => {
     await cancelLocalNotificationsByIds(notificationIdsToCancel);
     try {
+      logCurrentNotificationChannelConfig(
+        normalizedAlertKind === "task-recheck"
+          ? NOTIFICATION_SOUND_TARGET_TASK_RECHECK
+          : NOTIFICATION_SOUND_TARGET_TASK_FINISH
+      );
       const result = await scheduleLocalNotification({
         id: notificationId,
         title: "時間になりました",

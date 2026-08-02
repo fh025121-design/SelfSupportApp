@@ -1,5 +1,19 @@
 # Release History
 
+## 2026-08-02 23:07 JST
+- v1.80
+	- NotificationChannel 診断用に、現在端末へ登録されている全チャネルの `channelId / 表示名 / importance / sound URI / AudioAttributes.USAGE / vibration / vibrationPattern / bypassDnd` を一覧取得して表示できる機能を追加。
+	- Task Finish Alert / Departure Alert / 20分後再確認 の各通知予約時に、実際に使用する `channelId / sound URI / AudioAttributes` をコンソールログへ出力するよう追加。
+	- 実機で通知が鳴った直後に、受信イベントの `channelId` とイベント内容をコンソールログへ出力するよう追加。
+	- 表示バージョンを `1.79` から `1.80` へ更新（+0.01）。
+
+## 2026-08-02 22:03 JST
+- v1.79
+	- Departure Alert と Task Finish Alert の差分を比較し、固定音源の実URI解決タイミングだけを最小修正。
+	- `ensureLocalNotificationChannel()` の直前で固定音源プリセットを必ずネイティブ解決してからチャネル生成するよう変更し、Departure でも Task Finish と同じアラーム音量系統の実URIを使ってチャネル作成するよう修正。
+	- 既存の `フレッシュスタート` 選択状態、Task Finish 側の正常な鳴動、通知仕様は変更なし。
+	- 表示バージョンを `1.78` から `1.79` へ更新（+0.01）。
+
 ## 2026-08-02 20:39 JST
 - v1.78
 	- 通知音の固定選択肢として `フレッシュスタート` と `バイシクル` を設定画面へ常時表示し、音選択画面を開かなくても選べるよう変更。

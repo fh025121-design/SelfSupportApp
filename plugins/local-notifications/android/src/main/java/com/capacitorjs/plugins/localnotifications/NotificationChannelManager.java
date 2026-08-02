@@ -9,6 +9,7 @@ import android.media.AudioAttributes;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.net.Uri;
+import android.os.Build;
 import androidx.core.app.NotificationCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -189,10 +190,29 @@ public class NotificationChannelManager {
                 channel.put(CHANNEL_DESCRIPTION, notificationChannel.getDescription());
                 channel.put(CHANNEL_IMPORTANCE, notificationChannel.getImportance());
                 channel.put(CHANNEL_VISIBILITY, notificationChannel.getLockscreenVisibility());
-                channel.put(CHANNEL_SOUND, notificationChannel.getSound());
+                channel.put(CHANNEL_SOUND, notificationChannel.getSound() != null ? notificationChannel.getSound().toString() : null);
                 channel.put(CHANNEL_VIBRATE, notificationChannel.shouldVibrate());
                 channel.put(CHANNEL_USE_LIGHTS, notificationChannel.shouldShowLights());
                 channel.put(CHANNEL_LIGHT_COLOR, String.format("#%06X", 0xFFFFFF & notificationChannel.getLightColor()));
+                AudioAttributes audioAttributes = notificationChannel.getAudioAttributes();
+                if (audioAttributes != null) {
+                    channel.put(CHANNEL_AUDIO_USAGE, usageToString(audioAttributes.getUsage()));
+                    channel.put("audioUsageValue", audioAttributes.getUsage());
+                } else {
+                    channel.put(CHANNEL_AUDIO_USAGE, null);
+                    channel.put("audioUsageValue", -1);
+                }
+                long[] vibrationPattern = notificationChannel.getVibrationPattern();
+                if (vibrationPattern != null) {
+                    JSArray vibrationArray = new JSArray();
+                    for (long value : vibrationPattern) {
+                        vibrationArray.put(value);
+                    }
+                    channel.put("vibrationPattern", vibrationArray);
+                } else {
+                    channel.put("vibrationPattern", new JSArray());
+                }
+                channel.put("bypassDnd", notificationChannel.canBypassDnd());
                 Logger.debug(Logger.tags("NotificationChannel"), "visibility " + notificationChannel.getLockscreenVisibility());
                 Logger.debug(Logger.tags("NotificationChannel"), "importance " + notificationChannel.getImportance());
                 channels.put(channel);
@@ -202,6 +222,19 @@ public class NotificationChannelManager {
             call.resolve(result);
         } else {
             call.unavailable();
+        }
+    }
+
+    private String usageToString(int usage) {
+        switch (usage) {
+            case AudioAttributes.USAGE_ALARM:
+                return "alarm";
+            case AudioAttributes.USAGE_NOTIFICATION:
+                return "notification";
+            case AudioAttributes.USAGE_NOTIFICATION_RINGTONE:
+                return "ringtone";
+            default:
+                return String.valueOf(usage);
         }
     }
 }
