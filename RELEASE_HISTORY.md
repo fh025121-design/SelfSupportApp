@@ -1,5 +1,12 @@
 # Release History
 
+## 2026-08-02 16:15 JST
+- v1.74
+	- Recheckアラートの音設定を `notification` 扱いから `alarm` 扱いへ変更し、初期値・保存値正規化・音選択呼び出しを `alarm` に統一。
+	- Recheckアラートの音選択UIを「通知音」表記から「アラーム音」表記へ変更し、Finishアラートと同じアラーム音一覧を開くよう変更。
+	- Recheck通知チャネルは `toneType: alarm` に基づく `audioUsage: alarm` とアラーム用 channelId を使用するよう変更。
+	- 表示バージョンを `1.73` から `1.74` へ更新（+0.01）。
+
 ## 2026-08-02 15:51 JST
 - v1.73
 	- `pickNotificationSound` の `catch` 内で `errorText` を組み立て、`console.error` と `alert` の両方を `RingtonePicker error: ` + 文字列1本で出力する形式へ変更。

@@ -500,9 +500,9 @@ function createNotificationSoundSettings() {
     taskRecheck: {
       target: NOTIFICATION_SOUND_TARGET_TASK_RECHECK,
       uri: "",
-      title: getNotificationSoundFallbackTitle("notification"),
-      toneType: "notification",
-      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "notification", "")
+      title: getNotificationSoundFallbackTitle("alarm"),
+      toneType: "alarm",
+      channelId: buildNotificationChannelId(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "alarm", "")
     }
   };
 }
@@ -530,7 +530,7 @@ function normalizeNotificationSoundSettings(raw) {
   return {
     departure: normalizeNotificationSoundEntry(raw?.departure, NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm"),
     taskFinish: normalizeNotificationSoundEntry(raw?.taskFinish, NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm"),
-    taskRecheck: normalizeNotificationSoundEntry(raw?.taskRecheck, NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "notification")
+    taskRecheck: normalizeNotificationSoundEntry(raw?.taskRecheck, NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "alarm")
   };
 }
 
@@ -2785,7 +2785,7 @@ function renderSettings() {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_FINISH, "alarm");
   });
   document.getElementById("pickTaskRecheckSoundBtn")?.addEventListener("click", () => {
-    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "notification");
+    void pickNotificationSound(NOTIFICATION_SOUND_TARGET_TASK_RECHECK, "alarm");
   });
   document.getElementById("previewDepartureSoundBtn")?.addEventListener("click", () => {
     void previewNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE);
@@ -2898,8 +2898,8 @@ function getNotificationSoundSettingRowsHtml() {
       </div>
     </div>
     <div class="sound-setting-row">
-      <p class="helper">20分後の再確認通知（通知音）</p>
-      <p class="helper">選択中: ${escapeHtml(taskRecheck.title || getNotificationSoundFallbackTitle("notification"))}</p>
+      <p class="helper">20分後の再確認通知（アラーム音）</p>
+      <p class="helper">選択中: ${escapeHtml(taskRecheck.title || getNotificationSoundFallbackTitle("alarm"))}</p>
       <div class="btn-row compact-stack">
         <button id="pickTaskRecheckSoundBtn" class="btn-sub" type="button">音を選択</button>
         <button id="previewTaskRecheckSoundBtn" class="btn-quiet" type="button">試しに鳴らす</button>
@@ -2986,8 +2986,13 @@ async function pickNotificationSound(target, toneType) {
     saveState();
     renderSettings();
   } catch (error) {
-    console.error("[NotificationSound] Failed to pick sound", error);
-    alert("音の選択に失敗しました。もう一度お試しください。");
+    const errorText = JSON.stringify(
+      error,
+      Object.getOwnPropertyNames(error)
+    );
+
+    console.error("RingtonePicker error: " + errorText);
+    alert("RingtonePicker error: " + errorText);
   }
 }
 
