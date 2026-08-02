@@ -243,6 +243,13 @@ const HISTORY_EVENT_DISPLAYABLE_TYPES = new Set([
 ]);
 const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 const DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START = "verify-seconds-before-start";
+const CLUB_AFTER_CHECK_ITEM_LABELS = [
+  "① グラウンドで泥や砂をできるだけ落とし、自宅前でもう一度確認して落とし切った",
+  "② 野球バッグを決めた場所へ置いた",
+  "③ ユニフォーム・靴下の泥を風呂場で落とした",
+  "④ 水筒・弁当箱を出した",
+  "⑤ プリントを出し、伝えることは親へ直ちに共有した"
+];
 
 const SYNC_SCHEMA_VERSION = 1;
 const SYNC_SAVE_DEBOUNCE_MS = 700;
@@ -523,6 +530,7 @@ function createClubAfterCheckState(dateKey = getTodayKeyJst()) {
   return {
     dateKey: normalizeTaskDateKey(dateKey) || getTodayKeyJst(),
     wasClubDay: false,
+    checkedItems: CLUB_AFTER_CHECK_ITEM_LABELS.map(() => false),
     done: false,
     completedAtMs: 0,
     completedAtTimeLabel: ""
@@ -1291,6 +1299,7 @@ function normalizeClubAfterCheckState(raw, fallbackDateKey = getTodayKeyJst()) {
   }
   base.dateKey = dateKey;
   base.wasClubDay = Boolean(base.wasClubDay);
+  base.checkedItems = CLUB_AFTER_CHECK_ITEM_LABELS.map((_, index) => Boolean(base.checkedItems?.[index]));
   base.done = Boolean(base.done);
   base.completedAtMs = Number.isFinite(Number(base.completedAtMs)) ? Math.max(0, Number(base.completedAtMs)) : 0;
   base.completedAtTimeLabel = base.done ? String(base.completedAtTimeLabel || "") : "";
@@ -7662,6 +7671,9 @@ function finishReturnCheck() {
     ...state.clubAfterCheck,
     dateKey: getTodayKeyJst(),
     wasClubDay: a.clubActivityDay === "yes",
+    checkedItems: a.clubActivityDay === "yes"
+      ? state.clubAfterCheck?.checkedItems
+      : CLUB_AFTER_CHECK_ITEM_LABELS.map(() => false),
     done: a.clubActivityDay === "yes" ? Boolean(state.clubAfterCheck?.done) : false,
     completedAtMs: a.clubActivityDay === "yes" ? Number(state.clubAfterCheck?.completedAtMs || 0) : 0,
     completedAtTimeLabel: a.clubActivityDay === "yes" ? String(state.clubAfterCheck?.completedAtTimeLabel || "") : ""
@@ -7719,28 +7731,47 @@ function shouldShowClubAfterCheckHomeNotice() {
 }
 
 function renderClubAfterCheck() {
+  state.clubAfterCheck = normalizeClubAfterCheckState(state.clubAfterCheck, getTodayKeyJst());
+  const allChecked = state.clubAfterCheck.checkedItems.every(Boolean);
   renderScreen(`
     <h2>⚾ 部活後チェック</h2>
     <div class="task-card">
-      <p>① グラウンドで泥や砂をできるだけ落とし、自宅前でもう一度確認して落とし切った</p>
-      <p>② 野球バッグを決めた場所へ置いた</p>
-      <p>③ ユニフォーム・靴下の泥を風呂場で落とした</p>
-      <p>④ 水筒・弁当箱を出した</p>
-      <p>⑤ プリントを出し、伝えることは親へ直ちに共有した</p>
+      <div class="form-stack">
+        ${CLUB_AFTER_CHECK_ITEM_LABELS.map((label, index) => `
+          <label class="option-item"><input type="checkbox" data-club-after-check-item="${index}" ${state.clubAfterCheck.checkedItems[index] ? "checked" : ""} />${escapeHtml(label)}</label>
+        `).join("")}
+      </div>
     </div>
     <div class="btn-row compact-stack">
-      <button id="openClubAfterCheckConfirmBtn" class="btn-main" type="button">親に確認してもらう</button>
+      <button id="openClubAfterCheckConfirmBtn" class="btn-main" type="button" ${allChecked ? "" : "disabled"}>親に確認してもらう</button>
     </div>
   `);
 
+  document.querySelectorAll("input[data-club-after-check-item]").forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      const index = Number(target.getAttribute("data-club-after-check-item"));
+      if (!Number.isInteger(index) || index < 0 || index >= CLUB_AFTER_CHECK_ITEM_LABELS.length) return;
+      state.clubAfterCheck.checkedItems[index] = Boolean(target.checked);
+      saveState();
+      renderClubAfterCheck();
+    });
+  });
   document.getElementById("openClubAfterCheckConfirmBtn")?.addEventListener("click", () => changePhase("clubAfterCheckConfirm"));
 }
 
 function renderClubAfterCheckConfirm() {
+  state.clubAfterCheck = normalizeClubAfterCheckState(state.clubAfterCheck, getTodayKeyJst());
   renderScreen(`
     <h2>⚾ 部活後チェック</h2>
     <div class="task-card">
       <p>①〜⑤が終わっているか確認してください。</p>
+      <div class="form-stack">
+        ${CLUB_AFTER_CHECK_ITEM_LABELS.map((label, index) => `
+          <p>${state.clubAfterCheck.checkedItems[index] ? "☑" : "□"} ${escapeHtml(label)}</p>
+        `).join("")}
+      </div>
     </div>
     <div class="btn-row split compact-stack">
       <button id="completeClubAfterCheckBtn" class="btn-main" type="button">完了</button>
