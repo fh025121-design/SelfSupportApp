@@ -5580,6 +5580,7 @@ function renderPlanningSubmissionChecklistSummary(task) {
 
 async function savePlanningTask() {
   syncPlanningFormFromDom();
+  const isEditSave = state.planningForm.mode === "edit";
   const taskNameForAssist = getPlanningFormTaskName();
   if (!(await confirmContentAssistIfNeeded(state.planningForm.content, taskNameForAssist))) {
     deferredUiBlockUntil = 0;
@@ -5631,6 +5632,7 @@ async function savePlanningTask() {
           task.submissionChecklistCompleted = false;
         }
         markTaskNameAsUsed(name);
+        state.planningForm = createPlanningForm();
         return;
       }
 
@@ -5641,7 +5643,9 @@ async function savePlanningTask() {
       markTaskNameAsUsed(name);
     },
     onSuccess: () => {
-      state.planningForm = createPlanningForm();
+      if (isEditSave) {
+        state.planningForm = createPlanningForm();
+      }
       saveState();
       renderPlanning();
     },
