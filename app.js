@@ -2986,14 +2986,13 @@ async function pickNotificationSound(target, toneType) {
     saveState();
     renderSettings();
   } catch (error) {
-    console.error(
-      "RingtonePicker error:",
-      JSON.stringify(error, Object.getOwnPropertyNames(error))
+    const errorText = JSON.stringify(
+      error,
+      Object.getOwnPropertyNames(error)
     );
-    alert(
-      "RingtonePicker error: " +
-      JSON.stringify(error, Object.getOwnPropertyNames(error))
-    );
+
+    console.error("RingtonePicker error: " + errorText);
+    alert("RingtonePicker error: " + errorText);
   }
 }
 

@@ -1,5 +1,10 @@
 # Release History
 
+## 2026-08-02 15:51 JST
+- v1.73
+	- `pickNotificationSound` の `catch` 内で `errorText` を組み立て、`console.error` と `alert` の両方を `RingtonePicker error: ` + 文字列1本で出力する形式へ変更。
+	- 表示バージョンを `1.72` から `1.73` へ更新（+0.01）。
+
 ## 2026-08-02 15:48 JST
 - v1.72
 	- `pickNotificationSound` の `catch` で `console.error` を `JSON.stringify(error, Object.getOwnPropertyNames(error))` 出力へ変更。
