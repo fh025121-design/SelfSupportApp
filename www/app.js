@@ -2819,15 +2819,64 @@ function renderCompletionHistory() {
     });
     document.getElementById("finishWithoutCopyBtn")?.addEventListener("click", () => {
       overlay.remove();
+      showParentReportDialog();
+    });
+  };
+
+  const showParentReportDialog = () => {
+    document.getElementById("parentReportConfirmOverlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "parentReportConfirmOverlay";
+    overlay.className = "app-modal-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="parentReportConfirmTitle">
+        <h3 id="parentReportConfirmTitle">🟡 親への報告</h3>
+        <div class="form-stack">
+          <label class="check-item"><input id="parentReportItem1" type="checkbox" /> 今日、黒ノートへ追加した改善事項を親へ報告した（追加がなければ「ありません」と報告）</label>
+          <label class="check-item"><input id="parentReportItem2" type="checkbox" /> 今日一番気を付けたことを親へ報告した</label>
+        </div>
+        <div class="btn-row split compact-stack app-modal-actions">
+          <button id="parentReportDoneBtn" class="btn-main" type="button" disabled aria-disabled="true">報告しました</button>
+          <button id="parentReportBackBtn" class="btn-quiet" type="button">戻る</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const firstEl = document.getElementById("parentReportItem1");
+    const secondEl = document.getElementById("parentReportItem2");
+    const doneBtn = document.getElementById("parentReportDoneBtn");
+
+    const updateDoneButtonState = () => {
+      const enabled = Boolean(firstEl instanceof HTMLInputElement && firstEl.checked)
+        && Boolean(secondEl instanceof HTMLInputElement && secondEl.checked);
+      if (!doneBtn) return;
+      doneBtn.disabled = !enabled;
+      doneBtn.setAttribute("aria-disabled", enabled ? "false" : "true");
+    };
+
+    firstEl?.addEventListener("change", updateDoneButtonState);
+    secondEl?.addEventListener("change", updateDoneButtonState);
+
+    document.getElementById("parentReportBackBtn")?.addEventListener("click", () => {
+      overlay.remove();
+    });
+    document.getElementById("parentReportDoneBtn")?.addEventListener("click", () => {
+      if (!(firstEl instanceof HTMLInputElement) || !(secondEl instanceof HTMLInputElement)) return;
+      if (!firstEl.checked || !secondEl.checked) return;
+      overlay.remove();
       startTodayFinishFlow();
     });
+
+    updateDoneButtonState();
   };
 
   document.getElementById("copyCompletionHistoryBtn")?.addEventListener("click", handleCopyCompletionHistory);
 
   document.getElementById("finishTodayBtn")?.addEventListener("click", () => {
     if (completionHistoryCopied) {
-      startTodayFinishFlow();
+      showParentReportDialog();
       return;
     }
     showFinishBeforeCopyDialog();
