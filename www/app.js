@@ -141,6 +141,10 @@ const DEPARTURE_CHECK_ITEMS = [
   "今日の予定に目を通したか",
   "スマホを玄関へ置いたか"
 ];
+const PLANNING_COLLAPSE_SECTION_KEYS = [
+  "timeSettings",
+  "belongings"
+];
 
 const app = document.getElementById("app");
 const todayLabel = document.getElementById("todayLabel");
@@ -263,6 +267,7 @@ let notificationChannelDebugMessage = "";
 let localNotificationsPluginRef = null;
 let ringtonePickerPluginRef = null;
 let planningRecurringPickerOpen = false;
+let planningCollapseState = createPlanningCollapseState();
 let localNotificationListenerRegistered = false;
 let lastAppliedNotificationSoundConfigHash = "";
 
@@ -414,6 +419,36 @@ function createPlanningForm() {
     content: "",
     submissionTemplateId: SUBMISSION_TEMPLATE_NONE
   };
+}
+
+function createPlanningCollapseState() {
+  return {
+    timeSettings: false,
+    belongings: false
+  };
+}
+
+function isPlanningSectionExpanded(sectionKey) {
+  return Boolean(planningCollapseState?.[sectionKey]);
+}
+
+function togglePlanningSection(sectionKey) {
+  if (!PLANNING_COLLAPSE_SECTION_KEYS.includes(sectionKey)) return;
+  planningCollapseState[sectionKey] = !isPlanningSectionExpanded(sectionKey);
+}
+
+function renderPlanningCollapsibleSection(sectionKey, title, bodyHtml) {
+  const expanded = isPlanningSectionExpanded(sectionKey);
+  return `
+    <div class="task-card planning-collapsible">
+      <button type="button" class="btn-quiet planning-collapse-toggle" data-planning-collapse-toggle="${escapeHtml(sectionKey)}" aria-expanded="${expanded ? "true" : "false"}">
+        ${expanded ? "▼" : "▶"} ${escapeHtml(title)}
+      </button>
+      <div class="${expanded ? "" : "hidden"}" data-planning-collapse-content="${escapeHtml(sectionKey)}">
+        ${bodyHtml}
+      </div>
+    </div>
+  `;
 }
 
 function createRecurringForm() {
@@ -2415,8 +2450,8 @@ function renderHome() {
   }
   const belongingsItems = homeContext.belongingsItems;
   const belongingsHtml = belongingsItems.length === 0
-    ? `<p class="home-overview-belongings-none">持ち物：なし</p>`
-    : `<p class="home-overview-belongings-title">持ち物</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
+    ? `<p class="home-overview-belongings-none">持ち物/やること：なし</p>`
+    : `<p class="home-overview-belongings-title">持ち物/やること</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
   const displayTasks = homeContext.tasks;
   const showRunningReminder = !isPreviousView && isRunningTaskReminderVisible();
   const runningReminderLabel = showRunningReminder ? buildRunningReminderTaskLabel(runningTask) : "";
@@ -5725,6 +5760,66 @@ function renderPlanning() {
   const belongingsDateKey = getPlanningTargetDateKey();
   const belongingsSummary = getBelongingsSummaryForDate(belongingsDateKey);
   const belongingsLabel = state.planFor === "tomorrow" ? "明日" : "今日";
+  const wakeUpSectionHtml = `
+    <div>
+      <label>起床時間</label>
+      <div class="time-select-row">
+        <select id="wakeUpHour">${renderHourOptions(wakeParts.hour)}</select>
+        <span>:</span>
+        <select id="wakeUpMinute">${renderMinute5Options(wakeParts.minute)}</select>
+      </div>
+    </div>
+  `;
+  const departureSectionHtml = `
+    <div>
+      <label>出発時間</label>
+      <div class="time-select-row">
+        <select id="departureMode"><option value="time" ${state.planTimes.departure !== "none" ? "selected" : ""}>時刻設定</option><option value="none" ${state.planTimes.departure === "none" ? "selected" : ""}>外出なし</option></select>
+        <select id="departureHour" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderHourOptions(depParts.hour)}</select>
+        <span>:</span>
+        <select id="departureMinute" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderMinute5Options(depParts.minute)}</select>
+      </div>
+    </div>
+  `;
+  const returnHomeSectionHtml = `
+    <div>
+      <label>帰宅時間</label>
+      <div class="time-select-row">
+        <select id="returnHomeMode"><option value="time" ${state.planTimes.returnHome !== "none" ? "selected" : ""}>時刻設定</option><option value="none" ${state.planTimes.returnHome === "none" ? "selected" : ""}>帰宅なし</option></select>
+        <select id="returnHomeHour" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderHourOptions(returnParts.hour)}</select>
+        <span>:</span>
+        <select id="returnHomeMinute" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderMinute5Options(returnParts.minute)}</select>
+      </div>
+    </div>
+  `;
+  const studyStartSectionHtml = `
+    <div>
+      <label>勉強開始時間</label>
+      <div class="time-select-row">
+        <select id="studyStartHour">${renderHourOptions(studyParts.hour)}</select>
+        <span>:</span>
+        <select id="studyStartMinute">${renderMinute5Options(studyParts.minute)}</select>
+      </div>
+    </div>
+  `;
+  const belongingsSectionHtml = `
+    <p class="helper">【自動】</p>
+    <ul class="confirm-list">${renderPlanningAutoBelongings(belongingsSummary.autoItems)}</ul>
+    <p class="helper">【今日だけ追加】</p>
+    <ul class="confirm-list">${renderPlanningManualBelongings(belongingsSummary.manualItems)}</ul>
+    <div class="btn-row split compact-stack">
+      <input id="dailyBelongingInput" type="text" value="${escapeHtml(state.planningDailyBelongingInput || "")}" maxlength="60" placeholder="例: 絵の具セット" />
+      <button id="addDailyBelongingBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-belonging-add", "追加")}</button>
+    </div>
+  `;
+  const timeSettingsSectionHtml = `
+    <div class="time-grid">
+      ${wakeUpSectionHtml}
+      ${departureSectionHtml}
+      ${returnHomeSectionHtml}
+      ${studyStartSectionHtml}
+    </div>
+  `;
 
   renderScreen(`
     <h2>予定入力</h2>
@@ -5733,54 +5828,8 @@ function renderPlanning() {
       <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.tomorrowLabel)}</span></label>
     </div>
 
-    <div class="time-grid">
-      <div>
-        <label>起床時間</label>
-        <div class="time-select-row">
-          <select id="wakeUpHour">${renderHourOptions(wakeParts.hour)}</select>
-          <span>:</span>
-          <select id="wakeUpMinute">${renderMinute5Options(wakeParts.minute)}</select>
-        </div>
-      </div>
-      <div>
-        <label>出発時間</label>
-        <div class="time-select-row">
-          <select id="departureMode"><option value="time" ${state.planTimes.departure !== "none" ? "selected" : ""}>時刻設定</option><option value="none" ${state.planTimes.departure === "none" ? "selected" : ""}>外出なし</option></select>
-          <select id="departureHour" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderHourOptions(depParts.hour)}</select>
-          <span>:</span>
-          <select id="departureMinute" ${state.planTimes.departure === "none" ? "disabled" : ""}>${renderMinute5Options(depParts.minute)}</select>
-        </div>
-      </div>
-      <div>
-        <label>帰宅時間</label>
-        <div class="time-select-row">
-          <select id="returnHomeMode"><option value="time" ${state.planTimes.returnHome !== "none" ? "selected" : ""}>時刻設定</option><option value="none" ${state.planTimes.returnHome === "none" ? "selected" : ""}>帰宅なし</option></select>
-          <select id="returnHomeHour" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderHourOptions(returnParts.hour)}</select>
-          <span>:</span>
-          <select id="returnHomeMinute" ${state.planTimes.returnHome === "none" ? "disabled" : ""}>${renderMinute5Options(returnParts.minute)}</select>
-        </div>
-      </div>
-      <div>
-        <label>勉強開始時間</label>
-        <div class="time-select-row">
-          <select id="studyStartHour">${renderHourOptions(studyParts.hour)}</select>
-          <span>:</span>
-          <select id="studyStartMinute">${renderMinute5Options(studyParts.minute)}</select>
-        </div>
-      </div>
-    </div>
-
-    <h3>🎒 ${belongingsLabel}の持ち物</h3>
-    <div class="task-card">
-      <p class="helper">【自動】</p>
-      <ul class="confirm-list">${renderPlanningAutoBelongings(belongingsSummary.autoItems)}</ul>
-      <p class="helper">【今日だけ追加】</p>
-      <ul class="confirm-list">${renderPlanningManualBelongings(belongingsSummary.manualItems)}</ul>
-      <div class="btn-row split compact-stack">
-        <input id="dailyBelongingInput" type="text" value="${escapeHtml(state.planningDailyBelongingInput || "")}" maxlength="60" placeholder="例: 絵の具セット" />
-        <button id="addDailyBelongingBtn" class="btn-sub" type="button" ${getSaveActionDisabledAttr()}>${getSaveActionLabel("planning-belonging-add", "追加")}</button>
-      </div>
-    </div>
+    ${renderPlanningCollapsibleSection("timeSettings", "起床時間・出発時間・帰宅時間・勉強開始時間", timeSettingsSectionHtml)}
+    ${renderPlanningCollapsibleSection("belongings", `🎒 ${belongingsLabel}の持ち物・やること`, belongingsSectionHtml)}
 
     <h3>登録済みタスク</h3>
     <div class="btn-row compact-stack">
@@ -5900,6 +5949,16 @@ function renderMinutePresetButtons() {
 }
 
 function bindPlanningEvents() {
+  document.querySelectorAll("button[data-planning-collapse-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sectionKey = String(btn.getAttribute("data-planning-collapse-toggle") || "");
+      if (!sectionKey) return;
+      syncPlanningFormFromDom();
+      togglePlanningSection(sectionKey);
+      renderPlanning();
+    });
+  });
+
   document.querySelectorAll("input[name='planFor']").forEach((radio) => {
     radio.addEventListener("change", (e) => {
       const target = e.target;
