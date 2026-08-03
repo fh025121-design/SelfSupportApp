@@ -972,6 +972,29 @@ function normalizeSubmissionChecklistTarget(raw) {
   };
 }
 
+function normalizeHomeworkSubmissionItemEvents(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      const itemId = String(entry?.itemId || "").trim();
+      const itemLabelSnapshot = String(entry?.itemLabelSnapshot || "").trim();
+      const templateNameSnapshot = String(entry?.templateNameSnapshot || "").trim();
+      const homeworkNameSnapshot = String(entry?.homeworkNameSnapshot || "").trim();
+      const completedAtMs = Number(entry?.completedAtMs);
+      if (!itemId || !itemLabelSnapshot || !templateNameSnapshot) return null;
+      if (!Number.isFinite(completedAtMs) || completedAtMs <= 0) return null;
+      return {
+        itemId,
+        itemLabelSnapshot,
+        templateNameSnapshot,
+        homeworkNameSnapshot,
+        completedAtMs: Math.floor(completedAtMs)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.completedAtMs || 0) - (b.completedAtMs || 0));
+}
+
 function normalizeHomeworkTask(item) {
   const homeworkWorkType = normalizeHomeworkWorkType(item?.homeworkWorkType);
   const normalizedSubmissionTemplateId = normalizeSubmissionTemplateId(item?.submissionTemplateId)
@@ -991,6 +1014,7 @@ function normalizeHomeworkTask(item) {
     submissionTemplateId: normalizedSubmissionTemplateId,
     submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(item?.submissionCheckedItemIds),
     submissionChecklistCompleted: Boolean(item?.submissionChecklistCompleted),
+    submissionItemCompletionEvents: normalizeHomeworkSubmissionItemEvents(item?.submissionItemCompletionEvents),
     createdAtMs: Number.isFinite(createdAtMs) && createdAtMs > 0 ? Math.floor(createdAtMs) : 0,
     completedAtMs: Number.isFinite(completedAtMs) && completedAtMs > 0 ? Math.floor(completedAtMs) : 0,
     actionNoSuppressedDateKey: normalizeTaskDateKey(item?.actionNoSuppressedDateKey) || "",
@@ -2757,6 +2781,35 @@ function buildHomeworkCompletionHistoryEntries(dateKey = getCompletionHistoryTar
     .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
 }
 
+function buildHomeworkSubmissionItemCompletionHistoryEntries(dateKey = getCompletionHistoryTargetDateKey()) {
+  const targetDateKey = normalizeTaskDateKey(dateKey);
+  if (!targetDateKey) return [];
+
+  return state.homeworkTasks
+    .flatMap((item) => {
+      if (!item) return [];
+      const events = Array.isArray(item.submissionItemCompletionEvents)
+        ? item.submissionItemCompletionEvents
+        : [];
+      return events.map((entry) => {
+        const completedAtMs = Number(entry?.completedAtMs);
+        if (!Number.isFinite(completedAtMs) || completedAtMs <= 0) return null;
+        if (getHistoryDateKeyFromTimestampMs(completedAtMs) !== targetDateKey) return null;
+        const templateName = String(entry?.templateNameSnapshot || "").trim() || "提出確認";
+        const itemLabel = String(entry?.itemLabelSnapshot || "").trim();
+        if (!itemLabel) return null;
+        return {
+          kind: "homework-item",
+          occurredAtMs: Math.floor(completedAtMs),
+          timeLabel: formatHistoryEventTime({ occurredAtMs: completedAtMs }),
+          templateName,
+          itemLabel
+        };
+      }).filter(Boolean);
+    })
+    .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+}
+
 function buildCompletionHistoryDisplayEntries(events) {
   const historyDateKey = getCompletionHistoryTargetDateKey();
   const entries = [];
@@ -2853,6 +2906,7 @@ function buildCompletionHistoryDisplayEntries(events) {
     entry.actions.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
   });
 
+  entries.push(...buildHomeworkSubmissionItemCompletionHistoryEntries(historyDateKey));
   entries.push(...buildHomeworkCompletionHistoryEntries(historyDateKey));
 
   entries.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
@@ -2875,6 +2929,11 @@ function buildCompletionHistoryCopyText(entries) {
   entries.forEach((entry) => {
     if (entry.kind === "single") {
       lines.push(`${entry.timeLabel}　${entry.label}`);
+      return;
+    }
+    if (entry.kind === "homework-item") {
+      lines.push(`${entry.timeLabel}　${entry.templateName}`);
+      lines.push(`${entry.itemLabel}　完了`);
       return;
     }
     if (entry.kind === "homework") {
@@ -2913,6 +2972,9 @@ function renderCompletionHistory() {
     : `<div class="completion-history-text-list">${entries.map((entry) => {
       if (entry.kind === "single") {
         return `<p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.label)}</p>`;
+      }
+      if (entry.kind === "homework-item") {
+        return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.templateName)}</p><p class="completion-history-subline">　　　${escapeHtml(entry.itemLabel)}　完了</p></div>`;
       }
       if (entry.kind === "homework") {
         if (entry.mode === "completed") {
@@ -4849,6 +4911,25 @@ function updateHomeworkCompletionByStandardFlow(item, baseDateKey = getCurrentHo
   return true;
 }
 
+function appendHomeworkSubmissionItemCompletionEvent(target, itemId, template, completedAtMs = Date.now()) {
+  if (!target || !itemId) return;
+  const templateItems = Array.isArray(template?.items) ? template.items : [];
+  const templateItem = templateItems.find((item) => String(item?.id || "") === String(itemId));
+  if (!templateItem) return;
+  const ts = Number(completedAtMs);
+  if (!Number.isFinite(ts) || ts <= 0) return;
+  if (!Array.isArray(target.submissionItemCompletionEvents)) {
+    target.submissionItemCompletionEvents = [];
+  }
+  target.submissionItemCompletionEvents.push({
+    itemId: String(templateItem.id),
+    itemLabelSnapshot: String(templateItem.label || "").trim(),
+    templateNameSnapshot: String(template?.name || "").trim() || "提出確認",
+    homeworkNameSnapshot: String(target.name || "").trim(),
+    completedAtMs: Math.floor(ts)
+  });
+}
+
 function createSubmissionTemplateFromName(name) {
   const trimmed = String(name || "").trim();
   if (!trimmed) return null;
@@ -5074,9 +5155,16 @@ function renderSubmissionChecklistOverlay() {
   document.body.appendChild(overlay);
 
   const refreshChecklistStatus = () => {
+    const previousCheckedIds = normalizeSubmissionCheckedItemIds(target.submissionCheckedItemIds);
+    const previousCheckedSet = new Set(previousCheckedIds);
     const checkedIds = Array.from(overlay.querySelectorAll("input[data-submission-item-id]:checked"))
       .map((el) => String(el.getAttribute("data-submission-item-id") || ""))
       .filter(Boolean);
+    checkedIds.forEach((itemId) => {
+      if (previousCheckedSet.has(itemId)) return;
+      if (context.targetType !== "homework") return;
+      appendHomeworkSubmissionItemCompletionEvent(target, itemId, template, Date.now());
+    });
     target.submissionCheckedItemIds = checkedIds;
     if (context.targetType === "homework") {
       updateHomeworkCompletionByStandardFlow(target, getCurrentHomeDateKey());
@@ -5100,6 +5188,9 @@ function renderSubmissionChecklistOverlay() {
     const label = flow.nextActionableManualRow.label;
     if (!window.confirm(`「${label}」を完了にしますか？`)) return;
     currentIds.push(itemId);
+    if (context.targetType === "homework") {
+      appendHomeworkSubmissionItemCompletionEvent(target, itemId, template, Date.now());
+    }
     target.submissionCheckedItemIds = currentIds;
     updateHomeworkCompletionByStandardFlow(target, getCurrentHomeDateKey());
     saveState();
@@ -5631,6 +5722,7 @@ async function saveHomeworkItem() {
         submissionTemplateId,
         submissionCheckedItemIds: [],
         submissionChecklistCompleted: false,
+        submissionItemCompletionEvents: [],
         createdAtMs: Date.now(),
         completedAtMs: done ? Date.now() : 0,
         actionNoSuppressedDateKey: "",
