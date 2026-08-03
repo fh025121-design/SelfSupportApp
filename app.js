@@ -244,11 +244,14 @@ const HISTORY_EVENT_DISPLAYABLE_TYPES = new Set([
 const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 const DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START = "verify-seconds-before-start";
 const CLUB_AFTER_CHECK_ITEM_LABELS = [
-  "① グラウンドで靴の中や靴下の泥や砂をできるだけ落とし、自宅前でもう一度確認して落とし切った",
-  "② 野球バッグを決めた場所へ置いた",
-  "③ ユニフォーム・靴下の泥を風呂場で落とした",
-  "④ 水筒・弁当箱を出した",
-  "⑤ プリントを出し、伝えることは親へ直ちに共有した"
+  "① グラウンドで靴の中や靴下の泥や砂をできるだけ落としてきた",
+  "② 自宅前で靴を脱ぎ、砂を落としてから家に入った",
+  "③ 玄関に泥汚れがあれば掃き掃除をした",
+  "④ 野球バッグを決めた場所へ置いた",
+  "⑤ ユニフォーム・靴下の泥を風呂場で落とし、桶に入れた",
+  "⑥ 泥や砂で家を汚さないため、頭・体をタオルで拭き、手足の爪を爪ブラシで洗った",
+  "⑦ 水筒・弁当箱を出した",
+  "⑧ プリントを出し、伝えることは親へ直ちに共有した"
 ];
 
 const SYNC_SCHEMA_VERSION = 1;
@@ -7796,6 +7799,7 @@ function renderClubAfterCheck() {
   const allChecked = state.clubAfterCheck.checkedItems.every(Boolean);
   renderScreen(`
     <h2>⚾ 部活後チェック</h2>
+    <p>気遣いとは、「自分が汚したもの・使ったもの・伝えるべきこと」を、自分で最後まで責任を持つことです。</p>
     <div class="task-card">
       <div class="form-stack">
         ${CLUB_AFTER_CHECK_ITEM_LABELS.map((label, index) => `
@@ -7826,9 +7830,10 @@ function renderClubAfterCheckConfirm() {
   state.clubAfterCheck = normalizeClubAfterCheckState(state.clubAfterCheck, getTodayKeyJst());
   renderScreen(`
     <h2>⚾ 部活後チェック</h2>
+    <p>気遣いとは、「自分が汚したもの・使ったもの・伝えるべきこと」を、自分で最後まで責任を持つことです。</p>
     <div class="task-card">
       <p class="club-after-check-alert">帰宅時チェックの内容をＬＩＮＥ後、</p>
-      <p>①〜⑤が終わっているか確認してください。</p>
+      <p>①〜⑧が終わっているか確認してください。</p>
       <div class="form-stack">
         ${CLUB_AFTER_CHECK_ITEM_LABELS.map((label, index) => `
           <p>${state.clubAfterCheck.checkedItems[index] ? "☑" : "□"} ${escapeHtml(label)}</p>
