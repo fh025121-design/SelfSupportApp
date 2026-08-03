@@ -2750,7 +2750,7 @@ function buildHomeworkCompletionHistoryEntries(dateKey = getCompletionHistoryTar
       const createdDateKey = getHistoryDateKeyFromTimestampMs(createdAtMs);
       const completedDateKey = getHistoryDateKeyFromTimestampMs(completedAtMs);
       const includeCompleted = Boolean(item.done)
-        && (completedDateKey === targetDateKey || (!completedDateKey && item.deadlineDate === targetDateKey));
+        && completedDateKey === targetDateKey;
       const includeInProgress = !item.done
         && (item.deadlineDate === targetDateKey || createdDateKey === targetDateKey);
 
