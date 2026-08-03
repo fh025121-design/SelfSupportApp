@@ -978,6 +978,8 @@ function normalizeHomeworkTask(item) {
     || (homeworkWorkType === HOMEWORK_WORK_TYPE_NO_WORK
       ? NO_HOMEWORK_SUBMISSION_TEMPLATE_ID
       : STANDARD_HOMEWORK_SUBMISSION_TEMPLATE_ID);
+  const createdAtMs = Number(item?.createdAtMs);
+  const completedAtMs = Number(item?.completedAtMs);
   return {
     id: item?.id || crypto.randomUUID(),
     name: String(item?.name || "").trim(),
@@ -989,6 +991,8 @@ function normalizeHomeworkTask(item) {
     submissionTemplateId: normalizedSubmissionTemplateId,
     submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(item?.submissionCheckedItemIds),
     submissionChecklistCompleted: Boolean(item?.submissionChecklistCompleted),
+    createdAtMs: Number.isFinite(createdAtMs) && createdAtMs > 0 ? Math.floor(createdAtMs) : 0,
+    completedAtMs: Number.isFinite(completedAtMs) && completedAtMs > 0 ? Math.floor(completedAtMs) : 0,
     actionNoSuppressedDateKey: normalizeTaskDateKey(item?.actionNoSuppressedDateKey) || "",
     actionHistory: Array.isArray(item?.actionHistory)
       ? item.actionHistory.map((entry) => ({
@@ -2450,8 +2454,8 @@ function renderHome() {
   }
   const belongingsItems = homeContext.belongingsItems;
   const belongingsHtml = belongingsItems.length === 0
-    ? `<p class="home-overview-belongings-none">持ち物/やること：なし</p>`
-    : `<p class="home-overview-belongings-title">持ち物/やること</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
+    ? `<p class="home-overview-belongings-none">持ち物・やること一覧：なし</p>`
+    : `<p class="home-overview-belongings-title">持ち物・やること一覧</p><ul class="home-belongings-list">${belongingsItems.map((item) => `<li>・${escapeHtml(item)}</li>`).join("")}</ul>`;
   const displayTasks = homeContext.tasks;
   const showRunningReminder = !isPreviousView && isRunningTaskReminderVisible();
   const runningReminderLabel = showRunningReminder ? buildRunningReminderTaskLabel(runningTask) : "";
@@ -2664,6 +2668,95 @@ function resolveTaskContentForHistoryEvent(event, dateKey = getCompletionHistory
   return String(matches[0]?.content || "").trim();
 }
 
+function getHistoryDateKeyFromTimestampMs(timestampMs) {
+  const rawMs = Number(timestampMs);
+  if (!Number.isFinite(rawMs) || rawMs <= 0) return "";
+  const text = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(rawMs));
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function formatHistoryMonthDayLabel(dateKey) {
+  const match = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "--/--";
+  return `${Number(match[2])}/${Number(match[3])}`;
+}
+
+function formatHistoryDateTimeLabel(timestampMs, fallbackDateKey = "") {
+  const rawMs = Number(timestampMs);
+  if (!Number.isFinite(rawMs) || rawMs <= 0) {
+    return `${formatHistoryMonthDayLabel(fallbackDateKey)} --:--`;
+  }
+  const dt = new Date(rawMs);
+  const timeText = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(dt);
+  const dateKey = getHistoryDateKeyFromTimestampMs(rawMs) || fallbackDateKey;
+  return `${formatHistoryMonthDayLabel(dateKey)} ${timeText}`;
+}
+
+function buildHomeworkCompletionHistoryEntries(dateKey = getCompletionHistoryTargetDateKey()) {
+  const targetDateKey = normalizeTaskDateKey(dateKey);
+  if (!targetDateKey) return [];
+
+  return state.homeworkTasks
+    .map((item) => {
+      if (!item) return null;
+
+      const template = findSubmissionTemplate(item.submissionTemplateId);
+      const templateName = String(template?.name || "").trim() || "提出確認";
+      const templateItems = Array.isArray(template?.items) ? template.items : [];
+      const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
+      const checkedLabels = templateItems
+        .filter((templateItem) => checkedSet.has(templateItem.id))
+        .map((templateItem) => String(templateItem?.label || "").trim())
+        .filter(Boolean);
+      const remainingCount = Math.max(templateItems.length - checkedLabels.length, 0);
+      const createdAtMs = Number(item.createdAtMs);
+      const completedAtMs = Number(item.completedAtMs);
+      const createdDateKey = getHistoryDateKeyFromTimestampMs(createdAtMs);
+      const completedDateKey = getHistoryDateKeyFromTimestampMs(completedAtMs);
+      const includeCompleted = Boolean(item.done)
+        && (completedDateKey === targetDateKey || (!completedDateKey && item.deadlineDate === targetDateKey));
+      const includeInProgress = !item.done
+        && (item.deadlineDate === targetDateKey || createdDateKey === targetDateKey);
+
+      if (!includeCompleted && !includeInProgress) return null;
+
+      if (includeCompleted) {
+        return {
+          kind: "homework",
+          mode: "completed",
+          occurredAtMs: Number.isFinite(completedAtMs) && completedAtMs > 0 ? completedAtMs : createdAtMs,
+          lineLabel: `${formatHistoryDateTimeLabel(completedAtMs, targetDateKey)}　${templateName}　完了`
+        };
+      }
+
+      return {
+        kind: "homework",
+        mode: "progress",
+        occurredAtMs: Number.isFinite(createdAtMs) && createdAtMs > 0 ? createdAtMs : 0,
+        timeLabel: formatHistoryEventTime({ occurredAtMs: createdAtMs }),
+        homeworkName: String(item.name || "").trim() || "（宿題・課題）",
+        templateName,
+        checkedLabels,
+        remainingCount,
+        deadlineLabel: `期限：${formatHistoryMonthDayLabel(item.deadlineDate)}`
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+}
+
 function buildCompletionHistoryDisplayEntries(events) {
   const historyDateKey = getCompletionHistoryTargetDateKey();
   const entries = [];
@@ -2760,6 +2853,8 @@ function buildCompletionHistoryDisplayEntries(events) {
     entry.actions.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
   });
 
+  entries.push(...buildHomeworkCompletionHistoryEntries(historyDateKey));
+
   entries.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
   return entries;
 }
@@ -2780,6 +2875,21 @@ function buildCompletionHistoryCopyText(entries) {
   entries.forEach((entry) => {
     if (entry.kind === "single") {
       lines.push(`${entry.timeLabel}　${entry.label}`);
+      return;
+    }
+    if (entry.kind === "homework") {
+      if (entry.mode === "completed") {
+        lines.push(entry.lineLabel);
+        return;
+      }
+      const checkedText = entry.checkedLabels.length > 0
+        ? entry.checkedLabels.join("・")
+        : "なし";
+      lines.push(`${entry.timeLabel}　宿題・課題　${entry.homeworkName}`);
+      lines.push(`　提出区分：${entry.templateName}`);
+      lines.push(`　完了済み：${checkedText}`);
+      lines.push(`　あと${entry.remainingCount}項目`);
+      lines.push(`　${entry.deadlineLabel}`);
       return;
     }
     const taskHead = entry.taskContent
@@ -2803,6 +2913,15 @@ function renderCompletionHistory() {
     : `<div class="completion-history-text-list">${entries.map((entry) => {
       if (entry.kind === "single") {
         return `<p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.label)}</p>`;
+      }
+      if (entry.kind === "homework") {
+        if (entry.mode === "completed") {
+          return `<p class="completion-history-line">${escapeHtml(entry.lineLabel)}</p>`;
+        }
+        const checkedText = entry.checkedLabels.length > 0
+          ? entry.checkedLabels.join("・")
+          : "なし";
+        return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.timeLabel)}　宿題・課題　${escapeHtml(entry.homeworkName)}</p><p class="completion-history-subline">　　　提出区分：${escapeHtml(entry.templateName)}</p><p class="completion-history-subline">　　　完了済み：${escapeHtml(checkedText)}</p><p class="completion-history-subline">　　　あと${escapeHtml(String(entry.remainingCount))}項目</p><p class="completion-history-subline">　　　${escapeHtml(entry.deadlineLabel)}</p></div>`;
       }
       const actionLines = entry.actions
         .map((action) => `<p class="completion-history-subline">　　　${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
@@ -4721,8 +4840,12 @@ function updateHomeworkCompletionByStandardFlow(item, baseDateKey = getCurrentHo
   const flow = buildHomeworkStandardFlowState(item, baseDateKey);
   if (!flow) return false;
   if (!flow.complete) return false;
+  const wasDone = Boolean(item.done);
   item.done = true;
   item.submissionChecklistCompleted = true;
+  if (!wasDone) {
+    item.completedAtMs = Date.now();
+  }
   return true;
 }
 
@@ -5001,6 +5124,12 @@ function renderSubmissionChecklistOverlay() {
   });
 
   document.getElementById("completeSubmissionChecklistBtn")?.addEventListener("click", () => {
+    if (context.targetType === "homework") {
+      if (!target.done) {
+        target.completedAtMs = Date.now();
+      }
+      target.done = true;
+    }
     target.submissionChecklistCompleted = true;
     saveState();
     closeSubmissionChecklistTarget();
@@ -5471,12 +5600,18 @@ async function saveHomeworkItem() {
         const item = state.homeworkTasks.find((x) => x.id === state.homeworkForm.targetId);
         if (!item) throw new Error("missing-homework-item");
         const templateChanged = item.submissionTemplateId !== submissionTemplateId;
+        const wasDone = Boolean(item.done);
         item.name = name;
         item.deadlineDate = deadlineDate;
         item.content = content;
         item.homeworkWorkType = homeworkWorkType;
         item.googleSync = googleSync;
         item.done = done;
+        if (!wasDone && done) {
+          item.completedAtMs = Date.now();
+        } else if (wasDone && !done) {
+          item.completedAtMs = 0;
+        }
         item.submissionTemplateId = submissionTemplateId;
         if (templateChanged) {
           item.submissionCheckedItemIds = [];
@@ -5496,6 +5631,8 @@ async function saveHomeworkItem() {
         submissionTemplateId,
         submissionCheckedItemIds: [],
         submissionChecklistCompleted: false,
+        createdAtMs: Date.now(),
+        completedAtMs: done ? Date.now() : 0,
         actionNoSuppressedDateKey: "",
         actionHistory: []
       };
@@ -5960,12 +6097,20 @@ function bindPlanningEvents() {
   });
 
   document.querySelectorAll("input[name='planFor']").forEach((radio) => {
-    radio.addEventListener("change", (e) => {
+    radio.addEventListener("change", async (e) => {
       const target = e.target;
       if (!(target instanceof HTMLInputElement)) return;
       if (!target.checked) return;
       const nextPlanFor = target.value === "today" ? "today" : "tomorrow";
       if (state.planFor === nextPlanFor) return;
+      if (nextPlanFor === "tomorrow") {
+        const { tomorrowDateKey } = getPlanningDateChoices();
+        const ok = await showPlanningTomorrowConfirmDialog(tomorrowDateKey);
+        if (!ok) {
+          renderPlanning();
+          return;
+        }
+      }
       state.planFor = nextPlanFor;
       state.planningForm = createPlanningForm();
       planningRecurringPickerOpen = false;
@@ -8705,6 +8850,42 @@ function getPlanningDateChoices() {
     todayLabel: formatPlanningDateChoice(todayDateKey, "今日"),
     tomorrowLabel: formatPlanningDateChoice(tomorrowDateKey, "明日")
   };
+}
+
+function formatPlanningMonthDayText(dateKey) {
+  const m = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "--/--";
+  return `${Number(m[2])}/${Number(m[3])}`;
+}
+
+function showPlanningTomorrowConfirmDialog(tomorrowDateKey) {
+  return new Promise((resolve) => {
+    document.getElementById("planningTomorrowConfirmOverlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "planningTomorrowConfirmOverlay";
+    overlay.className = "app-modal-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="planningTomorrowConfirmTitle">
+        <h3 id="planningTomorrowConfirmTitle">⚠ 確認</h3>
+        <p>明日（${escapeHtml(formatPlanningMonthDayText(tomorrowDateKey))}）の予定を入力します。</p>
+        <p>よろしいですか？</p>
+        <div class="btn-row split compact-stack app-modal-actions">
+          <button id="planningTomorrowConfirmYesBtn" class="btn-main" type="button">はい</button>
+          <button id="planningTomorrowConfirmCancelBtn" class="btn-quiet" type="button">キャンセル</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const closeWith = (result) => {
+      overlay.remove();
+      resolve(Boolean(result));
+    };
+
+    document.getElementById("planningTomorrowConfirmYesBtn")?.addEventListener("click", () => closeWith(true));
+    document.getElementById("planningTomorrowConfirmCancelBtn")?.addEventListener("click", () => closeWith(false));
+  });
 }
 
 function addRecurringPlansToDate(dateKey, planIds = []) {
