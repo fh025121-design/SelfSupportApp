@@ -244,7 +244,7 @@ const HISTORY_EVENT_DISPLAYABLE_TYPES = new Set([
 const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 const DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START = "verify-seconds-before-start";
 const CLUB_AFTER_CHECK_ITEM_LABELS = [
-  "① グラウンドで泥や砂をできるだけ落とし、自宅前でもう一度確認して落とし切った",
+  "① グラウンドで靴の中や靴下の泥や砂をできるだけ落とし、自宅前でもう一度確認して落とし切った",
   "② 野球バッグを決めた場所へ置いた",
   "③ ユニフォーム・靴下の泥を風呂場で落とした",
   "④ 水筒・弁当箱を出した",
@@ -7698,27 +7698,39 @@ function renderReturnReport() {
   document.getElementById("copyOpenLineBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(state.returnCheck.reportText || "");
     if (ok) {
+      finalizeReturnCheckSubmission();
       document.getElementById("returnReportMsg").textContent = "コピーしました";
       window.open("https://line.me", "_blank");
+      if (state.clubAfterCheck?.wasClubDay) {
+        changePhase("clubAfterCheck", false);
+        return;
+      }
+      changePhase("home", false);
     } else {
       document.getElementById("returnReportMsg").textContent = "コピーに失敗しました";
     }
   });
   document.getElementById("sentReturnBtn").addEventListener("click", () => {
-    state.returnCheck.done = true;
-    const returnCompletedEvent = appendHistoryEvent({
-      category: "check",
-      type: HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED
-    });
-    state.returnCheck.completedAtMs = Number(returnCompletedEvent?.occurredAtMs || 0);
-    state.returnCheck.completedAtTimeLabel = String(returnCompletedEvent?.timeLabel || "");
-    state.returnCheck.reminderVisible = false;
-    state.returnCheck.reminderDeferred = false;
-    state.returnCheck.reminderPromptTriggered = false;
-    state.returnCheck.reminderSnoozeUntil = 0;
+    finalizeReturnCheckSubmission();
     saveState();
     changePhase("home", false);
   });
+}
+
+function finalizeReturnCheckSubmission() {
+  if (state.returnCheck.done) return;
+  state.returnCheck.done = true;
+  const returnCompletedEvent = appendHistoryEvent({
+    category: "check",
+    type: HISTORY_EVENT_TYPE_CHECK_RETURN_COMPLETED
+  });
+  state.returnCheck.completedAtMs = Number(returnCompletedEvent?.occurredAtMs || 0);
+  state.returnCheck.completedAtTimeLabel = String(returnCompletedEvent?.timeLabel || "");
+  state.returnCheck.reminderVisible = false;
+  state.returnCheck.reminderDeferred = false;
+  state.returnCheck.reminderPromptTriggered = false;
+  state.returnCheck.reminderSnoozeUntil = 0;
+  saveState();
 }
 
 function shouldShowClubAfterCheckHomeNotice() {
@@ -7766,6 +7778,7 @@ function renderClubAfterCheckConfirm() {
   renderScreen(`
     <h2>⚾ 部活後チェック</h2>
     <div class="task-card">
+      <p class="club-after-check-alert">帰宅時チェックの内容をＬＩＮＥ後、</p>
       <p>①〜⑤が終わっているか確認してください。</p>
       <div class="form-stack">
         ${CLUB_AFTER_CHECK_ITEM_LABELS.map((label, index) => `

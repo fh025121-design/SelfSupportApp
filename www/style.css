@@ -1348,6 +1348,11 @@ button:disabled {
   width: min(560px, 100%);
 }
 
+.club-after-check-alert {
+  color: #991b1b;
+  font-weight: 900;
+}
+
 .medicine-modal h3 {
   font-size: 1.8rem;
   margin-bottom: 10px;
