@@ -245,7 +245,7 @@ const DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES = 10;
 const DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START = "verify-seconds-before-start";
 const CLUB_AFTER_CHECK_ITEM_LABELS = [
   "① グラウンドで靴の中や靴下の泥や砂をできるだけ落としてきた",
-  "② 自宅前で靴を脱ぎ、砂を落としてから家に入った",
+  "② 電柱付近で靴を脱ぎ、砂を落としてから家に入った",
   "③ 玄関に泥汚れがあれば掃き掃除をした",
   "④ 野球バッグを決めた場所へ置いた",
   "⑤ ユニフォーム・靴下の泥を風呂場で落とし、桶に入れた",
