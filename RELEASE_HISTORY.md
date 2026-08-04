@@ -1,5 +1,15 @@
 # Release History
 
+## 2026-08-05 01:54 JST
+- v2.12
+	- Departure通知とTask Finish通知について、通知発火時にAndroidネイティブ側（TimedNotificationPublisher）で直接バイブを実行する処理を追加。
+	- `extra.source` が `departure-reminder` または `task-finish` のときのみ、同一バイブパターン `0,500,300,500` を実行するよう追加。
+	- Task Recheck は対象外として変更なし。
+	- 予定入力画面を開くたびに「時間」「持ち物・やること」の開閉状態を初期化し、初期表示を閉じるよう変更。
+	- 登録済みタスク以下の表示、入力内容、保存処理、表示項目は変更なし。
+	- 音源、NotificationChannel、AudioAttributes、Exact Alarm、通知予定時刻、channelIdは変更なし。
+	- 表示バージョンを `2.11` から `2.12` へ更新（+0.01）。
+
 ## 2026-08-05 01:18 JST
 - v2.11
 	- Task Finish通知チャネルのみ、既存端末設定の残留を避けるため channelId プレフィックスを `task-finish-alarm-v3-` へ更新。

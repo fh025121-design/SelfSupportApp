@@ -8,10 +8,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Logger;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import org.json.JSONObject;
 
 /**
  * Class used to create notification from timer event
@@ -21,6 +25,7 @@ public class TimedNotificationPublisher extends BroadcastReceiver {
 
     public static String NOTIFICATION_KEY = "NotificationPublisher.notification";
     public static String CRON_KEY = "NotificationPublisher.cron";
+    private static final long[] DIRECT_VIBRATION_PATTERN = new long[] { 0L, 500L, 300L, 500L };
 
     /**
      * Restore and present notification
@@ -45,6 +50,7 @@ public class TimedNotificationPublisher extends BroadcastReceiver {
         }
         NotificationStorage storage = new NotificationStorage(context);
         JSObject notificationJson = storage.getSavedNotificationAsJSObject(Integer.toString(id));
+        triggerDirectVibrationForTargetSource(context, notificationJson);
         LocalNotificationsPlugin.fireReceived(notificationJson);
         notificationManager.notify(id, notification);
         if (!rescheduleNotificationIfNeeded(context, intent, id)) {
@@ -86,5 +92,37 @@ public class TimedNotificationPublisher extends BroadcastReceiver {
         }
 
         return false;
+    }
+
+    private void triggerDirectVibrationForTargetSource(Context context, JSObject notificationJson) {
+        String source = "";
+        if (notificationJson != null) {
+            JSONObject extra = notificationJson.optJSONObject("extra");
+            if (extra != null) {
+                source = extra.optString("source", "");
+            }
+        }
+        if (!"departure-reminder".equals(source) && !"task-finish".equals(source)) {
+            return;
+        }
+        vibrateDirectly(context);
+    }
+
+    private void vibrateDirectly(Context context) {
+        Vibrator vibrator;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            VibratorManager manager = (VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+            if (manager == null) return;
+            vibrator = manager.getDefaultVibrator();
+        } else {
+            vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+        }
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createWaveform(DIRECT_VIBRATION_PATTERN, -1));
+        } else {
+            vibrator.vibrate(DIRECT_VIBRATION_PATTERN, -1);
+        }
     }
 }

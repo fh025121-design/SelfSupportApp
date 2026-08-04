@@ -9226,6 +9226,9 @@ function changePhase(next, pushHistory = true) {
   if (state.phase !== next && next === "execution") {
     state.executionTaskListExpanded = false;
   }
+  if (state.phase !== next && next === "planning") {
+    planningCollapseState = createPlanningCollapseState();
+  }
   if (next === "departureCheck") {
     state.departureCheck.activatedOnce = true;
   }
