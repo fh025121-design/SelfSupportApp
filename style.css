@@ -131,6 +131,13 @@ h1 {
   color: var(--muted);
 }
 
+.completion-history-actionline {
+  margin: 0;
+  line-height: 1.45;
+  color: var(--muted);
+  padding-left: 5.5em;
+}
+
 .auth-error {
   color: var(--danger);
   font-weight: 700;

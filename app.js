@@ -2829,7 +2829,6 @@ function buildHomeworkSubmissionItemCompletionHistoryEntries(dateKey = getComple
 }
 
 function buildCompletionHistoryDisplayEntries(events) {
-  const historyDateKey = getCompletionHistoryTargetDateKey();
   const entries = [];
   const taskBlockByKey = new Map();
   let lastAnonymousTaskBlock = null;
@@ -2849,7 +2848,7 @@ function buildCompletionHistoryDisplayEntries(events) {
 
     const key = getTaskHistoryGroupKey(event);
     const taskName = String(event?.taskNameSnapshot || "").trim() || "（タスク）";
-    const taskContent = resolveTaskContentForHistoryEvent(event, historyDateKey);
+    const taskContent = resolveTaskContentForHistoryEvent(event, getCompletionHistoryTargetDateKey());
     let block = null;
 
     if (key) {
@@ -2924,54 +2923,141 @@ function buildCompletionHistoryDisplayEntries(events) {
     entry.actions.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
   });
 
-  entries.push(...buildHomeworkSubmissionItemCompletionHistoryEntries(historyDateKey));
-  entries.push(...buildHomeworkCompletionHistoryEntries(historyDateKey));
-
   entries.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
   return entries;
 }
 
-function buildCompletionHistoryCopyText(entries) {
+function buildHomeworkCaseHistoryEntries(dateKey = getCompletionHistoryTargetDateKey()) {
+  const targetDateKey = normalizeTaskDateKey(dateKey);
+  if (!targetDateKey) return [];
+
+  return state.homeworkTasks
+    .map((item) => {
+      if (!item) return null;
+      const template = findSubmissionTemplate(item.submissionTemplateId);
+      const templateItems = Array.isArray(template?.items) ? template.items : [];
+      const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
+      const remainingLabels = templateItems
+        .filter((templateItem) => !checkedSet.has(templateItem.id))
+        .map((templateItem) => String(templateItem?.label || "").trim())
+        .filter(Boolean);
+      const remainingCount = Math.max(templateItems.length - (templateItems.length - remainingLabels.length), 0);
+      const createdAtMs = Number(item.createdAtMs);
+      const completedAtMs = Number(item.completedAtMs);
+      const createdDateKey = getHistoryDateKeyFromTimestampMs(createdAtMs);
+      const completedDateKey = getHistoryDateKeyFromTimestampMs(completedAtMs);
+      const itemEvents = (Array.isArray(item.submissionItemCompletionEvents) ? item.submissionItemCompletionEvents : [])
+        .map((entry) => {
+          const eventAtMs = Number(entry?.completedAtMs);
+          if (!Number.isFinite(eventAtMs) || eventAtMs <= 0) return null;
+          if (getHistoryDateKeyFromTimestampMs(eventAtMs) !== targetDateKey) return null;
+          const label = String(entry?.itemLabelSnapshot || "").trim();
+          if (!label) return null;
+          return {
+            occurredAtMs: Math.floor(eventAtMs),
+            timeLabel: formatHistoryEventTime({ occurredAtMs: eventAtMs }),
+            label
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+
+      const includeCompleted = Boolean(item.done) && completedDateKey === targetDateKey;
+      const includeProgress = !item.done
+        && remainingLabels.length > 0
+        && (item.deadlineDate === targetDateKey || createdDateKey === targetDateKey || itemEvents.length > 0);
+
+      if (!includeCompleted && !includeProgress && itemEvents.length === 0) return null;
+
+      const nextLabel = includeProgress
+        ? (remainingLabels.length === 1
+          ? `次：${remainingLabels[0] || ""}`
+          : `次：${remainingLabels[0] || ""}（他${remainingLabels.length - 1}項目）`)
+        : "";
+
+      const completedLabel = includeCompleted
+        ? `${formatHistoryEventTime({ occurredAtMs: completedAtMs })}　完了`
+        : "";
+
+      const firstItemAtMs = itemEvents.length > 0 ? Number(itemEvents[0].occurredAtMs || 0) : 0;
+      const sortOccurredAtMs = firstItemAtMs
+        || (includeCompleted ? Number(completedAtMs || 0) : 0)
+        || Number(createdAtMs || 0)
+        || 0;
+
+      return {
+        kind: "homework-case",
+        homeworkName: String(item.name || "").trim() || "（宿題・課題）",
+        deadlineDate: String(item.deadlineDate || ""),
+        deadlineLabel: `期限：${formatHistoryMonthDayLabel(item.deadlineDate)}`,
+        itemEvents,
+        nextLabel,
+        completedLabel,
+        occurredAtMs: sortOccurredAtMs
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.deadlineDate === b.deadlineDate) {
+        if ((a.occurredAtMs || 0) === (b.occurredAtMs || 0)) {
+          return a.homeworkName.localeCompare(b.homeworkName, "ja");
+        }
+        return (a.occurredAtMs || 0) - (b.occurredAtMs || 0);
+      }
+      return a.deadlineDate.localeCompare(b.deadlineDate);
+    });
+}
+
+function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   const dateKey = getCompletionHistoryTargetDateKey();
   const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const title = dateMatch
     ? `【${Number(dateMatch[2])}月${Number(dateMatch[3])}日 完了履歴】`
     : "【完了履歴】";
-  const lines = [title, ""];
+  const lines = [
+    title,
+    "",
+    "━━━━━━━━━━━━",
+    "【完了履歴】",
+    "━━━━━━━━━━━━",
+    ""
+  ];
 
   if (!Array.isArray(entries) || entries.length === 0) {
+    lines.push("（履歴なし）");
+  } else {
+    entries.forEach((entry) => {
+      if (entry.kind === "single") {
+        lines.push(`${entry.timeLabel}　${entry.label}`);
+        return;
+      }
+      const taskHead = entry.taskContent
+        ? `${entry.taskName}：${entry.taskContent}`
+        : entry.taskName;
+      lines.push(`${entry.firstTimeLabel}　${taskHead}`);
+      entry.actions.forEach((action) => {
+        lines.push(`　${action.label}　${action.timeLabel}`);
+      });
+    });
+  }
+
+  lines.push("", "━━━━━━━━━━━━", "【宿題・課題】", "━━━━━━━━━━━━", "");
+
+  if (!Array.isArray(homeworkEntries) || homeworkEntries.length === 0) {
     lines.push("（履歴なし）");
     return lines.join("\n");
   }
 
-  entries.forEach((entry) => {
-    if (entry.kind === "single") {
-      lines.push(`${entry.timeLabel}　${entry.label}`);
-      return;
-    }
-    if (entry.kind === "homework-item") {
-      lines.push(`${entry.timeLabel}　${entry.templateName}`);
-      lines.push(`${entry.itemLabel}　完了`);
-      return;
-    }
-    if (entry.kind === "homework") {
-      if (entry.mode === "completed") {
-        lines.push(entry.lineLabel);
-        return;
-      }
-      lines.push(`${entry.timeLabel}　宿題・課題　${entry.homeworkName}`);
-      lines.push(`　提出区分：${entry.templateName}`);
-      lines.push(`　${entry.remainingLabel}`);
-      lines.push(`　${entry.deadlineLabel}`);
-      return;
-    }
-    const taskHead = entry.taskContent
-      ? `${entry.taskName}：${entry.taskContent}`
-      : entry.taskName;
-    lines.push(`${entry.firstTimeLabel}　${taskHead}`);
-    entry.actions.forEach((action) => {
-      lines.push(`　${action.label}　${action.timeLabel}`);
+  homeworkEntries.forEach((entry) => {
+    lines.push(`■ ${entry.homeworkName}`);
+    lines.push("");
+    entry.itemEvents.forEach((event) => {
+      lines.push(`${event.timeLabel}　${event.label}`);
     });
+    if (entry.nextLabel) lines.push(entry.nextLabel);
+    if (entry.completedLabel) lines.push(entry.completedLabel);
+    lines.push(entry.deadlineLabel);
+    lines.push("");
   });
 
   return lines.join("\n");
@@ -2980,34 +3066,47 @@ function buildCompletionHistoryCopyText(entries) {
 function renderCompletionHistory() {
   const events = getCompletionHistoryEventsForCurrentDate();
   const entries = buildCompletionHistoryDisplayEntries(events);
-  const copyText = buildCompletionHistoryCopyText(entries);
-  const rowsHtml = entries.length === 0
+  const homeworkEntries = buildHomeworkCaseHistoryEntries();
+  const copyText = buildCompletionHistoryCopyText(entries, homeworkEntries);
+  const historyRowsHtml = entries.length === 0
     ? '<p class="helper">今日はまだ完了履歴がありません。</p>'
     : `<div class="completion-history-text-list">${entries.map((entry) => {
-      if (entry.kind === "single") {
-        return `<p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.label)}</p>`;
-      }
-      if (entry.kind === "homework-item") {
-        return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.templateName)}</p><p class="completion-history-subline">　　　${escapeHtml(entry.itemLabel)}　完了</p></div>`;
-      }
-      if (entry.kind === "homework") {
-        if (entry.mode === "completed") {
-          return `<p class="completion-history-line">${escapeHtml(entry.lineLabel)}</p>`;
-        }
-        return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.timeLabel)}　宿題・課題　${escapeHtml(entry.homeworkName)}</p><p class="completion-history-subline">　　　提出区分：${escapeHtml(entry.templateName)}</p><p class="completion-history-subline">　　　${escapeHtml(entry.remainingLabel)}</p><p class="completion-history-subline">　　　${escapeHtml(entry.deadlineLabel)}</p></div>`;
-      }
-      const actionLines = entry.actions
-        .map((action) => `<p class="completion-history-subline">　　　${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
+    if (entry.kind === "single") {
+      return `<p class="completion-history-line">${escapeHtml(entry.timeLabel)}　${escapeHtml(entry.label)}</p>`;
+    }
+    const taskHead = entry.taskContent
+      ? `${entry.taskName}：${entry.taskContent}`
+      : entry.taskName;
+    const actionText = entry.actions
+      .map((action) => `<p class="completion-history-actionline">${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
+      .join("");
+    const actionLine = actionText || "";
+    return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.firstTimeLabel)}　${escapeHtml(taskHead)}</p>${actionLine}</div>`;
+  }).join("")}</div>`;
+
+  const homeworkRowsHtml = homeworkEntries.length === 0
+    ? '<p class="helper">今日はまだ宿題・課題の履歴がありません。</p>'
+    : `<div class="completion-history-text-list">${homeworkEntries.map((entry) => {
+      const itemLines = entry.itemEvents
+        .map((event) => `<p class="completion-history-line">${escapeHtml(event.timeLabel)}　${escapeHtml(event.label)}</p>`)
         .join("");
-      const taskHead = entry.taskContent
-        ? `${entry.taskName}：${entry.taskContent}`
-        : entry.taskName;
-      return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.firstTimeLabel)}　${escapeHtml(taskHead)}</p>${actionLines}</div>`;
+      const nextLine = entry.nextLabel
+        ? `<p class="completion-history-subline">　　　${escapeHtml(entry.nextLabel)}</p>`
+        : "";
+      const completedLine = entry.completedLabel
+        ? `<p class="completion-history-subline">　　　${escapeHtml(entry.completedLabel)}</p>`
+        : "";
+      return `<div class="completion-history-block"><p class="completion-history-line">■ ${escapeHtml(entry.homeworkName)}</p>${itemLines}${nextLine}${completedLine}<p class="completion-history-subline">　　　${escapeHtml(entry.deadlineLabel)}</p></div>`;
     }).join("")}</div>`;
 
   renderScreen(`
     <h2>完了履歴</h2>
-    ${rowsHtml}
+    <hr class="sep" />
+    <h3>【完了履歴】</h3>
+    ${historyRowsHtml}
+    <hr class="sep" />
+    <h3>【宿題・課題】</h3>
+    ${homeworkRowsHtml}
     <div class="btn-row compact-stack"><button id="copyCompletionHistoryBtn" class="btn-main" type="button">履歴をコピー</button></div>
     <p id="completionHistoryCopyMsg" class="helper" aria-live="polite"></p>
     <div class="btn-row compact-stack"><button id="finishTodayBtn" class="btn-danger" type="button">今日は終了</button></div>
