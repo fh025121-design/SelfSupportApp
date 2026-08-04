@@ -3078,7 +3078,7 @@ function renderCompletionHistory() {
       ? `${entry.taskName}：${entry.taskContent}`
       : entry.taskName;
     const actionText = entry.actions
-      .map((action) => `<p class="completion-history-actionline">${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
+      .map((action) => `<p class="completion-history-subline">　　　${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
       .join("");
     const actionLine = actionText || "";
     return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.firstTimeLabel)}　${escapeHtml(taskHead)}</p>${actionLine}</div>`;
