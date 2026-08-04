@@ -2753,6 +2753,10 @@ function buildHomeworkCompletionHistoryEntries(dateKey = getCompletionHistoryTar
         .filter((templateItem) => checkedSet.has(templateItem.id))
         .map((templateItem) => String(templateItem?.label || "").trim())
         .filter(Boolean);
+      const remainingLabels = templateItems
+        .filter((templateItem) => !checkedSet.has(templateItem.id))
+        .map((templateItem) => String(templateItem?.label || "").trim())
+        .filter(Boolean);
       const remainingCount = Math.max(templateItems.length - checkedLabels.length, 0);
       const createdAtMs = Number(item.createdAtMs);
       const completedAtMs = Number(item.completedAtMs);
@@ -2761,6 +2765,7 @@ function buildHomeworkCompletionHistoryEntries(dateKey = getCompletionHistoryTar
       const includeCompleted = Boolean(item.done)
         && completedDateKey === targetDateKey;
       const includeInProgress = !item.done
+        && remainingCount > 0
         && (item.deadlineDate === targetDateKey || createdDateKey === targetDateKey);
 
       if (!includeCompleted && !includeInProgress) return null;
@@ -2781,8 +2786,12 @@ function buildHomeworkCompletionHistoryEntries(dateKey = getCompletionHistoryTar
         timeLabel: formatHistoryEventTime({ occurredAtMs: createdAtMs }),
         homeworkName: String(item.name || "").trim() || "（宿題・課題）",
         templateName,
-        checkedLabels,
         remainingCount,
+        remainingLabel: remainingCount <= 0
+          ? ""
+          : remainingCount === 1
+            ? `次：${remainingLabels[0] || ""}`
+            : `次：${remainingLabels[0] || ""}（他${remainingCount - 1}項目）`,
         deadlineLabel: `期限：${formatHistoryMonthDayLabel(item.deadlineDate)}`
       };
     })
@@ -2950,13 +2959,9 @@ function buildCompletionHistoryCopyText(entries) {
         lines.push(entry.lineLabel);
         return;
       }
-      const checkedText = entry.checkedLabels.length > 0
-        ? entry.checkedLabels.join("・")
-        : "なし";
       lines.push(`${entry.timeLabel}　宿題・課題　${entry.homeworkName}`);
       lines.push(`　提出区分：${entry.templateName}`);
-      lines.push(`　完了済み：${checkedText}`);
-      lines.push(`　あと${entry.remainingCount}項目`);
+      lines.push(`　${entry.remainingLabel}`);
       lines.push(`　${entry.deadlineLabel}`);
       return;
     }
@@ -2989,10 +2994,7 @@ function renderCompletionHistory() {
         if (entry.mode === "completed") {
           return `<p class="completion-history-line">${escapeHtml(entry.lineLabel)}</p>`;
         }
-        const checkedText = entry.checkedLabels.length > 0
-          ? entry.checkedLabels.join("・")
-          : "なし";
-        return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.timeLabel)}　宿題・課題　${escapeHtml(entry.homeworkName)}</p><p class="completion-history-subline">　　　提出区分：${escapeHtml(entry.templateName)}</p><p class="completion-history-subline">　　　完了済み：${escapeHtml(checkedText)}</p><p class="completion-history-subline">　　　あと${escapeHtml(String(entry.remainingCount))}項目</p><p class="completion-history-subline">　　　${escapeHtml(entry.deadlineLabel)}</p></div>`;
+        return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.timeLabel)}　宿題・課題　${escapeHtml(entry.homeworkName)}</p><p class="completion-history-subline">　　　提出区分：${escapeHtml(entry.templateName)}</p><p class="completion-history-subline">　　　${escapeHtml(entry.remainingLabel)}</p><p class="completion-history-subline">　　　${escapeHtml(entry.deadlineLabel)}</p></div>`;
       }
       const actionLines = entry.actions
         .map((action) => `<p class="completion-history-subline">　　　${escapeHtml(action.label)}　${escapeHtml(action.timeLabel)}</p>`)
