@@ -131,6 +131,16 @@ h1 {
   color: var(--muted);
 }
 
+.completion-history-date-group {
+  margin: 4px 0 0;
+}
+
+.completion-history-date-line {
+  margin: 0;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
 .auth-error {
   color: var(--danger);
   font-weight: 700;

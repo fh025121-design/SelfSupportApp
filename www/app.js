@@ -579,6 +579,10 @@ function createHistoryEventsByDate() {
   return {};
 }
 
+function createHomeworkCompletionHistoryByDate() {
+  return {};
+}
+
 function createDepartureNotificationSettings() {
   return {
     leadMinutes: DEFAULT_DEPARTURE_NOTIFICATION_LEAD_MINUTES
@@ -681,6 +685,7 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     recurringPlansAppliedByDate: {},
     recurringSyncDateKey: null,
     historyEventsByDate: normalizeHistoryEventsByDate(historyEventsByDate, dateKey),
+    homeworkCompletionHistoryByDate: createHomeworkCompletionHistoryByDate(),
     dailySupportByDate: createDailySupportByDate(),
     dailySpecialBelongingsByDate: {},
     planningDailyBelongingInput: "",
@@ -1160,6 +1165,7 @@ function loadState() {
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
       nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
+      nextState.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(parsed.homeworkCompletionHistoryByDate, todayKey, 7);
       nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
       nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
       const summary = buildPastDaySummary(parsed);
@@ -1210,6 +1216,7 @@ function loadState() {
     }
     safe.recurringSyncDateKey = typeof safe.recurringSyncDateKey === "string" ? safe.recurringSyncDateKey : null;
     safe.historyEventsByDate = normalizeHistoryEventsByDate(safe.historyEventsByDate, todayKey);
+    safe.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(safe.homeworkCompletionHistoryByDate, todayKey, 7);
     safe.dailySupportByDate = normalizeDailySupportByDate(safe.dailySupportByDate);
     safe.dailySpecialBelongingsByDate = normalizeDailySpecialBelongingsMap(safe.dailySpecialBelongingsByDate);
     safe.planningDailyBelongingInput = String(safe.planningDailyBelongingInput || "");
@@ -1348,6 +1355,137 @@ function normalizeHistoryEventsByDate(raw, fallbackDateKey = getTodayKeyJst()) {
   return out;
 }
 
+function normalizeHomeworkCompletionHistoryItemEvent(raw, fallbackDateKey = getTodayKeyJst()) {
+  if (!raw || typeof raw !== "object") return null;
+  const completedAtMs = Number(raw.completedAtMs);
+  const normalizedCompletedAtMs = Number.isFinite(completedAtMs) && completedAtMs > 0 ? Math.floor(completedAtMs) : 0;
+  if (!normalizedCompletedAtMs) return null;
+  const itemLabelSnapshot = String(raw.itemLabelSnapshot || raw.label || "").trim();
+  if (!itemLabelSnapshot) return null;
+  return {
+    itemId: String(raw.itemId || ""),
+    itemLabelSnapshot,
+    completedAtMs: normalizedCompletedAtMs,
+    dateKey: normalizeTaskDateKey(raw.dateKey) || getHistoryDateKeyFromTimestampMs(normalizedCompletedAtMs) || normalizeTaskDateKey(fallbackDateKey) || getTodayKeyJst()
+  };
+}
+
+function normalizeHomeworkCompletionHistoryRecord(raw, fallbackDateKey = getTodayKeyJst()) {
+  if (!raw || typeof raw !== "object") return null;
+  const completedAtMs = Number(raw.completedAtMs);
+  const normalizedCompletedAtMs = Number.isFinite(completedAtMs) && completedAtMs > 0 ? Math.floor(completedAtMs) : 0;
+  const homeworkId = String(raw.homeworkId || raw.id || "").trim();
+  if (!homeworkId) return null;
+  const completedDateKey = normalizeTaskDateKey(raw.completedDateKey)
+    || getHistoryDateKeyFromTimestampMs(normalizedCompletedAtMs)
+    || normalizeTaskDateKey(fallbackDateKey);
+  if (!completedDateKey) return null;
+  const itemEventsSource = Array.isArray(raw.itemEvents)
+    ? raw.itemEvents
+    : Array.isArray(raw.submissionItemCompletionEvents)
+      ? raw.submissionItemCompletionEvents
+      : [];
+  const itemEvents = itemEventsSource
+    .map((entry) => normalizeHomeworkCompletionHistoryItemEvent(entry, completedDateKey))
+    .filter(Boolean)
+    .sort((a, b) => (a.completedAtMs || 0) - (b.completedAtMs || 0));
+  return {
+    homeworkId,
+    homeworkName: String(raw.homeworkName || raw.name || "").trim() || "（宿題・課題）",
+    deadlineDate: normalizeTaskDateKey(raw.deadlineDate) || "",
+    completedAtMs: normalizedCompletedAtMs,
+    completedDateKey,
+    itemEvents
+  };
+}
+
+function normalizeHomeworkCompletionHistoryByDate(raw, fallbackDateKey = getTodayKeyJst()) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([dateKey, records]) => {
+    const normalizedDateKey = normalizeTaskDateKey(dateKey);
+    if (!normalizedDateKey || !Array.isArray(records)) return;
+    const byHomeworkId = new Map();
+    records.forEach((record) => {
+      const normalizedRecord = normalizeHomeworkCompletionHistoryRecord(record, normalizedDateKey || fallbackDateKey);
+      if (!normalizedRecord) return;
+      byHomeworkId.set(normalizedRecord.homeworkId, normalizedRecord);
+    });
+    out[normalizedDateKey] = Array.from(byHomeworkId.values()).sort((a, b) => {
+      if ((a.completedAtMs || 0) === (b.completedAtMs || 0)) {
+        return a.homeworkName.localeCompare(b.homeworkName, "ja");
+      }
+      return (a.completedAtMs || 0) - (b.completedAtMs || 0);
+    });
+  });
+  return out;
+}
+
+function getHomeworkCompletionHistoryWindowStartDayNumber(dateKey = getTodayKeyJst(), keepDays = 7) {
+  const dayNumber = getDateKeyDayNumber(dateKey);
+  if (dayNumber === null) return null;
+  return dayNumber - Math.max(1, keepDays) + 1;
+}
+
+function isHomeworkHistoryDateWithinWindow(dateKey, referenceDateKey = getTodayKeyJst(), keepDays = 7) {
+  const dayNumber = getDateKeyDayNumber(dateKey);
+  const referenceDayNumber = getDateKeyDayNumber(referenceDateKey);
+  const startDayNumber = getHomeworkCompletionHistoryWindowStartDayNumber(referenceDateKey, keepDays);
+  if (dayNumber === null || referenceDayNumber === null || startDayNumber === null) return false;
+  return dayNumber >= startDayNumber && dayNumber <= referenceDayNumber;
+}
+
+function pruneHomeworkCompletionHistoryByDate(raw, referenceDateKey = getTodayKeyJst(), keepDays = 7) {
+  const normalized = normalizeHomeworkCompletionHistoryByDate(raw, referenceDateKey);
+  const out = {};
+  Object.entries(normalized).forEach(([dateKey, records]) => {
+    if (!isHomeworkHistoryDateWithinWindow(dateKey, referenceDateKey, keepDays)) return;
+    if (Array.isArray(records) && records.length > 0) {
+      out[dateKey] = records;
+    }
+  });
+  return out;
+}
+
+function recordHomeworkCompletionHistorySnapshot(item, completedAtMs = Date.now()) {
+  if (!item || !item.done) return false;
+  const normalizedCompletedAtMs = Number.isFinite(Number(completedAtMs)) && Number(completedAtMs) > 0 ? Math.floor(Number(completedAtMs)) : 0;
+  if (!normalizedCompletedAtMs) return false;
+  const completedDateKey = getHistoryDateKeyFromTimestampMs(normalizedCompletedAtMs);
+  if (!completedDateKey) return false;
+  const normalizedHistory = normalizeHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, getTodayKeyJst());
+  const existingRecord = Object.values(normalizedHistory).flat().find((record) => String(record.homeworkId || "") === String(item.id || ""));
+  if (existingRecord) return true;
+  Object.keys(normalizedHistory).forEach((dateKey) => {
+    normalizedHistory[dateKey] = (normalizedHistory[dateKey] || []).filter((record) => String(record.homeworkId || "") !== String(item.id || ""));
+    if (normalizedHistory[dateKey].length === 0) {
+      delete normalizedHistory[dateKey];
+    }
+  });
+  const record = normalizeHomeworkCompletionHistoryRecord({
+    homeworkId: item.id,
+    homeworkName: item.name,
+    deadlineDate: item.deadlineDate,
+    completedAtMs: normalizedCompletedAtMs,
+    completedDateKey,
+    itemEvents: item.submissionItemCompletionEvents,
+    submissionItemCompletionEvents: item.submissionItemCompletionEvents
+  }, completedDateKey);
+  if (!record) return false;
+  if (!Array.isArray(normalizedHistory[completedDateKey])) {
+    normalizedHistory[completedDateKey] = [];
+  }
+  normalizedHistory[completedDateKey].push(record);
+  normalizedHistory[completedDateKey].sort((a, b) => {
+    if ((a.completedAtMs || 0) === (b.completedAtMs || 0)) {
+      return a.homeworkName.localeCompare(b.homeworkName, "ja");
+    }
+    return (a.completedAtMs || 0) - (b.completedAtMs || 0);
+  });
+  state.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(normalizedHistory, getTodayKeyJst(), 7);
+  return true;
+}
+
 function normalizeReturnCheckState(raw) {
   const base = {
     ...createReturnCheckState(),
@@ -1464,6 +1602,7 @@ function normalizeHomeworkForm(raw) {
 }
 
 function saveState(options = {}) {
+  state.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, getTodayKeyJst(), 7);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (currentUser?.uid) {
     localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
@@ -2927,85 +3066,99 @@ function buildCompletionHistoryDisplayEntries(events) {
   return entries;
 }
 
+function groupHomeworkItemEventsByDate(itemEvents) {
+  const groups = new Map();
+  (Array.isArray(itemEvents) ? itemEvents : []).forEach((event) => {
+    const normalized = normalizeHomeworkCompletionHistoryItemEvent(event);
+    if (!normalized) return;
+    const dateKey = normalized.dateKey || getHistoryDateKeyFromTimestampMs(normalized.completedAtMs);
+    if (!dateKey) return;
+    if (!groups.has(dateKey)) {
+      groups.set(dateKey, []);
+    }
+    groups.get(dateKey).push({
+      occurredAtMs: normalized.completedAtMs,
+      timeLabel: formatHistoryEventTime({ occurredAtMs: normalized.completedAtMs }),
+      label: normalized.itemLabelSnapshot
+    });
+  });
+
+  return Array.from(groups.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([dateKey, items]) => ({
+      dateKey,
+      dateLabel: `【${formatHistoryMonthDayLabel(dateKey)}】`,
+      items: items.sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0))
+    }));
+}
+
+function buildHomeworkHistoryEntryFromActiveItem(item) {
+  if (!item || item.done) return null;
+  const template = findSubmissionTemplate(item.submissionTemplateId);
+  const templateItems = Array.isArray(template?.items) ? template.items : [];
+  const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
+  const remainingLabels = templateItems
+    .filter((templateItem) => !checkedSet.has(templateItem.id))
+    .map((templateItem) => String(templateItem?.label || "").trim())
+    .filter(Boolean);
+  const itemEvents = (Array.isArray(item.submissionItemCompletionEvents) ? item.submissionItemCompletionEvents : [])
+    .map((entry) => normalizeHomeworkCompletionHistoryItemEvent(entry))
+    .filter(Boolean)
+    .sort((a, b) => (a.completedAtMs || 0) - (b.completedAtMs || 0));
+
+  return {
+    kind: "homework-case",
+    homeworkId: String(item.id || ""),
+    homeworkName: String(item.name || "").trim() || "（宿題・課題）",
+    summaryLine: `期限：${formatHistoryMonthDayLabel(item.deadlineDate)}　完了：－`,
+    dateGroups: groupHomeworkItemEventsByDate(itemEvents),
+    nextLabel: remainingLabels.length > 0
+      ? (remainingLabels.length === 1
+        ? `次：${remainingLabels[0] || ""}`
+        : `次：${remainingLabels[0] || ""}（他${remainingLabels.length - 1}項目）`)
+      : "",
+    done: false,
+    sortOccurredAtMs: itemEvents.length > 0 ? itemEvents[0].completedAtMs : (Number(item.createdAtMs) || 0)
+  };
+}
+
+function buildHomeworkHistoryEntryFromStoredRecord(record) {
+  if (!record) return null;
+  const itemEvents = Array.isArray(record.itemEvents) ? record.itemEvents : [];
+  const completedAtMs = Number(record.completedAtMs) || 0;
+  const completedDateLabel = completedAtMs > 0 ? formatHistoryMonthDayLabel(getHistoryDateKeyFromTimestampMs(completedAtMs)) : "－";
+  return {
+    kind: "homework-case",
+    homeworkId: String(record.homeworkId || ""),
+    homeworkName: String(record.homeworkName || "").trim() || "（宿題・課題）",
+    summaryLine: `期限：${formatHistoryMonthDayLabel(record.deadlineDate)}　完了：${completedDateLabel}`,
+    dateGroups: groupHomeworkItemEventsByDate(itemEvents),
+    nextLabel: "",
+    done: true,
+    completedLabel: "✔ 完了",
+    sortOccurredAtMs: completedAtMs
+  };
+}
+
 function buildHomeworkCaseHistoryEntries(dateKey = getCompletionHistoryTargetDateKey()) {
   const targetDateKey = normalizeTaskDateKey(dateKey);
   if (!targetDateKey) return [];
+  const activeEntries = state.homeworkTasks
+    .filter((item) => item && !item.done)
+    .map(buildHomeworkHistoryEntryFromActiveItem)
+    .filter(Boolean);
 
-  return state.homeworkTasks
-    .map((item) => {
-      if (!item) return null;
-      const template = findSubmissionTemplate(item.submissionTemplateId);
-      const templateItems = Array.isArray(template?.items) ? template.items : [];
-      const checkedSet = new Set(normalizeSubmissionCheckedItemIds(item.submissionCheckedItemIds));
-      const remainingLabels = templateItems
-        .filter((templateItem) => !checkedSet.has(templateItem.id))
-        .map((templateItem) => String(templateItem?.label || "").trim())
-        .filter(Boolean);
-      const remainingCount = Math.max(templateItems.length - (templateItems.length - remainingLabels.length), 0);
-      const createdAtMs = Number(item.createdAtMs);
-      const completedAtMs = Number(item.completedAtMs);
-      const createdDateKey = getHistoryDateKeyFromTimestampMs(createdAtMs);
-      const completedDateKey = getHistoryDateKeyFromTimestampMs(completedAtMs);
-      const itemEvents = (Array.isArray(item.submissionItemCompletionEvents) ? item.submissionItemCompletionEvents : [])
-        .map((entry) => {
-          const eventAtMs = Number(entry?.completedAtMs);
-          if (!Number.isFinite(eventAtMs) || eventAtMs <= 0) return null;
-          if (getHistoryDateKeyFromTimestampMs(eventAtMs) !== targetDateKey) return null;
-          const label = String(entry?.itemLabelSnapshot || "").trim();
-          if (!label) return null;
-          return {
-            occurredAtMs: Math.floor(eventAtMs),
-            timeLabel: formatHistoryEventTime({ occurredAtMs: eventAtMs }),
-            label
-          };
-        })
-        .filter(Boolean)
-        .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+  const historyByDate = pruneHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, targetDateKey, 7);
+  const completedEntries = Object.entries(historyByDate)
+    .filter(([dateKey]) => isHomeworkHistoryDateWithinWindow(dateKey, targetDateKey, 7))
+    .flatMap(([, records]) => (Array.isArray(records) ? records : []).map(buildHomeworkHistoryEntryFromStoredRecord).filter(Boolean));
 
-      const includeCompleted = Boolean(item.done) && completedDateKey === targetDateKey;
-      const includeProgress = !item.done
-        && remainingLabels.length > 0
-        && (item.deadlineDate === targetDateKey || createdDateKey === targetDateKey || itemEvents.length > 0);
-
-      if (!includeCompleted && !includeProgress && itemEvents.length === 0) return null;
-
-      const nextLabel = includeProgress
-        ? (remainingLabels.length === 1
-          ? `次：${remainingLabels[0] || ""}`
-          : `次：${remainingLabels[0] || ""}（他${remainingLabels.length - 1}項目）`)
-        : "";
-
-      const completedLabel = includeCompleted
-        ? `${formatHistoryEventTime({ occurredAtMs: completedAtMs })}　完了`
-        : "";
-
-      const firstItemAtMs = itemEvents.length > 0 ? Number(itemEvents[0].occurredAtMs || 0) : 0;
-      const sortOccurredAtMs = firstItemAtMs
-        || (includeCompleted ? Number(completedAtMs || 0) : 0)
-        || Number(createdAtMs || 0)
-        || 0;
-
-      return {
-        kind: "homework-case",
-        homeworkName: String(item.name || "").trim() || "（宿題・課題）",
-        deadlineDate: String(item.deadlineDate || ""),
-        deadlineLabel: `期限：${formatHistoryMonthDayLabel(item.deadlineDate)}`,
-        itemEvents,
-        nextLabel,
-        completedLabel,
-        occurredAtMs: sortOccurredAtMs
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => {
-      if (a.deadlineDate === b.deadlineDate) {
-        if ((a.occurredAtMs || 0) === (b.occurredAtMs || 0)) {
-          return a.homeworkName.localeCompare(b.homeworkName, "ja");
-        }
-        return (a.occurredAtMs || 0) - (b.occurredAtMs || 0);
-      }
-      return a.deadlineDate.localeCompare(b.deadlineDate);
-    });
+  return [...activeEntries, ...completedEntries].sort((a, b) => {
+    if ((a.sortOccurredAtMs || 0) === (b.sortOccurredAtMs || 0)) {
+      return String(a.homeworkName || "").localeCompare(String(b.homeworkName || ""), "ja");
+    }
+    return (a.sortOccurredAtMs || 0) - (b.sortOccurredAtMs || 0);
+  });
 }
 
 function buildCompletionHistoryCopyText(entries, homeworkEntries) {
@@ -3051,12 +3204,17 @@ function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   homeworkEntries.forEach((entry) => {
     lines.push(`■ ${entry.homeworkName}`);
     lines.push("");
-    entry.itemEvents.forEach((event) => {
-      lines.push(`${event.timeLabel}　${event.label}`);
+    lines.push(entry.summaryLine);
+    lines.push("");
+    entry.dateGroups.forEach((group) => {
+      lines.push(group.dateLabel);
+      group.items.forEach((event) => {
+        lines.push(`${event.timeLabel}　${event.label}`);
+      });
+      lines.push("");
     });
     if (entry.nextLabel) lines.push(entry.nextLabel);
     if (entry.completedLabel) lines.push(entry.completedLabel);
-    lines.push(entry.deadlineLabel);
     lines.push("");
   });
 
@@ -3087,16 +3245,21 @@ function renderCompletionHistory() {
   const homeworkRowsHtml = homeworkEntries.length === 0
     ? '<p class="helper">今日はまだ宿題・課題の履歴がありません。</p>'
     : `<div class="completion-history-text-list">${homeworkEntries.map((entry) => {
-      const itemLines = entry.itemEvents
-        .map((event) => `<p class="completion-history-line">${escapeHtml(event.timeLabel)}　${escapeHtml(event.label)}</p>`)
+      const dateGroupsHtml = (Array.isArray(entry.dateGroups) ? entry.dateGroups : [])
+        .map((group) => {
+          const itemLines = group.items
+            .map((event) => `<p class="completion-history-subline">　${escapeHtml(event.timeLabel)}　${escapeHtml(event.label)}</p>`)
+            .join("");
+          return `<div class="completion-history-date-group"><p class="completion-history-date-line">${escapeHtml(group.dateLabel)}</p>${itemLines}</div>`;
+        })
         .join("");
       const nextLine = entry.nextLabel
-        ? `<p class="completion-history-subline">　　　${escapeHtml(entry.nextLabel)}</p>`
+        ? `<p class="completion-history-subline">　${escapeHtml(entry.nextLabel)}</p>`
         : "";
       const completedLine = entry.completedLabel
-        ? `<p class="completion-history-subline">　　　${escapeHtml(entry.completedLabel)}</p>`
+        ? `<p class="completion-history-subline">　${escapeHtml(entry.completedLabel)}</p>`
         : "";
-      return `<div class="completion-history-block"><p class="completion-history-line">■ ${escapeHtml(entry.homeworkName)}</p>${itemLines}${nextLine}${completedLine}<p class="completion-history-subline">　　　${escapeHtml(entry.deadlineLabel)}</p></div>`;
+      return `<div class="completion-history-block"><p class="completion-history-line">■ ${escapeHtml(entry.homeworkName)}</p><p class="completion-history-subline">${escapeHtml(entry.summaryLine)}</p>${dateGroupsHtml}${nextLine}${completedLine}</div>`;
     }).join("")}</div>`;
 
   renderScreen(`
@@ -5018,6 +5181,7 @@ function updateHomeworkCompletionByStandardFlow(item, baseDateKey = getCurrentHo
   if (!wasDone) {
     item.completedAtMs = Date.now();
   }
+  recordHomeworkCompletionHistorySnapshot(item, item.completedAtMs || Date.now());
   return true;
 }
 
@@ -5330,6 +5494,7 @@ function renderSubmissionChecklistOverlay() {
         target.completedAtMs = Date.now();
       }
       target.done = true;
+      recordHomeworkCompletionHistorySnapshot(target, target.completedAtMs || Date.now());
     }
     target.submissionChecklistCompleted = true;
     saveState();
@@ -5779,12 +5944,14 @@ async function saveHomeworkItem() {
     },
     captureState: () => structuredClone({
       homeworkTasks: state.homeworkTasks,
-      homeworkForm: state.homeworkForm
+      homeworkForm: state.homeworkForm,
+      homeworkCompletionHistoryByDate: state.homeworkCompletionHistoryByDate
     }),
     restoreState: (snapshot) => {
       if (!snapshot) return;
       state.homeworkTasks = snapshot.homeworkTasks;
       state.homeworkForm = normalizeHomeworkForm(snapshot.homeworkForm);
+      state.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(snapshot.homeworkCompletionHistoryByDate, getTodayKeyJst(), 7);
     },
     apply: () => {
       const name = state.homeworkForm.name.trim();
@@ -5818,6 +5985,9 @@ async function saveHomeworkItem() {
           item.submissionCheckedItemIds = [];
           item.submissionChecklistCompleted = false;
         }
+        if (item.done) {
+          recordHomeworkCompletionHistorySnapshot(item, item.completedAtMs || Date.now());
+        }
         return;
       }
 
@@ -5839,6 +6009,9 @@ async function saveHomeworkItem() {
         actionHistory: []
       };
       state.homeworkTasks.push(newItem);
+      if (newItem.done) {
+        recordHomeworkCompletionHistorySnapshot(newItem, newItem.completedAtMs || Date.now());
+      }
 
       const template = findSubmissionTemplate(newItem.submissionTemplateId);
       if (!newItem.done && template && template.items.length > 0) {
