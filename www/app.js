@@ -270,6 +270,8 @@ let planningRecurringPickerOpen = false;
 let planningCollapseState = createPlanningCollapseState();
 let localNotificationListenerRegistered = false;
 let lastAppliedNotificationSoundConfigHash = "";
+let exactAlarmPermissionState = "unknown";
+let taskFinishExactAlarmPromptVisible = false;
 
 const NOTIFICATION_SOUND_TARGET_DEPARTURE = "departure";
 const NOTIFICATION_SOUND_TARGET_TASK_FINISH = "taskFinish";
@@ -3424,6 +3426,7 @@ function renderSettings() {
         <p class="helper">端末内の音一覧を開き、試聴して選択できます。</p>
         <div class="form-stack">
           ${getNotificationSoundSettingRowsHtml()}
+          ${renderExactAlarmSettingsHtml()}
         </div>
       </div>
     </div>
@@ -3522,6 +3525,9 @@ function renderSettings() {
   document.getElementById("pickDepartureSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm");
   });
+  document.getElementById("exactAlarmSettingsBtn")?.addEventListener("click", () => {
+    void openExactAlarmSettings();
+  });
   document.getElementById("setDepartureFreshStartBtn")?.addEventListener("click", () => {
     void applyFixedNotificationPreset(NOTIFICATION_SOUND_TARGET_DEPARTURE, FIXED_NOTIFICATION_SOUND_PRESET_FRESH_START);
   });
@@ -3564,6 +3570,8 @@ function renderSettings() {
   document.getElementById("stopPreviewTaskRecheckSoundBtn")?.addEventListener("click", () => {
     void stopNotificationSoundPreview();
   });
+
+  void refreshExactAlarmPermissionState();
 }
 
 function renderDepartureNotificationLeadOptions() {
@@ -4191,6 +4199,102 @@ async function ensureLocalNotificationPermission() {
     console.error("[LocalNotificationTest] Failed to check/request permissions", error);
     return { ok: false, reason: "error" };
   }
+}
+
+function readExactAlarmPermissionState(result) {
+  return String(result?.exact_alarm || "unknown");
+}
+
+async function refreshExactAlarmPermissionState({ rerender = true } = {}) {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.checkExactNotificationSetting) {
+    exactAlarmPermissionState = "unsupported";
+    return exactAlarmPermissionState;
+  }
+
+  try {
+    const result = await plugin.checkExactNotificationSetting();
+    const nextState = readExactAlarmPermissionState(result);
+    const changed = exactAlarmPermissionState !== nextState;
+    exactAlarmPermissionState = nextState;
+    if (rerender && changed && state.phase === "settings") {
+      renderSettings();
+    }
+    return nextState;
+  } catch (error) {
+    console.error("[TaskFinishNotification] Failed to check exact alarm permission", error);
+    exactAlarmPermissionState = "unknown";
+    return exactAlarmPermissionState;
+  }
+}
+
+async function openExactAlarmSettings() {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.changeExactNotificationSetting) return;
+
+  try {
+    await plugin.changeExactNotificationSetting();
+  } catch (error) {
+    console.error("[TaskFinishNotification] Failed to open exact alarm settings", error);
+  }
+
+  await refreshExactAlarmPermissionState();
+}
+
+function renderExactAlarmSettingsHtml() {
+  const isGranted = exactAlarmPermissionState === "granted" || exactAlarmPermissionState === "unsupported";
+  const isDenied = exactAlarmPermissionState === "denied";
+  const statusText = isGranted
+    ? "正確なアラーム：許可済み"
+    : isDenied
+      ? "正確なアラーム：未許可"
+      : "正確なアラーム：確認中";
+  const actionLabel = isDenied ? "正確なアラームを許可する" : "設定を確認";
+
+  return `
+    <div class="sound-setting-row">
+      <p class="helper">${escapeHtml(statusText)}</p>
+      ${isDenied ? '<p class="helper">タスク通知が予定時刻より遅れる場合があります。</p>' : ''}
+      <div class="btn-row compact-stack">
+        <button id="exactAlarmSettingsBtn" class="btn-sub" type="button">${escapeHtml(actionLabel)}</button>
+      </div>
+    </div>
+  `;
+}
+
+async function maybePromptTaskFinishExactAlarmPermission() {
+  if (taskFinishExactAlarmPromptVisible) return;
+  const stateValue = await refreshExactAlarmPermissionState({ rerender: false });
+  if (stateValue !== "denied") return;
+
+  taskFinishExactAlarmPromptVisible = true;
+  const overlay = document.createElement("div");
+  overlay.className = "app-modal-overlay";
+  overlay.id = "taskFinishExactAlarmPromptOverlay";
+  overlay.innerHTML = `
+    <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="taskFinishExactAlarmPromptTitle">
+      <h3 id="taskFinishExactAlarmPromptTitle">正確なアラーム</h3>
+      <p>正確なアラームが許可されていないため、<br />通知が予定時刻より遅れる可能性があります。</p>
+      <div class="btn-row split compact-stack app-modal-actions">
+        <button id="openExactAlarmSettingsPromptBtn" class="btn-main" type="button">設定を開く</button>
+        <button id="dismissExactAlarmSettingsPromptBtn" class="btn-quiet" type="button">あとで</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    taskFinishExactAlarmPromptVisible = false;
+    overlay.remove();
+  };
+
+  document.getElementById("openExactAlarmSettingsPromptBtn")?.addEventListener("click", async () => {
+    close();
+    await openExactAlarmSettings();
+  });
+  document.getElementById("dismissExactAlarmSettingsPromptBtn")?.addEventListener("click", close);
 }
 
 function hashStringToPositiveInt(text) {
@@ -7599,6 +7703,7 @@ function startTask(taskId) {
   });
   saveState();
   void scheduleTaskFinishNotificationForRunningTask(task, "task-finish");
+  void maybePromptTaskFinishExactAlarmPermission();
   if (state.phase !== "execution") return changePhase("execution");
   renderExecution();
 }

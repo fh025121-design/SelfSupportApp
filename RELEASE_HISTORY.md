@@ -1,5 +1,14 @@
 # Release History
 
+## 2026-08-05 00:47 JST
+- v2.10
+	- AndroidManifest.xml に `SCHEDULE_EXACT_ALARM` 権限を追加。
+	- 設定画面の通知設定内に、正確なアラームの許可状態表示と設定導線を追加。
+	- 正確なアラーム未許可時は、Task Finish開始時に1回だけ設定案内ダイアログを表示するよう追加。
+	- Task Finish の `taskFinishNotifyAtMs` と pending確認ロジックは維持。
+	- Departure と Task Recheck の通知コード・設定・音源・通知経路は変更なし。
+	- 表示バージョンを `2.09` から `2.10` へ更新（+0.01）。
+
 ## 2026-08-05 00:14 JST
 - v2.09
 	- Task Finish通知だけ、開始時・再開時に絶対通知予定日時 `taskFinishNotifyAtMs` を計算して実行中状態へ保存するよう変更。
