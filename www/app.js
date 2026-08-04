@@ -498,6 +498,7 @@ function createRunningState() {
     awaitingStartSupportConfirmation: false,
     startSupportId: "",
     alertAtSeconds: null,
+    taskFinishNotifyAtMs: null,
     nextAlertKind: "task-finish",
     alerting: false,
     lastAlertTarget: null
@@ -4052,7 +4053,11 @@ async function initializeLocalNotificationTrial() {
 function restorePendingTaskFinishNotification() {
   const task = getRunningTask();
   if (!task || state.running.isPaused) return;
-  scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
+  if ((state.running.nextAlertKind || "task-finish") === "task-finish") {
+    const notifyAtMs = Number(state.running.taskFinishNotifyAtMs);
+    if (!Number.isFinite(notifyAtMs) || notifyAtMs <= Date.now()) return;
+  }
+  void scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
 }
 
 function restorePendingDepartureNotification() {
@@ -4502,6 +4507,49 @@ async function scheduleLocalNotification({ id, title, body, notifyAt, channelId,
   return { ok: true };
 }
 
+function computeTaskFinishNotifyAtMs(targetSeconds, actualSeconds, nowMs = Date.now()) {
+  const normalizedTargetSeconds = Number(targetSeconds);
+  const normalizedActualSeconds = Number(actualSeconds);
+  if (!Number.isFinite(normalizedTargetSeconds) || !Number.isFinite(normalizedActualSeconds)) return null;
+  const remainingSeconds = Math.max(1, Math.ceil(normalizedTargetSeconds - normalizedActualSeconds));
+  return nowMs + (remainingSeconds * 1000);
+}
+
+async function isTaskFinishNotificationPending(notificationId) {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.getPending) return false;
+
+  try {
+    const pending = await plugin.getPending();
+    const notifications = Array.isArray(pending?.notifications) ? pending.notifications : [];
+    return notifications.some((notification) => Number(notification?.id) === Number(notificationId));
+  } catch (error) {
+    console.error("[TaskFinishNotification] Failed to inspect pending notifications", error);
+    return false;
+  }
+}
+
+async function scheduleTaskFinishNotificationWithPendingCheck(request) {
+  const firstResult = await scheduleLocalNotification(request);
+  if (!firstResult.ok) return firstResult;
+
+  if (await isTaskFinishNotificationPending(request.id)) {
+    return { ok: true, pendingConfirmed: true };
+  }
+
+  await cancelLocalNotificationsByIds([request.id]);
+  const retryResult = await scheduleLocalNotification(request);
+  if (!retryResult.ok) return retryResult;
+
+  if (await isTaskFinishNotificationPending(request.id)) {
+    return { ok: true, pendingConfirmed: true, retried: true };
+  }
+
+  setUiNotice("error", "Task Finish通知の予約に失敗しました");
+  return { ok: false, reason: "pending-missing" };
+}
+
 function buildTaskFinishNotificationBody(task) {
   const content = String(task?.content || "").trim();
   return content || "予定時間が終了しました";
@@ -4573,9 +4621,9 @@ function refreshDepartureNotification() {
   void scheduleDepartureNotificationForCurrentPlan();
 }
 
-function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-finish") {
+async function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-finish") {
   const target = Number(state.running?.alertAtSeconds);
-  if (!task || !Number.isFinite(target)) return;
+  if (!task || !Number.isFinite(target)) return { ok: false, reason: "invalid-target" };
 
   const normalizedAlertKind = alertKind === "task-recheck" ? "task-recheck" : "task-finish";
   state.running.nextAlertKind = normalizedAlertKind;
@@ -4588,8 +4636,6 @@ function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-fi
   const elapsedSeconds = isActivelyRunning
     ? getRunningElapsedSeconds()
     : Math.max(0, Number(state.running?.baseSeconds || 0));
-  const remainingSeconds = Math.max(1, Math.ceil(target - elapsedSeconds));
-  const notifyAt = new Date(Date.now() + remainingSeconds * 1000);
   const isTaskRecheck = normalizedAlertKind === "task-recheck";
   const notificationId = isTaskRecheck
     ? getTaskRecheckNotificationId(task.id)
@@ -4597,35 +4643,44 @@ function scheduleTaskFinishNotificationForRunningTask(task, alertKind = "task-fi
   const notificationIdsToCancel = isTaskRecheck
     ? [notificationId, ...getLegacyTaskRecheckNotificationIds(task.id)]
     : [notificationId];
+  const notifyAtMs = isTaskRecheck
+    ? Date.now() + (Math.max(1, Math.ceil(target - elapsedSeconds)) * 1000)
+    : Number(state.running?.taskFinishNotifyAtMs);
+  if (!Number.isFinite(notifyAtMs)) return { ok: false, reason: "invalid-notify-at" };
+  if (!isTaskRecheck && notifyAtMs <= Date.now()) return { ok: false, reason: "past" };
+  const notifyAt = new Date(notifyAtMs);
 
-  (async () => {
-    await cancelLocalNotificationsByIds(notificationIdsToCancel);
-    try {
-      logCurrentNotificationChannelConfig(
-        normalizedAlertKind === "task-recheck"
-          ? NOTIFICATION_SOUND_TARGET_TASK_RECHECK
-          : NOTIFICATION_SOUND_TARGET_TASK_FINISH
-      );
-      const result = await scheduleLocalNotification({
-        id: notificationId,
-        title: "時間になりました",
-        body: buildTaskFinishNotificationBody(task),
-        notifyAt,
-        channelId: normalizedAlertKind === "task-recheck"
-          ? getNotificationChannelIdForTarget(NOTIFICATION_SOUND_TARGET_TASK_RECHECK)
-          : getNotificationChannelIdForTarget(NOTIFICATION_SOUND_TARGET_TASK_FINISH),
-        extra: {
-          source: normalizedAlertKind,
-          taskId: task.id
-        }
-      });
-      if (!result.ok && result.reason !== "unsupported") {
-        console.warn("[TaskFinishNotification] Notification was not scheduled", result.reason);
+  await cancelLocalNotificationsByIds(notificationIdsToCancel);
+  try {
+    logCurrentNotificationChannelConfig(
+      normalizedAlertKind === "task-recheck"
+        ? NOTIFICATION_SOUND_TARGET_TASK_RECHECK
+        : NOTIFICATION_SOUND_TARGET_TASK_FINISH
+    );
+    const request = {
+      id: notificationId,
+      title: "時間になりました",
+      body: buildTaskFinishNotificationBody(task),
+      notifyAt,
+      channelId: normalizedAlertKind === "task-recheck"
+        ? getNotificationChannelIdForTarget(NOTIFICATION_SOUND_TARGET_TASK_RECHECK)
+        : getNotificationChannelIdForTarget(NOTIFICATION_SOUND_TARGET_TASK_FINISH),
+      extra: {
+        source: normalizedAlertKind,
+        taskId: task.id
       }
-    } catch (error) {
-      console.error("[TaskFinishNotification] Failed to schedule notification", error);
+    };
+    const result = isTaskRecheck
+      ? await scheduleLocalNotification(request)
+      : await scheduleTaskFinishNotificationWithPendingCheck(request);
+    if (!result.ok && result.reason !== "unsupported") {
+      console.warn("[TaskFinishNotification] Notification was not scheduled", result.reason);
     }
-  })();
+    return result;
+  } catch (error) {
+    console.error("[TaskFinishNotification] Failed to schedule notification", error);
+    return { ok: false, reason: "error" };
+  }
 }
 
 function cancelTaskFinishNotification(taskId) {
@@ -7520,15 +7575,18 @@ function startTask(taskId) {
   startAudioWarmupFromUserAction();
   const startSupportId = getActiveDailySupportId(getTodayKeyJst());
   const needsStartSupportConfirmation = startSupportId === DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START;
+  const actualSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
+  const alertAtSeconds = task.plannedMinutes * 60;
   state.running = {
     taskId,
     startedAt: Date.now(),
-    baseSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : 0,
+    baseSeconds: actualSeconds,
     isPaused: false,
     confirmingComplete: false,
     awaitingStartSupportConfirmation: needsStartSupportConfirmation,
     startSupportId: needsStartSupportConfirmation ? startSupportId : "",
-    alertAtSeconds: task.plannedMinutes * 60,
+    alertAtSeconds,
+    taskFinishNotifyAtMs: computeTaskFinishNotifyAtMs(alertAtSeconds, actualSeconds),
     nextAlertKind: "task-finish",
     alerting: false,
     lastAlertTarget: null
@@ -7540,7 +7598,7 @@ function startTask(taskId) {
     taskNameSnapshot: task.name
   });
   saveState();
-  scheduleTaskFinishNotificationForRunningTask(task, "task-finish");
+  void scheduleTaskFinishNotificationForRunningTask(task, "task-finish");
   if (state.phase !== "execution") return changePhase("execution");
   renderExecution();
 }
@@ -7692,9 +7750,10 @@ function continueRunningTaskAfterReminder() {
   state.running.alerting = false;
   state.running.lastAlertTarget = null;
   state.running.alertAtSeconds = getRunningElapsedSeconds() + (20 * 60);
+  state.running.taskFinishNotifyAtMs = null;
   state.running.nextAlertKind = "task-recheck";
   saveState();
-  scheduleTaskFinishNotificationForRunningTask(task, "task-recheck");
+  void scheduleTaskFinishNotificationForRunningTask(task, "task-recheck");
   changePhase("execution", false);
 }
 
@@ -7748,6 +7807,7 @@ function interruptRunningTask() {
   clearExecutionConfirmStates();
   state.running.alerting = false;
   state.running.alertAtSeconds = null;
+  state.running.taskFinishNotifyAtMs = null;
   state.running.lastAlertTarget = null;
   goHome();
 }
@@ -7762,6 +7822,10 @@ function resumePausedTask() {
   if (!Number.isFinite(Number(state.running.alertAtSeconds))) {
     state.running.alertAtSeconds = sanitizeMinutes(task.plannedMinutes) * 60;
   }
+  state.running.taskFinishNotifyAtMs = computeTaskFinishNotifyAtMs(
+    state.running.alertAtSeconds,
+    state.running.baseSeconds
+  );
   if (state.running.nextAlertKind !== "task-recheck") {
     state.running.nextAlertKind = "task-finish";
   }
@@ -7772,7 +7836,8 @@ function resumePausedTask() {
     taskNameSnapshot: task.name
   });
   clearExecutionConfirmStates();
-  scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
+  saveState();
+  void scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
   changePhase("execution", false);
 }
 

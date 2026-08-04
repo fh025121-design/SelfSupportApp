@@ -1,5 +1,22 @@
 # Release History
 
+## 2026-08-05 00:14 JST
+- v2.09
+	- Task Finish通知だけ、開始時・再開時に絶対通知予定日時 `taskFinishNotifyAtMs` を計算して実行中状態へ保存するよう変更。
+	- Task Finish通知予約時は、保存済み `taskFinishNotifyAtMs` をそのまま使用し、途中で再計算しないよう変更。
+	- Task Finish通知予約直後に `LocalNotifications.getPending()` で同一notificationIdの存在確認を行い、見つからない場合は1回だけ再予約するよう変更。
+	- 再予約後もpendingに存在しない場合は、タイマーや時間到達画面を止めずに `Task Finish通知の予約に失敗しました` を表示するよう変更。
+	- Departure通知、Task Recheck通知、NotificationChannel、AudioAttributes、選択済み音源URIの扱いは変更なし。
+	- 表示バージョンを `2.08` から `2.09` へ更新（+0.01）。
+
+## 2026-08-04 23:52 JST
+- v2.08
+	- Task Finish 通知予約処理を Departure と同型の `await` ベース処理へ統一し、予約関数を非同期戻り値ありに変更。
+	- Task Finish の開始時・復帰時・復元時の呼び出しを `void scheduleTaskFinishNotificationForRunningTask(...)` へ統一。
+	- Task Finish 通知の投稿は既存の `scheduleLocalNotification()` 経路を継続使用。
+	- Departure 通知処理、Task Recheck 通知処理、通知設定画面、音源URI保存方式は変更なし。
+	- 表示バージョンを `2.07` から `2.08` へ更新（+0.01）。
+
 ## 2026-08-04 23:08 JST
 - v2.07
 	- 出発前通知は変更せず、タスク予定時間通知のみ修正。
