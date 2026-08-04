@@ -298,8 +298,8 @@ const DEFAULT_FIXED_PRESET_BY_TARGET = {
 
 function getNotificationSoundTargetPrefix(target) {
   if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) return "departure-alarm";
-  if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) return "task-recheck-sound";
-  return "task-finish-alarm";
+  if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) return "task-recheck-sound-v2";
+  return "task-finish-alarm-v2";
 }
 
 function getNotificationSoundFallbackTitle(toneType) {
@@ -625,8 +625,19 @@ function normalizeNotificationSoundEntry(raw, target, fallbackToneType) {
     ? raw.title.trim()
     : getNotificationSoundFallbackTitle(toneType);
   const storedToneType = raw?.toneType === "alarm" ? "alarm" : raw?.toneType === "notification" ? "notification" : "";
-  const channelId = storedToneType === toneType && typeof raw?.channelId === "string" && raw.channelId.trim()
-    ? raw.channelId.trim()
+  const storedChannelId = typeof raw?.channelId === "string" ? raw.channelId.trim() : "";
+  const isLegacyTaskFinishChannel = target === NOTIFICATION_SOUND_TARGET_TASK_FINISH
+    && storedChannelId.startsWith("task-finish-alarm-")
+    && !storedChannelId.startsWith("task-finish-alarm-v2-");
+  const isLegacyTaskRecheckChannel = target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK
+    && storedChannelId.startsWith("task-recheck-sound-")
+    && !storedChannelId.startsWith("task-recheck-sound-v2-");
+  const shouldReuseStoredChannelId = storedToneType === toneType
+    && Boolean(storedChannelId)
+    && !isLegacyTaskFinishChannel
+    && !isLegacyTaskRecheckChannel;
+  const channelId = shouldReuseStoredChannelId
+    ? storedChannelId
     : buildNotificationChannelId(target, toneType, uri);
   return {
     target,
@@ -7169,10 +7180,7 @@ function checkOverrunNotification(elapsed) {
   if (elapsed >= target && state.running.lastAlertTarget !== target) {
     state.running.alerting = true;
     state.running.lastAlertTarget = target;
-    console.log("[OverrunNotify] triggerAlertFeedback called", { elapsed, target });
-    triggerAlertFeedback();
-    const task = getRunningTask();
-    if (task) cancelTaskFinishNotification(task.id);
+    console.log("[OverrunNotify] local-notification driven alert path", { elapsed, target });
     saveState();
     requestPassiveRender();
   }
