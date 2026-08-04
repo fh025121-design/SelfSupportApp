@@ -1136,6 +1136,13 @@ function buildNextDateTasks(previousState, nextDateKey) {
   return [...keepTargets, ...buildCarryoverTasks(previousState, nextDateKey)];
 }
 
+function buildCarryoverHomeworkTasks(previousState) {
+  if (!previousState || !Array.isArray(previousState.homeworkTasks)) return [];
+  return previousState.homeworkTasks
+    .filter((item) => item && item.done !== true)
+    .map((item) => structuredClone(item));
+}
+
 function loadState() {
   const todayKey = getTodayKeyJst();
   todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
@@ -1152,6 +1159,7 @@ function loadState() {
 
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+      nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
       nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
       nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
       const summary = buildPastDaySummary(parsed);
@@ -1981,6 +1989,7 @@ function normalizeLoadedState(rawState) {
   const parsed = rawState;
   if (parsed.dateKey !== todayKey) {
     const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+    nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
     nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
     nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
     const summary = buildPastDaySummary(parsed);
