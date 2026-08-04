@@ -16,6 +16,7 @@ import com.getcapacitor.JSObject;
 import com.getcapacitor.Logger;
 import com.getcapacitor.PluginCall;
 import java.util.List;
+import org.json.JSONArray;
 
 public class NotificationChannelManager {
 
@@ -44,6 +45,7 @@ public class NotificationChannelManager {
     private static String CHANNEL_SOUND = "sound";
     private static String CHANNEL_AUDIO_USAGE = "audioUsage";
     private static String CHANNEL_VIBRATE = "vibration";
+    private static String CHANNEL_VIBRATION_PATTERN = "vibrationPattern";
     private static String CHANNEL_USE_LIGHTS = "lights";
     private static String CHANNEL_LIGHT_COLOR = "lightColor";
 
@@ -69,6 +71,10 @@ public class NotificationChannelManager {
             channel.put(CHANNEL_SOUND, call.getString(CHANNEL_SOUND, null));
             channel.put(CHANNEL_AUDIO_USAGE, call.getString(CHANNEL_AUDIO_USAGE, "notification"));
             channel.put(CHANNEL_VIBRATE, call.getBoolean(CHANNEL_VIBRATE, false));
+            JSArray vibrationPattern = call.getArray(CHANNEL_VIBRATION_PATTERN);
+            if (vibrationPattern != null) {
+                channel.put(CHANNEL_VIBRATION_PATTERN, vibrationPattern);
+            }
             channel.put(CHANNEL_USE_LIGHTS, call.getBoolean(CHANNEL_USE_LIGHTS, false));
             channel.put(CHANNEL_LIGHT_COLOR, call.getString(CHANNEL_LIGHT_COLOR, null));
             createChannel(channel);
@@ -88,6 +94,10 @@ public class NotificationChannelManager {
             notificationChannel.setDescription(channel.getString(CHANNEL_DESCRIPTION));
             notificationChannel.setLockscreenVisibility(channel.getInteger(CHANNEL_VISIBILITY));
             notificationChannel.enableVibration(channel.getBool(CHANNEL_VIBRATE));
+            long[] explicitVibrationPattern = parseVibrationPattern(channel.optJSONArray(CHANNEL_VIBRATION_PATTERN));
+            if (explicitVibrationPattern != null) {
+                notificationChannel.setVibrationPattern(explicitVibrationPattern);
+            }
             notificationChannel.enableLights(channel.getBool(CHANNEL_USE_LIGHTS));
             String lightColor = channel.getString(CHANNEL_LIGHT_COLOR);
             if (lightColor != null) {
@@ -236,5 +246,14 @@ public class NotificationChannelManager {
             default:
                 return String.valueOf(usage);
         }
+    }
+
+    private long[] parseVibrationPattern(JSONArray rawPattern) {
+        if (rawPattern == null || rawPattern.length() == 0) return null;
+        long[] out = new long[rawPattern.length()];
+        for (int i = 0; i < rawPattern.length(); i++) {
+            out[i] = rawPattern.optLong(i, 0L);
+        }
+        return out;
     }
 }

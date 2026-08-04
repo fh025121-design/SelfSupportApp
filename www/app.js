@@ -197,6 +197,7 @@ const SECOND_ALERT_DURATION_SECONDS = 10;
 const UNIFIED_ALERT_NOTIFICATION_CHANNEL_ID = "task-alert-v2";
 const DEFAULT_ALARM_SOUND_MARKER = "__DEFAULT_ALARM__";
 const DEFAULT_NOTIFICATION_SOUND_MARKER = "__DEFAULT_NOTIFICATION__";
+const TASK_FINISH_CHANNEL_VIBRATION_PATTERN = [0, 500, 300, 500, 300, 500, 300, 500, 300, 500, 300, 500];
 const LEGACY_ALERT_NOTIFICATION_CHANNEL_IDS = ["task-finish-test"];
 const LOCAL_NOTIFICATION_TEST_NOTIFICATION_ID = 10001;
 const TASK_FINISH_NOTIFICATION_ID_BASE = 20000;
@@ -301,7 +302,7 @@ const DEFAULT_FIXED_PRESET_BY_TARGET = {
 function getNotificationSoundTargetPrefix(target) {
   if (target === NOTIFICATION_SOUND_TARGET_DEPARTURE) return "departure-alarm";
   if (target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK) return "task-recheck-sound-v2";
-  return "task-finish-alarm-v2";
+  return "task-finish-alarm-v3";
 }
 
 function getNotificationSoundFallbackTitle(toneType) {
@@ -631,7 +632,7 @@ function normalizeNotificationSoundEntry(raw, target, fallbackToneType) {
   const storedChannelId = typeof raw?.channelId === "string" ? raw.channelId.trim() : "";
   const isLegacyTaskFinishChannel = target === NOTIFICATION_SOUND_TARGET_TASK_FINISH
     && storedChannelId.startsWith("task-finish-alarm-")
-    && !storedChannelId.startsWith("task-finish-alarm-v2-");
+    && !storedChannelId.startsWith("task-finish-alarm-v3-");
   const isLegacyTaskRecheckChannel = target === NOTIFICATION_SOUND_TARGET_TASK_RECHECK
     && storedChannelId.startsWith("task-recheck-sound-")
     && !storedChannelId.startsWith("task-recheck-sound-v2-");
@@ -4149,7 +4150,8 @@ async function ensureLocalNotificationChannel() {
       visibility: 1,
       sound: taskFinishConfig.sound,
       audioUsage: taskFinishConfig.audioUsage,
-      vibration: true
+      vibration: true,
+      vibrationPattern: TASK_FINISH_CHANNEL_VIBRATION_PATTERN
     });
 
     await plugin.createChannel({

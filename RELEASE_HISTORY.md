@@ -1,5 +1,13 @@
 # Release History
 
+## 2026-08-05 01:18 JST
+- v2.11
+	- Task Finish通知チャネルのみ、既存端末設定の残留を避けるため channelId プレフィックスを `task-finish-alarm-v3-` へ更新。
+	- Task Finish通知チャネル作成時に `vibration: true` を維持したまま、明示的な `vibrationPattern` を追加。
+	- Departure と Task Recheck の通知コード・設定・通知経路は変更なし。
+	- Task Finish の音源、Exact Alarm、AudioAttributes、通知時刻処理は変更なし。
+	- 表示バージョンを `2.10` から `2.11` へ更新（+0.01）。
+
 ## 2026-08-05 00:47 JST
 - v2.10
 	- AndroidManifest.xml に `SCHEDULE_EXACT_ALARM` 権限を追加。
