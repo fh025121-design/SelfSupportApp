@@ -691,9 +691,11 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     homeTaskListExpanded: false,
     executionTaskListExpanded: false,
     homeViewMode: "current",
+    homeDisplayDateKey: dateKey,
     previousDayArchive: null,
     homeReturnPhase: "planning",
     planFor: "today",
+    planningTargetDateKey: dateKey,
     planTimes: createDefaultPlanTimes(),
     tasks,
     planningForm: createPlanningForm(),
@@ -1186,6 +1188,8 @@ function loadState() {
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
       nextState.planFor = "today";
+      nextState.homeDisplayDateKey = todayKey;
+      nextState.planningTargetDateKey = todayKey;
       nextState.goPressedAt = null;
       nextState.dayClosed = false;
       nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
@@ -1216,12 +1220,14 @@ function loadState() {
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
     safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
     safe.executionTaskListExpanded = Boolean(safe.executionTaskListExpanded);
-    safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
+    safe.homeViewMode = "current";
+    safe.homeDisplayDateKey = normalizeTaskDateKey(safe.homeDisplayDateKey) || todayKey;
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
       "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
     safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
+    safe.planningTargetDateKey = normalizeTaskDateKey(safe.planningTargetDateKey) || safe.homeDisplayDateKey || todayKey;
     safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
     safe.tasks = Array.isArray(safe.tasks) ? safe.tasks.map((task) => normalizeTask(task, todayKey)) : [];
     safe.planningForm = normalizePlanningForm(safe.planningForm);
@@ -1576,13 +1582,16 @@ function appendHistoryEvent(eventInput) {
 
 function normalizeConfirmedPlan(raw) {
   if (!raw) return null;
-  const fallbackDateKey = raw.planFor === "tomorrow"
+  const targetDateKey = normalizeTaskDateKey(raw.targetDateKey)
+    || normalizeTaskDateKey(raw.planningTargetDateKey)
+    || (raw.planFor === "tomorrow"
     ? addDaysToDateKey(getTodayKeyJst(), 1)
-    : getTodayKeyJst();
+    : getTodayKeyJst());
   return {
+    targetDateKey: targetDateKey || null,
     planFor: raw.planFor === "today" ? "today" : "tomorrow",
     planTimes: { ...createDefaultPlanTimes(), ...(raw.planTimes || {}) },
-    tasks: Array.isArray(raw.tasks) ? raw.tasks.map((task) => normalizeTask(task, fallbackDateKey)) : [],
+    tasks: Array.isArray(raw.tasks) ? raw.tasks.map((task) => normalizeTask(task, targetDateKey)) : [],
     totalPlanned: sanitizeMinutesOrZero(raw.totalPlanned),
     reportText: String(raw.reportText || ""),
     confirmedAt: typeof raw.confirmedAt === "number" ? raw.confirmedAt : 0
@@ -2182,7 +2191,7 @@ function normalizeLoadedState(rawState) {
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
   safe.homeTaskListExpanded = Boolean(safe.homeTaskListExpanded);
   safe.executionTaskListExpanded = Boolean(safe.executionTaskListExpanded);
-  safe.homeViewMode = safe.homeViewMode === "previous" ? "previous" : "current";
+  safe.homeViewMode = "current";
   safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
     "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
@@ -2606,6 +2615,7 @@ function renderPreviousDayEnd() {
         };
       }
       state.previousDayPending = null;
+      state.homeDisplayDateKey = getTodayKeyJst();
       state.dayClosed = true;
       state.homeViewMode = "current";
       state.homeTaskListExpanded = false;
@@ -2640,7 +2650,7 @@ function renderHome() {
   const medicineSummaryHtml = isPreviousView ? "" : renderHomeMedicineSummary();
   const syncText = getSyncStatusText();
   if (todayLabel) {
-    todayLabel.textContent = `表示日：${formatHomeDateHeading(homeContext.dateKey)}`;
+    todayLabel.textContent = "";
   }
   if (syncHeaderLabel) {
     syncHeaderLabel.textContent = "";
@@ -2662,11 +2672,13 @@ function renderHome() {
   renderScreen(`
     <div class="home-title-row">
       <h2 class="home-title-item">${escapeHtml(formatHomeDateHeading(homeContext.dateKey))}</h2>
-      ${isPreviousView
-        ? `<p id="backToNextDayBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="翌日の予定へ戻る">翌日の予定へ戻る</p>`
-        : `<p id="openPlanningHeadingBtn" class="home-title-item home-title-link" role="button" tabindex="0" aria-label="予定入力へ">予定入力</p>`}
     </div>
-    ${!isPreviousView && state.previousDayArchive ? `<div class="home-task-more-row"><button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button></div>` : ""}
+    ${!isPreviousView ? `
+      <div class="home-task-more-row home-task-more-row-split">
+        <button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button>
+        <button id="openNextDayBtn" class="btn-quiet" type="button">次の日を見る ＞</button>
+      </div>
+    ` : ""}
     ${showRunningReminder ? `
       <div class="notice warn home-running-reminder">
         <p>🟡 もう少し続けています</p>
@@ -2689,6 +2701,11 @@ function renderHome() {
       </div>
       <div class="home-overview-right">${belongingsHtml}</div>
     </div>
+    ${!isPreviousView ? `
+      <div class="btn-row compact-stack">
+        <button id="openPlanningForThisDayBtn" class="btn-main" type="button">この日の予定を入力</button>
+      </div>
+    ` : ""}
     <hr class="sep" />
 
     <ul class="home-task-list" id="homeTaskList"></ul>
@@ -2761,19 +2778,18 @@ function renderHome() {
   }
 
   if (isPreviousView) {
-    bindTextAction("backToNextDayBtn", () => {
-      state.homeViewMode = "current";
-      state.homeTaskListExpanded = false;
-      saveState();
-      render();
-    });
   } else {
-    bindTextAction("openPlanningHeadingBtn", () => changePhase("planning", false));
     document.getElementById("openPreviousDayBtn")?.addEventListener("click", () => {
-      state.homeViewMode = "previous";
-      state.homeTaskListExpanded = false;
-      saveState();
-      render();
+      shiftHomeDisplayDate(-1);
+    });
+    document.getElementById("openNextDayBtn")?.addEventListener("click", () => {
+      shiftHomeDisplayDate(1);
+    });
+    document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
+      state.planningTargetDateKey = getCurrentHomeDateKey();
+      state.planningForm = createPlanningForm();
+      planningRecurringPickerOpen = false;
+      changePhase("planning", false);
     });
 
     if (canExecuteDisplayedTasks) {
@@ -6322,7 +6338,17 @@ function getTasksForDate(dateKey, tasks = state.tasks, fallbackDateKey = state.d
 }
 
 function getCurrentHomeDateKey() {
-  return state.dayClosed ? addDaysToDateKey(state.dateKey, 1) : state.dateKey;
+  return normalizeTaskDateKey(state.homeDisplayDateKey) || normalizeTaskDateKey(state.dateKey) || getTodayKeyJst();
+}
+
+function shiftHomeDisplayDate(deltaDays) {
+  const nextDateKey = addDaysToDateKey(getCurrentHomeDateKey(), deltaDays);
+  if (!normalizeTaskDateKey(nextDateKey)) return;
+  state.homeDisplayDateKey = nextDateKey;
+  state.homeViewMode = "current";
+  state.previousDayArchive = null;
+  saveState();
+  render();
 }
 
 function getDisplayedHomeDateKey() {
@@ -6454,7 +6480,6 @@ function getHomeActualText(task) {
 
 function renderPlanning() {
   const targetDateKey = getPlanningTargetDateKey();
-  const planningDateChoices = getPlanningDateChoices();
   const planningTasks = getPlanningVisibleTasks();
   const recurringPickerHtml = planningRecurringPickerOpen
     ? renderPlanningRecurringPicker(targetDateKey)
@@ -6469,7 +6494,7 @@ function renderPlanning() {
   const studyParts = getTimeParts(state.planTimes.studyStart, "19:00");
   const belongingsDateKey = getPlanningTargetDateKey();
   const belongingsSummary = getBelongingsSummaryForDate(belongingsDateKey);
-  const belongingsLabel = state.planFor === "tomorrow" ? "明日" : "今日";
+  const targetDateHeading = formatHomeDateHeading(targetDateKey);
   const wakeUpSectionHtml = `
     <div>
       <label>起床時間</label>
@@ -6515,7 +6540,7 @@ function renderPlanning() {
   const belongingsSectionHtml = `
     <p class="helper">【自動】</p>
     <ul class="confirm-list">${renderPlanningAutoBelongings(belongingsSummary.autoItems)}</ul>
-    <p class="helper">【今日だけ追加】</p>
+    <p class="helper">【この日だけ追加】</p>
     <ul class="confirm-list">${renderPlanningManualBelongings(belongingsSummary.manualItems)}</ul>
     <div class="btn-row split compact-stack">
       <input id="dailyBelongingInput" type="text" value="${escapeHtml(state.planningDailyBelongingInput || "")}" maxlength="60" placeholder="例: 絵の具セット" />
@@ -6533,13 +6558,10 @@ function renderPlanning() {
 
   renderScreen(`
     <h2>予定入力</h2>
-    <div class="option-group compact-options">
-      <label class="option-item"><input type="radio" name="planFor" value="today" ${state.planFor === "today" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.todayLabel)}</span></label>
-      <label class="option-item"><input type="radio" name="planFor" value="tomorrow" ${state.planFor === "tomorrow" ? "checked" : ""} /><span>${escapeHtml(planningDateChoices.tomorrowLabel)}</span></label>
-    </div>
+    <p class="helper">${escapeHtml(targetDateHeading)} の予定を入力します。</p>
 
     ${renderPlanningCollapsibleSection("timeSettings", "起床時間・出発時間・帰宅時間・勉強開始時間", timeSettingsSectionHtml)}
-    ${renderPlanningCollapsibleSection("belongings", `🎒 ${belongingsLabel}の持ち物・やること`, belongingsSectionHtml)}
+    ${renderPlanningCollapsibleSection("belongings", `🎒 ${targetDateHeading}の持ち物・やること`, belongingsSectionHtml)}
 
     <h3>登録済みタスク</h3>
     <div class="btn-row compact-stack">
@@ -6665,29 +6687,6 @@ function bindPlanningEvents() {
       if (!sectionKey) return;
       syncPlanningFormFromDom();
       togglePlanningSection(sectionKey);
-      renderPlanning();
-    });
-  });
-
-  document.querySelectorAll("input[name='planFor']").forEach((radio) => {
-    radio.addEventListener("change", async (e) => {
-      const target = e.target;
-      if (!(target instanceof HTMLInputElement)) return;
-      if (!target.checked) return;
-      const nextPlanFor = target.value === "today" ? "today" : "tomorrow";
-      if (state.planFor === nextPlanFor) return;
-      if (nextPlanFor === "tomorrow") {
-        const { tomorrowDateKey } = getPlanningDateChoices();
-        const ok = await showPlanningTomorrowConfirmDialog(tomorrowDateKey);
-        if (!ok) {
-          renderPlanning();
-          return;
-        }
-      }
-      state.planFor = nextPlanFor;
-      state.planningForm = createPlanningForm();
-      planningRecurringPickerOpen = false;
-      saveState();
       renderPlanning();
     });
   });
@@ -6993,7 +6992,7 @@ function renderPlanConfirm() {
   const targetDateKey = getPlanningTargetDateKey();
   const confirmBelongings = buildConfirmBelongingsSummary(targetDateKey);
   renderScreen(`
-    <h2>${state.planFor === "today" ? "今日" : "明日"}の予定を確認してください</h2>
+    <h2>${escapeHtml(formatHomeDateHeading(targetDateKey))}の予定を確認してください</h2>
     <div class="summary confirm-summary">
       <p>起床　　　　${formatTimeForDisplay(state.planTimes.wakeUp)}</p>
       <p class="confirm-time-row"><span>出発　　　　${formatTimeForDisplay(state.planTimes.departure)}</span>${renderConfirmBelongingsSide(confirmBelongings)}</p>
@@ -7066,27 +7065,12 @@ function confirmPlan() {
     };
   });
 
-  if (state.planFor === "tomorrow") {
-    // Next-day planning starts a fresh execution state for all tasks.
-    state.tasks = state.tasks.map((t) => ({
-      ...t,
-      ...(isTaskForDate(t, targetDateKey)
-        ? {
-          status: "pending",
-          actualSeconds: null,
-          memo: "",
-          closeAction: ""
-        }
-        : {})
-    }));
-  }
-
   updateTaskNameStats();
 
   const planningTasks = getTasksForDate(targetDateKey);
 
   state.confirmedPlan = {
-    planFor: state.planFor,
+    targetDateKey,
     planTimes: { ...state.planTimes },
     tasks: planningTasks.map((t) => ({ ...t })),
     totalPlanned: sumPlanned(planningTasks),
@@ -7100,9 +7084,6 @@ function confirmPlan() {
   }
 
   state.goPressedAt = Date.now();
-  if (state.planFor === "today") {
-    state.dayClosed = false;
-  }
   saveState();
   changePhase("planReport");
 }
@@ -7132,24 +7113,11 @@ function markTaskNameAsUsed(name, usedAt = Date.now()) {
 
 function buildPlanReportText() {
   const planningTasks = getPlanningVisibleTasks();
-  const now = getNowInJst();
-  const targetDate = new Date(now);
-  if (state.planFor === "tomorrow") {
-    targetDate.setDate(targetDate.getDate() + 1);
-  }
-  const dateFmt = new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    month: "numeric",
-    day: "numeric",
-    weekday: "short"
-  });
-  const parts = dateFmt.formatToParts(targetDate);
-  const month = parts.find((p) => p.type === "month")?.value || String(targetDate.getMonth() + 1);
-  const day = parts.find((p) => p.type === "day")?.value || String(targetDate.getDate());
-  const weekday = parts.find((p) => p.type === "weekday")?.value || "";
+  const targetDateKey = getPlanningTargetDateKey();
+  const headingDate = formatHomeDateHeading(targetDateKey);
 
   const lines = [];
-  lines.push(`【${month}月${day}日（${weekday}）の予定】`);
+  lines.push(`【${headingDate} の予定】`);
   lines.push("");
   lines.push(`起床　　　　${formatTimeForDisplay(state.planTimes.wakeUp)}`);
   lines.push(`出発　　　　${formatTimeForDisplay(state.planTimes.departure)}`);
@@ -8729,6 +8697,7 @@ function renderDayEnd() {
       state.previousDayArchive = createPreviousDayArchive(state.dateKey);
       state.lastResultReportText = report;
       state.dayClosed = true;
+      state.homeDisplayDateKey = addDaysToDateKey(state.dateKey, 1);
       state.homeViewMode = "current";
       state.homeTaskListExpanded = false;
       state.phase = "home";
@@ -9575,8 +9544,10 @@ function addRecurringPlansToDate(dateKey, planIds = []) {
 }
 
 function getPlanningTargetDateKey() {
-  const choices = getPlanningDateChoices();
-  return state.planFor === "tomorrow" ? choices.tomorrowDateKey : choices.todayDateKey;
+  return normalizeTaskDateKey(state.planningTargetDateKey)
+    || normalizeTaskDateKey(getDisplayedHomeDateKey())
+    || normalizeTaskDateKey(getCurrentHomeDateKey())
+    || getTodayKeyJst();
 }
 
 function getWeekdayKeyByDateKey(dateKey) {

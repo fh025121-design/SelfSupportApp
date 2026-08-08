@@ -842,6 +842,17 @@ button:disabled {
   margin: 6px 0 0;
 }
 
+.home-task-more-row-split {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.home-task-more-row-split > button {
+  flex: 1 1 0;
+}
+
 .result-summary-compact {
   padding: 10px 12px;
 }
