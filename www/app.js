@@ -2636,6 +2636,7 @@ function renderHome() {
   const homeActionAvailability = getHomeActionAvailability();
   const canExecuteDisplayedTasks = homeActionAvailability.canOpenExecution;
   const canOpenHomework = homeActionAvailability.canOpenHomework;
+  const canOpenPlanning = homeActionAvailability.canOpenPlanning;
   const canOpenCompletionHistory = homeActionAvailability.canOpenCompletionHistory;
   const showDepartureCheckHomeButton = !isPreviousView && hasPendingDepartureCheck();
   const departureReminder = showDepartureCheckHomeButton ? getDepartureReminderForHome() : null;
@@ -2703,7 +2704,7 @@ function renderHome() {
     </div>
     ${!isPreviousView ? `
       <div class="btn-row compact-stack">
-        <button id="openPlanningForThisDayBtn" class="btn-main" type="button">この日の予定を入力</button>
+        <button id="openPlanningForThisDayBtn" class="btn-main" type="button" ${canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
       </div>
     ` : ""}
     <hr class="sep" />
@@ -2782,15 +2783,23 @@ function renderHome() {
     document.getElementById("openPreviousDayBtn")?.addEventListener("click", () => {
       shiftHomeDisplayDate(-1);
     });
-    document.getElementById("openNextDayBtn")?.addEventListener("click", () => {
+    document.getElementById("openNextDayBtn")?.addEventListener("click", async () => {
+      const currentHomeDateKey = getCurrentHomeDateKey();
+      if (currentHomeDateKey === getTodayKeyJst()) {
+        const nextDateKey = addDaysToDateKey(currentHomeDateKey, 1);
+        const ok = await showNextDayViewConfirmDialog(nextDateKey);
+        if (!ok) return;
+      }
       shiftHomeDisplayDate(1);
     });
-    document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
-      state.planningTargetDateKey = getCurrentHomeDateKey();
-      state.planningForm = createPlanningForm();
-      planningRecurringPickerOpen = false;
-      changePhase("planning", false);
-    });
+    if (canOpenPlanning) {
+      document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
+        state.planningTargetDateKey = getCurrentHomeDateKey();
+        state.planningForm = createPlanningForm();
+        planningRecurringPickerOpen = false;
+        changePhase("planning", false);
+      });
+    }
 
     if (canExecuteDisplayedTasks) {
       document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("execution", false));
@@ -6389,6 +6398,7 @@ function getHomeActionAvailability() {
       displayDateKey,
       canOpenExecution: false,
       canOpenHomework: false,
+      canOpenPlanning: false,
       canOpenCompletionHistory: true
     };
   }
@@ -6398,6 +6408,7 @@ function getHomeActionAvailability() {
       displayDateKey,
       canOpenExecution: false,
       canOpenHomework: true,
+      canOpenPlanning: true,
       canOpenCompletionHistory: false
     };
   }
@@ -6407,6 +6418,7 @@ function getHomeActionAvailability() {
       displayDateKey,
       canOpenExecution: !todayTaskFlowClosed,
       canOpenHomework: !todayTaskFlowClosed,
+      canOpenPlanning: !todayTaskFlowClosed,
       canOpenCompletionHistory: true
     };
   }
@@ -6415,6 +6427,7 @@ function getHomeActionAvailability() {
     displayDateKey,
     canOpenExecution: false,
     canOpenHomework: false,
+    canOpenPlanning: false,
     canOpenCompletionHistory: false
   };
 }
@@ -9480,21 +9493,21 @@ function formatPlanningMonthDayText(dateKey) {
   return `${Number(m[2])}/${Number(m[3])}`;
 }
 
-function showPlanningTomorrowConfirmDialog(tomorrowDateKey) {
+function showNextDayViewConfirmDialog(nextDateKey) {
   return new Promise((resolve) => {
-    document.getElementById("planningTomorrowConfirmOverlay")?.remove();
+    document.getElementById("nextDayViewConfirmOverlay")?.remove();
 
     const overlay = document.createElement("div");
-    overlay.id = "planningTomorrowConfirmOverlay";
+    overlay.id = "nextDayViewConfirmOverlay";
     overlay.className = "app-modal-overlay";
     overlay.innerHTML = `
-      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="planningTomorrowConfirmTitle">
-        <h3 id="planningTomorrowConfirmTitle">⚠ 確認</h3>
-        <p>明日（${escapeHtml(formatPlanningMonthDayText(tomorrowDateKey))}）の予定を入力します。</p>
-        <p>よろしいですか？</p>
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="nextDayViewConfirmTitle">
+        <h3 id="nextDayViewConfirmTitle">⚠ 確認</h3>
+        <p>翌日（${escapeHtml(formatPlanningMonthDayText(nextDateKey))}）の予定の表示ですが、</p>
+        <p>問題ないですか？</p>
         <div class="btn-row split compact-stack app-modal-actions">
-          <button id="planningTomorrowConfirmYesBtn" class="btn-main" type="button">はい</button>
-          <button id="planningTomorrowConfirmCancelBtn" class="btn-quiet" type="button">キャンセル</button>
+          <button id="nextDayViewConfirmYesBtn" class="btn-main" type="button">はい</button>
+          <button id="nextDayViewConfirmCancelBtn" class="btn-quiet" type="button">キャンセル</button>
         </div>
       </div>
     `;
@@ -9505,8 +9518,8 @@ function showPlanningTomorrowConfirmDialog(tomorrowDateKey) {
       resolve(Boolean(result));
     };
 
-    document.getElementById("planningTomorrowConfirmYesBtn")?.addEventListener("click", () => closeWith(true));
-    document.getElementById("planningTomorrowConfirmCancelBtn")?.addEventListener("click", () => closeWith(false));
+    document.getElementById("nextDayViewConfirmYesBtn")?.addEventListener("click", () => closeWith(true));
+    document.getElementById("nextDayViewConfirmCancelBtn")?.addEventListener("click", () => closeWith(false));
   });
 }
 
