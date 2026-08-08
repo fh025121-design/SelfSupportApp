@@ -186,6 +186,10 @@ let uiNoticeTimer = null;
 let pendingSyncHash = "";
 let syncDrainPromise = null;
 let resolveSyncDrainPromise = null;
+let daySwitchTestSnapshot = null;
+let daySwitchTestMessage = "";
+let daySwitchTestTodayKeyOverride = "";
+let daySwitchTestSyncWritesBlockedSnapshot = null;
 let devAlertTestConfig = {
   volume: 5,
   toneType: "type1",
@@ -363,6 +367,8 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 function getTodayKeyJst() {
+  const overrideDateKey = normalizeTaskDateKey(daySwitchTestTodayKeyOverride);
+  if (overrideDateKey) return overrideDateKey;
   const fmt = new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
@@ -687,7 +693,7 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     homeViewMode: "current",
     previousDayArchive: null,
     homeReturnPhase: "planning",
-    planFor: "tomorrow",
+    planFor: "today",
     planTimes: createDefaultPlanTimes(),
     tasks,
     planningForm: createPlanningForm(),
@@ -1179,6 +1185,9 @@ function loadState() {
 
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+      nextState.planFor = "today";
+      nextState.goPressedAt = null;
+      nextState.dayClosed = false;
       nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
       nextState.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(parsed.homeworkCompletionHistoryByDate, todayKey, 7);
       nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
@@ -2143,6 +2152,9 @@ function normalizeLoadedState(rawState) {
   const parsed = rawState;
   if (parsed.dateKey !== todayKey) {
     const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+    nextState.planFor = "today";
+    nextState.goPressedAt = null;
+    nextState.dayClosed = false;
     nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
     nextState.taskNameStats = normalizeTaskNameStats(parsed.taskNameStats);
     nextState.recurringPlans = normalizeRecurringPlans(parsed.recurringPlans);
@@ -3391,6 +3403,7 @@ function renderCompletionHistory() {
 }
 
 function renderSettings() {
+  const daySwitchTestSnapshotAvailable = Boolean(daySwitchTestSnapshot || getDaySwitchTestSnapshot());
   renderScreen(`
     <h2>設定</h2>
     <p class="helper">ログイン中: ${escapeHtml(currentUser?.email || "不明")}</p>
@@ -3459,6 +3472,17 @@ function renderSettings() {
       </div>
       <button id="devAlertTestBtn" class="btn-sub" type="button">🔔 アラートテスト</button>
     </div>
+    <div class="btn-row compact-stack">
+      <div class="task-card">
+        <h3>日付切替テスト（開発用確認）</h3>
+        <p class="helper">端末の実際の日付は変えず、アプリ内部だけ翌日状態へ切り替えます。</p>
+        <p id="daySwitchTestMsg" class="helper" aria-live="polite">${escapeHtml(daySwitchTestMessage)}</p>
+        <div class="btn-row compact-stack">
+          <button id="runDaySwitchTestBtn" class="btn-sub" type="button">翌日切替テスト</button>
+          <button id="restoreDaySwitchTestBtn" class="btn-quiet" type="button" ${daySwitchTestSnapshotAvailable ? "" : "disabled"}>元に戻す</button>
+        </div>
+      </div>
+    </div>
     <div id="devAlertFeedbackArea" class="notice warn hidden">
       <p>予定時間を超えました。</p>
     </div>
@@ -3518,6 +3542,8 @@ function renderSettings() {
     }
   });
   document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
+  document.getElementById("runDaySwitchTestBtn")?.addEventListener("click", runDaySwitchTest);
+  document.getElementById("restoreDaySwitchTestBtn")?.addEventListener("click", restoreDaySwitchTest);
   document.getElementById("localNotificationTestBtn")?.addEventListener("click", runLocalNotificationTest);
   document.getElementById("dumpNotificationChannelsBtn")?.addEventListener("click", () => {
     void dumpRegisteredNotificationChannels();
@@ -9396,18 +9422,80 @@ function formatPlanningDateChoice(dateKey, suffixText) {
 }
 
 function getPlanningDateChoices() {
-  const base = getNowInJst();
-  const todayDate = new Date(base);
-  const tomorrowDate = new Date(base);
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const todayDateKey = buildDateKeyFromDate(todayDate);
-  const tomorrowDateKey = buildDateKeyFromDate(tomorrowDate);
+  const todayDateKey = getTodayKeyJst();
+  const tomorrowDateKey = addDaysToDateKey(todayDateKey, 1);
   return {
     todayDateKey,
     tomorrowDateKey,
     todayLabel: formatPlanningDateChoice(todayDateKey, "今日"),
     tomorrowLabel: formatPlanningDateChoice(tomorrowDateKey, "明日")
   };
+}
+
+function getDaySwitchTestSnapshotKey() {
+  return "selfsupportapp-day-switch-test-snapshot";
+}
+
+function getDaySwitchTestSnapshot() {
+  try {
+    const raw = localStorage.getItem(getDaySwitchTestSnapshotKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setDaySwitchTestSnapshot(snapshot) {
+  localStorage.setItem(getDaySwitchTestSnapshotKey(), JSON.stringify(snapshot));
+}
+
+function clearDaySwitchTestSnapshot() {
+  localStorage.removeItem(getDaySwitchTestSnapshotKey());
+}
+
+function runDaySwitchTest() {
+  const storedSnapshot = daySwitchTestSnapshot || getDaySwitchTestSnapshot();
+  const snapshot = storedSnapshot || structuredClone(state);
+  if (!storedSnapshot) {
+    setDaySwitchTestSnapshot(snapshot);
+    daySwitchTestSnapshot = snapshot;
+  }
+  if (daySwitchTestSyncWritesBlockedSnapshot === null) {
+    daySwitchTestSyncWritesBlockedSnapshot = syncWritesBlocked;
+  }
+  syncWritesBlocked = true;
+  const baseDateKey = normalizeTaskDateKey(state.dateKey) || getTodayKeyJst();
+  daySwitchTestTodayKeyOverride = addDaysToDateKey(baseDateKey, 1);
+  const nextState = normalizeLoadedState(snapshot);
+  replaceState(nextState);
+  state.phase = "home";
+  state.homeViewMode = "current";
+  state.previousDayArchive = normalizePreviousDayArchive(state.previousDayArchive);
+  daySwitchTestMessage = `翌日切替テストを実行しました（表示日: ${daySwitchTestTodayKeyOverride}）`;
+  saveState({ skipRemote: true });
+  render();
+}
+
+function restoreDaySwitchTest() {
+  const snapshot = daySwitchTestSnapshot || getDaySwitchTestSnapshot();
+  if (!snapshot) {
+    daySwitchTestMessage = "元に戻せる保存済み状態がありません。";
+    renderSettings();
+    return;
+  }
+  daySwitchTestTodayKeyOverride = "";
+  daySwitchTestSnapshot = null;
+  clearDaySwitchTestSnapshot();
+  if (daySwitchTestSyncWritesBlockedSnapshot !== null) {
+    syncWritesBlocked = daySwitchTestSyncWritesBlockedSnapshot;
+    daySwitchTestSyncWritesBlockedSnapshot = null;
+  }
+  replaceState(structuredClone(snapshot));
+  daySwitchTestMessage = "元の状態へ戻しました。";
+  saveState({ skipRemote: true });
+  render();
 }
 
 function formatPlanningMonthDayText(dateKey) {
