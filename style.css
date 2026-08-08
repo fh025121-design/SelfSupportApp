@@ -112,6 +112,30 @@ h1 {
   text-align: right;
 }
 
+.home-logout-row {
+  margin: 18px 0 0;
+  display: flex;
+  justify-content: center;
+}
+
+.home-logout-btn {
+  border: 1px solid #cfd8e6;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #f6f8fb;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.home-logout-btn:hover,
+.home-logout-btn:focus-visible {
+  color: var(--ink);
+  border-color: #aebbd1;
+  background: #eef3f9;
+  outline: none;
+}
+
 .completion-history-text-list {
   margin: 0;
 }
@@ -390,6 +414,104 @@ textarea {
   box-shadow: 0 0 0 3px rgba(231, 90, 60, 0.18);
 }
 
+.execution-list {
+  gap: 10px;
+}
+
+.execution-list-card {
+  background: #fcfdff;
+  padding: 10px 12px;
+}
+
+.execution-list-card-done {
+  background: #f6f7fb;
+  border-color: #d7ddea;
+}
+
+.execution-list-line1 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.execution-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.execution-list-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.execution-list-status {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.execution-list-status-active {
+  color: #0b63ce;
+}
+
+.execution-list-status-resume {
+  color: #d62839;
+}
+
+.execution-list-status-pending {
+  color: #475569;
+}
+
+.execution-list-status-done {
+  color: #166534;
+}
+
+.execution-list-meta,
+.execution-list-detail {
+  margin: 0;
+  color: #475569;
+  font-weight: 700;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.execution-list-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.execution-list-detail {
+  margin-top: 4px;
+}
+
+@media (max-width: 600px) {
+  .execution-list-card {
+    padding: 9px 10px;
+  }
+
+  .execution-list-line1 {
+    gap: 6px;
+  }
+
+  .execution-list-head h3 {
+    font-size: 0.96rem;
+  }
+
+  .execution-list-status,
+  .execution-list-meta,
+  .execution-list-detail {
+    font-size: 0.82rem;
+  }
+}
+
 .grid-2 {
   display: grid;
   gap: 10px;
@@ -541,6 +663,17 @@ button:disabled {
 .btn-main:hover,
 .btn-main:focus-visible {
   background: var(--accent-dark);
+}
+
+.home-planning-btn {
+  background: #e8f4f5;
+  color: #13454c;
+}
+
+.home-planning-btn:hover,
+.home-planning-btn:focus-visible {
+  background: #d9eef0;
+  color: #0f3a40;
 }
 
 .btn-sub {

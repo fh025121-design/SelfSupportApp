@@ -29,6 +29,7 @@ const db = getFirestore(firebaseApp);
 
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const STORAGE_OWNER_UID_KEY = "selfSupportAppTrialStateV3_ownerUid";
+const ONE_TIME_REOPEN_DATE_KEY = "2026-08-09";
 const DEFAULT_MINUTES = 30;
 const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
@@ -725,9 +726,23 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     clubAfterCheck: createClubAfterCheckState(dateKey),
     goPressedAt: null,
     dayClosed: false,
+    reopenedTodayDateKey: "",
     previousDayPending: null,
     lastResultReportText: ""
   };
+}
+
+function applyOneTimeCurrentDayReopen(targetState, todayKey = getTodayKeyJst()) {
+  if (!targetState || todayKey !== ONE_TIME_REOPEN_DATE_KEY) return targetState;
+  const normalizedTodayKey = normalizeTaskDateKey(todayKey) || todayKey;
+  targetState.dayClosed = false;
+  targetState.reopenedTodayDateKey = normalizedTodayKey;
+  targetState.homeDisplayDateKey = normalizedTodayKey;
+  targetState.homeViewMode = "current";
+  if (targetState.phase === "dayEnd") {
+    targetState.phase = "home";
+  }
+  return targetState;
 }
 
 function createRecurringPlan(name, plannedMinutes, content, repeatType, days, googleSync, belongings = [], submissionTemplateId = SUBMISSION_TEMPLATE_NONE) {
@@ -1239,7 +1254,7 @@ function loadState() {
         };
         nextState.phase = "previousDayEnd";
       }
-      return nextState;
+      return applyOneTimeCurrentDayReopen(nextState, todayKey);
     }
 
     const safe = {
@@ -1249,7 +1264,7 @@ function loadState() {
     };
 
     safe.phase = [
-      "home", "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result",
+      "home", "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result",
       "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.phase) ? safe.phase : "planning";
     safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
@@ -1259,7 +1274,7 @@ function loadState() {
     safe.homeDisplayDateKey = normalizeTaskDateKey(safe.homeDisplayDateKey) || todayKey;
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
     safe.homeReturnPhase = [
-      "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
+      "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
     safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
     safe.planningTargetDateKey = normalizeTaskDateKey(safe.planningTargetDateKey) || safe.homeDisplayDateKey || todayKey;
@@ -1303,7 +1318,8 @@ function loadState() {
     safe.dayClosed = Boolean(safe.dayClosed);
     safe.lastResultReportText = String(safe.lastResultReportText || "");
 
-    return safe;
+    safe.reopenedTodayDateKey = normalizeTaskDateKey(safe.reopenedTodayDateKey) || "";
+    return applyOneTimeCurrentDayReopen(safe, todayKey);
   } catch (_) {
     localBootHasValidData = false;
     return createInitialState(todayKey);
@@ -2022,6 +2038,8 @@ function render() {
       return renderPlanConfirm();
     case "planReport":
       return renderPlanReport();
+    case "executionList":
+      return renderExecutionTaskList();
     case "execution":
       return renderExecution();
     case "review":
@@ -2213,7 +2231,7 @@ function normalizeLoadedState(rawState) {
       };
       nextState.phase = "previousDayEnd";
     }
-    return nextState;
+    return applyOneTimeCurrentDayReopen(nextState, todayKey);
   }
 
   const safe = {
@@ -2223,7 +2241,7 @@ function normalizeLoadedState(rawState) {
   };
 
   safe.phase = [
-    "home", "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result",
+    "home", "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result",
     "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.phase) ? safe.phase : "planning";
   safe.navHistory = Array.isArray(safe.navHistory) ? safe.navHistory : [];
@@ -2232,7 +2250,7 @@ function normalizeLoadedState(rawState) {
   safe.homeViewMode = "current";
   safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
   safe.homeReturnPhase = [
-    "completionHistory", "planning", "planConfirm", "planReport", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
+    "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
   ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
   safe.planFor = safe.planFor === "today" ? "today" : "tomorrow";
   safe.planTimes = { ...createDefaultPlanTimes(), ...(safe.planTimes || {}) };
@@ -2272,9 +2290,10 @@ function normalizeLoadedState(rawState) {
   safe.confirmedPlan = normalizeConfirmedPlan(safe.confirmedPlan);
   safe.previousDayPending = safe.previousDayPending || null;
   safe.dayClosed = Boolean(safe.dayClosed);
+  safe.reopenedTodayDateKey = normalizeTaskDateKey(safe.reopenedTodayDateKey) || "";
   safe.lastResultReportText = String(safe.lastResultReportText || "");
 
-  return safe;
+  return applyOneTimeCurrentDayReopen(safe, todayKey);
 }
 
 function teardownSyncSession() {
@@ -2749,7 +2768,7 @@ function renderHome() {
     </div>
     ${!isPreviousView ? `
       <div class="btn-row compact-stack">
-        <button id="openPlanningForThisDayBtn" class="btn-main" type="button" ${canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
+        <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button" ${canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
       </div>
     ` : ""}
     <hr class="sep" />
@@ -2772,6 +2791,9 @@ function renderHome() {
     ${medicineSummaryHtml}
 
     <p class="home-sync-footer">同期：${escapeHtml(syncText || "-")}</p>
+    <div class="home-logout-row">
+      <button id="homeLogoutBtn" class="home-logout-btn" type="button" ${getBusyDisabledAttr()}>ログオフ</button>
+    </div>
   `);
 
   const list = document.getElementById("homeTaskList");
@@ -2850,7 +2872,7 @@ function renderHome() {
     }
 
     if (canExecuteDisplayedTasks) {
-      document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("execution", false));
+      document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("executionList", false));
     }
     if (canOpenHomework) {
       document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
@@ -2867,6 +2889,7 @@ function renderHome() {
   if (canOpenCompletionHistory) {
     document.getElementById("openCompletionHistoryBtn")?.addEventListener("click", () => changePhase("completionHistory", false));
   }
+  document.getElementById("homeLogoutBtn")?.addEventListener("click", performLogout);
 }
 
 function formatHistoryEventTime(event) {
@@ -6372,6 +6395,7 @@ function isTodayTaskFlowClosed(displayDateKey) {
   const normalizedDisplayDateKey = normalizeTaskDateKey(displayDateKey);
   const todayKey = getTodayKeyJst();
   if (!normalizedDisplayDateKey || normalizedDisplayDateKey !== todayKey) return false;
+  if (normalizeTaskDateKey(state.reopenedTodayDateKey) === normalizedDisplayDateKey) return false;
   if (state.dayClosed) return true;
   const tasks = getTasksForDate(todayKey);
   if (tasks.length === 0) return false;
@@ -7188,6 +7212,122 @@ function renderPlanReport() {
   });
   if (canExecuteFromPlanReport) {
     document.getElementById("startExecutionBtn")?.addEventListener("click", () => changePhase("execution"));
+  }
+}
+
+function getExecutionListTasks() {
+  return getHomeTaskDisplayTasks(getExecutionVisibleTasks(), state.running.taskId);
+}
+
+function getExecutionListVisibleTasks() {
+  const tasks = getExecutionListTasks();
+  return state.executionTaskListExpanded ? tasks : tasks.slice(0, EXECUTION_SELECT_LIMIT);
+}
+
+function getExecutionListStatus(task) {
+  if (!task) return "【未開始】";
+  if (state.running.taskId === task.id && !state.running.isPaused) return "【対応中】";
+  if (task.status === "paused") return "【再開】";
+  if (task.status === "done") return "【完了】";
+  return "【未開始】";
+}
+
+function getExecutionListStatusClass(task) {
+  const status = getExecutionListStatus(task);
+  if (status === "【対応中】") return " execution-list-status-active";
+  if (status === "【再開】") return " execution-list-status-resume";
+  if (status === "【完了】") return " execution-list-status-done";
+  return " execution-list-status-pending";
+}
+
+function openTaskFromExecutionList(taskId) {
+  const nextTaskId = String(taskId || "").trim();
+  if (!nextTaskId) return;
+  const task = findTask(nextTaskId);
+  if (!task) return;
+  if (task.status === "done") return;
+  if (state.running.taskId === nextTaskId && !state.running.isPaused) {
+    changePhase("execution");
+    return;
+  }
+  startTask(nextTaskId);
+}
+
+function renderExecutionTaskList() {
+  const tasks = getExecutionListTasks();
+  const visibleTasks = getExecutionListVisibleTasks();
+
+  renderScreen(`
+    <h2>今日のタスク</h2>
+    <p class="helper">今やっていること、次にやること、各タスクの明細を確認できます。</p>
+    <div id="executionListArea"></div>
+  `);
+
+  const area = document.getElementById("executionListArea");
+  if (!area) return;
+
+  if (tasks.length === 0) {
+    area.innerHTML = `<p class="notice warn">今日のタスクはありません。</p>`;
+  } else {
+    area.innerHTML = `
+      <ul class="task-list execution-list" id="executionTaskList"></ul>
+      ${tasks.length > EXECUTION_SELECT_LIMIT ? `<div class="home-task-more-row"><button id="toggleExecutionTaskListBtn" class="btn-quiet" type="button">${state.executionTaskListExpanded ? "折りたたむ" : "すべて見る"}</button></div>` : ""}
+    `;
+
+    const list = document.getElementById("executionTaskList");
+    visibleTasks.forEach((task) => {
+      const status = getExecutionListStatus(task);
+      const clickable = task.status !== "done";
+      const detail = String(task.content || "").trim();
+      const li = document.createElement("li");
+      li.className = `task-card execution-list-card${clickable ? " selectable-card" : " execution-list-card-done"}`;
+      li.dataset.taskId = task.id;
+      if (clickable) {
+        li.setAttribute("role", "button");
+        li.setAttribute("tabindex", "0");
+      } else {
+        li.setAttribute("aria-disabled", "true");
+      }
+      li.innerHTML = `
+        <div class="execution-list-line1">
+          <div class="execution-list-head">
+            <p class="execution-list-status${getExecutionListStatusClass(task)}">${escapeHtml(status)}</p>
+            <h3>${escapeHtml(task.name)}</h3>
+          </div>
+          <p class="execution-list-meta">予定${task.plannedMinutes}分　実績${escapeHtml(getHomeActualText(task))}</p>
+        </div>
+        ${detail ? `<p class="execution-list-detail">明細：${escapeHtml(detail)}</p>` : ""}
+      `;
+      list?.appendChild(li);
+    });
+
+    list?.querySelectorAll("li[data-task-id][role='button']").forEach((card) => {
+      card.addEventListener("click", () => openTaskFromExecutionList(card.dataset.taskId));
+      card.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        openTaskFromExecutionList(card.dataset.taskId);
+      });
+    });
+
+    document.getElementById("toggleExecutionTaskListBtn")?.addEventListener("click", () => {
+      state.executionTaskListExpanded = !state.executionTaskListExpanded;
+      saveState();
+      renderExecutionTaskList();
+    });
+  }
+
+  const checklistSectionHtml = renderExecutionSubmissionChecklistSection();
+  if (checklistSectionHtml) {
+    area.insertAdjacentHTML("beforeend", checklistSectionHtml);
+    area.querySelectorAll("button[data-open-submission-checklist]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetType = String(btn.getAttribute("data-submission-target-type") || "");
+        const targetId = String(btn.getAttribute("data-submission-target-id") || "");
+        if (!targetType || !targetId) return;
+        openSubmissionChecklistTarget(targetType, targetId, "executionList");
+      });
+    });
   }
 }
 
@@ -9215,14 +9355,15 @@ function changePhase(next, pushHistory = true) {
   if (state.phase === "settings" && next !== "settings") {
     void stopNotificationSoundPreview();
   }
-  if (next === "execution" || next === "homeworkList" || next === "completionHistory") {
+  if (next === "execution" || next === "executionList" || next === "homeworkList" || next === "completionHistory") {
     const availability = getHomeActionAvailability();
     if (next === "execution" && !availability.canOpenExecution) return;
+    if (next === "executionList" && !availability.canOpenExecution) return;
     if (next === "homeworkList" && !availability.canOpenHomework) return;
     if (next === "completionHistory" && !availability.canOpenCompletionHistory) return;
   }
   if (pushHistory && state.phase !== next) state.navHistory.push(state.phase);
-  if (state.phase !== next && next === "execution") {
+  if (state.phase !== next && (next === "execution" || next === "executionList")) {
     state.executionTaskListExpanded = false;
   }
   if (state.phase !== next && next === "planning") {
