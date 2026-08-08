@@ -796,13 +796,19 @@ button:disabled {
   line-height: 1;
 }
 
+.home-task-status-active {
+  color: #0b63ce;
+  font-weight: 900;
+  animation: task-status-blink 2.2s ease-in-out infinite;
+}
+
 .home-task-status-resume {
   color: #d62839;
   font-weight: 900;
-  animation: paused-task-blink 2.2s ease-in-out infinite;
+  animation: task-status-blink 2.2s ease-in-out infinite;
 }
 
-@keyframes paused-task-blink {
+@keyframes task-status-blink {
   0%, 40%, 100% {
     opacity: 1;
   }
@@ -812,6 +818,7 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .home-task-status-active,
   .home-task-status-resume {
     animation: none;
   }

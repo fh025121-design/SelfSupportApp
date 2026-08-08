@@ -452,11 +452,27 @@ function renderPlanningCollapsibleSection(sectionKey, title, bodyHtml) {
     <div class="task-card planning-collapsible">
       <button type="button" class="btn-quiet planning-collapse-toggle" data-planning-collapse-toggle="${escapeHtml(sectionKey)}" aria-expanded="${expanded ? "true" : "false"}">
         ${expanded ? "▼" : "▶"} ${escapeHtml(title)}
+      </button>
       <div class="${expanded ? "" : "hidden"}" data-planning-collapse-content="${escapeHtml(sectionKey)}">
         ${bodyHtml}
       </div>
     </div>
   `;
+}
+
+function createRecurringForm() {
+  return {
+    mode: "add",
+    targetId: null,
+    name: "",
+    minutes: String(DEFAULT_MINUTES),
+    content: "",
+    belongings: [],
+    belongingInput: "",
+    submissionTemplateId: "",
+    repeatType: "daily",
+    days: [],
+    googleSync: false
   };
 }
 
@@ -769,7 +785,7 @@ function normalizeTask(task, fallbackDateKey = "") {
     recurringPlanId: typeof task.recurringPlanId === "string" ? task.recurringPlanId : null,
     recurringDateKey: normalizedRecurringDateKey || null,
     homeworkId: typeof task.homeworkId === "string" ? task.homeworkId : null,
-    status: ["pending", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
+    status: ["pending", "paused", "done", "deferred", "discarded"].includes(task.status) ? task.status : "pending",
     actualSeconds: typeof task.actualSeconds === "number" ? task.actualSeconds : null,
     memo: String(task.memo || ""),
     closeAction: String(task.closeAction || ""),
@@ -777,6 +793,41 @@ function normalizeTask(task, fallbackDateKey = "") {
     submissionCheckedItemIds: normalizeSubmissionCheckedItemIds(task.submissionCheckedItemIds),
     submissionChecklistCompleted: Boolean(task.submissionChecklistCompleted)
   };
+}
+
+function isTaskExecutionCandidate(task) {
+  if (!task) return false;
+  return task.status === "pending" || task.status === "paused";
+}
+
+function normalizeRunningStateWithTasks(tasks, running) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const normalizedRunning = { ...createRunningState(), ...(running || {}) };
+  const runningTaskId = String(normalizedRunning.taskId || "").trim();
+  if (!runningTaskId) return { tasks: list, running: normalizedRunning };
+
+  const runningTask = list.find((task) => task.id === runningTaskId);
+  if (!runningTask) {
+    return { tasks: list, running: createRunningState() };
+  }
+
+  if (normalizedRunning.isPaused) {
+    if (isTaskExecutionCandidate(runningTask)) {
+      runningTask.status = "paused";
+    }
+    return { tasks: list, running: createRunningState() };
+  }
+
+  if (runningTask.status === "done" || runningTask.status === "deferred" || runningTask.status === "discarded") {
+    return { tasks: list, running: createRunningState() };
+  }
+
+  if (runningTask.status === "paused") {
+    runningTask.status = "pending";
+  }
+
+  normalizedRunning.isPaused = false;
+  return { tasks: list, running: normalizedRunning };
 }
 
 function normalizeTaskNameStats(rawStats) {
@@ -1237,6 +1288,9 @@ function loadState() {
     safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
     safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
     safe.running = { ...createRunningState(), ...(safe.running || {}) };
+    const normalizedRunningState = normalizeRunningStateWithTasks(safe.tasks, safe.running);
+    safe.tasks = normalizedRunningState.tasks;
+    safe.running = normalizedRunningState.running;
     safe.review = { ...createReviewState(), ...(safe.review || {}) };
     safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
     safe.departureNotification = normalizeDepartureNotificationSettings(safe.departureNotification);
@@ -2208,6 +2262,9 @@ function normalizeLoadedState(rawState) {
   safe.homeworkTasks = normalizeHomeworkTasks(safe.homeworkTasks);
   safe.homeworkForm = normalizeHomeworkForm(safe.homeworkForm);
   safe.running = { ...createRunningState(), ...(safe.running || {}) };
+  const normalizedRunningState = normalizeRunningStateWithTasks(safe.tasks, safe.running);
+  safe.tasks = normalizedRunningState.tasks;
+  safe.running = normalizedRunningState.running;
   safe.review = { ...createReviewState(), ...(safe.review || {}) };
   safe.departureCheck = normalizeDepartureCheckState(safe.departureCheck);
   safe.returnCheck = normalizeReturnCheckState(safe.returnCheck);
@@ -2729,7 +2786,9 @@ function renderHome() {
     const li = document.createElement("li");
     li.className = "home-task-row";
     const status = getHomeStatusIcon(task);
-    const statusClass = status === "【再開】" ? " home-task-status-resume" : "";
+    const statusClass = status === "【対応中】"
+      ? " home-task-status-active"
+      : (status === "【再開】" ? " home-task-status-resume" : "");
     if (canExecuteDisplayedTasks) {
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", "0");
@@ -2752,11 +2811,12 @@ function renderHome() {
       row.addEventListener("click", () => {
         const taskId = row.dataset.taskId;
         if (!taskId) return;
-        if (state.running.taskId === taskId && state.running.isPaused) {
-          resumePausedTask();
+        const isCurrentRunning = state.running.taskId === taskId && !state.running.isPaused;
+        if (isCurrentRunning) {
+          changePhase("execution", false);
           return;
         }
-        changePhase("execution", false);
+        startTask(taskId);
       });
       row.addEventListener("keydown", (e) => {
         if (e.key !== "Enter" && e.key !== " ") return;
@@ -6196,8 +6256,8 @@ async function saveHomeworkItem() {
 
 function getHomeStatusIcon(task) {
   if (task.status === "done") return "【完了】";
-  if (state.running.taskId === task.id && state.running.isPaused) return "【再開】";
-  if (state.running.taskId === task.id && !state.running.isPaused) return "▶";
+  if (state.running.taskId === task.id && !state.running.isPaused) return "【対応中】";
+  if (task.status === "paused") return "【再開】";
   return "○";
 }
 
@@ -7132,16 +7192,16 @@ function renderPlanReport() {
 }
 
 function getExecutionSelectableTasks() {
-  // Keep existing pending-order behavior and only limit visible cards for execution selection.
-  const pending = getExecutionVisibleTasks().filter((t) => t.status === "pending");
-  return pending.slice(0, EXECUTION_SELECT_LIMIT);
+  // Keep existing order behavior and only limit visible cards for execution selection.
+  const candidates = getExecutionVisibleTasks().filter((task) => isTaskExecutionCandidate(task));
+  return candidates.slice(0, EXECUTION_SELECT_LIMIT);
 }
 
 function renderExecution() {
   const runningTask = getRunningTask();
-  const pending = getExecutionVisibleTasks().filter((t) => t.status === "pending");
+  const candidates = getExecutionVisibleTasks().filter((task) => isTaskExecutionCandidate(task));
   const selectableTasks = state.executionTaskListExpanded
-    ? pending
+    ? candidates
     : getExecutionSelectableTasks();
 
   renderScreen(`
@@ -7183,20 +7243,23 @@ function renderExecution() {
       checkOverrunNotification(sec);
       saveState();
     }, 1000);
-  } else if (pending.length > 0) {
+  } else if (candidates.length > 0) {
     runArea.innerHTML = `
       <ul class="task-list" id="selectList"></ul>
-      ${pending.length > EXECUTION_SELECT_LIMIT ? `<div class="home-task-more-row"><button id="toggleExecutionTaskListBtn" class="btn-quiet" type="button">${state.executionTaskListExpanded ? "折りたたむ" : `すべて見る（全${pending.length}件）`}</button></div>` : ""}
-      <p class="notice info">タスクカードをタップすると計測が始まります。</p>
+      ${candidates.length > EXECUTION_SELECT_LIMIT ? `<div class="home-task-more-row"><button id="toggleExecutionTaskListBtn" class="btn-quiet" type="button">${state.executionTaskListExpanded ? "折りたたむ" : `すべて見る（全${candidates.length}件）`}</button></div>` : ""}
+      <p class="notice info">開始したいタスクを選んでください。中断中は「再開」で続きから計測します。</p>
     `;
     const list = document.getElementById("selectList");
     selectableTasks.forEach((task) => {
+      const isPaused = task.status === "paused";
+      const actionLabel = isPaused ? "再開" : "開始";
+      const statusChip = isPaused ? '<span class="status-chip">中断中</span>' : "";
       const li = document.createElement("li");
       li.className = "task-card selectable-card";
       li.dataset.taskId = task.id;
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", "0");
-      li.innerHTML = `<h3>${escapeHtml(task.name)}</h3><p>予定時間: ${task.plannedMinutes}分</p><div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content)}</span></div>`;
+      li.innerHTML = `<h3>${escapeHtml(task.name)} ${statusChip}</h3><p>予定時間: ${task.plannedMinutes}分</p><div class="task-content-row helper"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content)}</span></div><div class="btn-row compact-stack"><button type="button" class="btn-sub execution-select-btn" data-task-id="${escapeHtml(task.id)}">${actionLabel}</button></div>`;
       list.appendChild(li);
     });
     list.querySelectorAll("li[data-task-id]").forEach((card) => {
@@ -7206,6 +7269,12 @@ function renderExecution() {
           e.preventDefault();
           startTask(card.dataset.taskId);
         }
+      });
+    });
+    list.querySelectorAll("button.execution-select-btn[data-task-id]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        startTask(btn.dataset.taskId);
       });
     });
 
@@ -7622,14 +7691,25 @@ function startAudioWarmupFromUserAction() {
 function startTask(taskId) {
   if (!canExecuteCurrentHomeTasks()) return;
   const task = findTask(taskId);
-  if (!task || task.status !== "pending") return;
+  if (!task || !isTaskExecutionCandidate(task)) return;
+
+  const runningTask = getRunningTask();
+  if (runningTask && runningTask.id !== task.id) {
+    pauseCurrentRunningTask({ navigateHome: false, recordHistory: true });
+  }
+
+  const targetTask = findTask(taskId);
+  if (!targetTask || !isTaskExecutionCandidate(targetTask)) return;
+
   cancelSecondAlertFollowup();
-  cancelTaskFinishNotification(task.id);
+  cancelTaskFinishNotification(targetTask.id);
   startAudioWarmupFromUserAction();
   const startSupportId = getActiveDailySupportId(getTodayKeyJst());
   const needsStartSupportConfirmation = startSupportId === DAILY_SUPPORT_ID_VERIFY_SECONDS_BEFORE_START;
-  const actualSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
-  const alertAtSeconds = task.plannedMinutes * 60;
+  const actualSeconds = typeof targetTask.actualSeconds === "number" ? targetTask.actualSeconds : 0;
+  const alertAtSeconds = targetTask.plannedMinutes * 60;
+  const shouldLogResume = targetTask.status === "paused" || actualSeconds > 0;
+  targetTask.status = "pending";
   state.running = {
     taskId,
     startedAt: Date.now(),
@@ -7646,12 +7726,12 @@ function startTask(taskId) {
   };
   appendHistoryEvent({
     category: "task",
-    type: HISTORY_EVENT_TYPE_TASK_STARTED,
-    taskId: task.id,
-    taskNameSnapshot: task.name
+    type: shouldLogResume ? HISTORY_EVENT_TYPE_TASK_RESUMED : HISTORY_EVENT_TYPE_TASK_STARTED,
+    taskId: targetTask.id,
+    taskNameSnapshot: targetTask.name
   });
   saveState();
-  void scheduleTaskFinishNotificationForRunningTask(task, "task-finish");
+  void scheduleTaskFinishNotificationForRunningTask(targetTask, "task-finish");
   void maybePromptTaskFinishExactAlarmPermission();
   if (state.phase !== "execution") return changePhase("execution");
   renderExecution();
@@ -7842,57 +7922,45 @@ async function openTaskCompleteConfirmDialog() {
   finalizeTaskCompletion();
 }
 
-function interruptRunningTask() {
+function pauseCurrentRunningTask(options = {}) {
+  const navigateHome = options.navigateHome !== false;
+  const recordHistory = options.recordHistory !== false;
   const task = getRunningTask();
-  if (!task) return;
+  if (!task) return false;
   cancelSecondAlertFollowup();
   cancelTaskFinishNotification(task.id);
   const elapsed = Math.max(1, getRunningElapsedSeconds());
   task.actualSeconds = elapsed;
-  state.running.baseSeconds = elapsed;
-  state.running.startedAt = null;
-  state.running.isPaused = true;
-  appendHistoryEvent({
-    category: "task",
-    type: HISTORY_EVENT_TYPE_TASK_PAUSED,
-    taskId: task.id,
-    taskNameSnapshot: task.name
-  });
+  task.status = "paused";
+  if (recordHistory) {
+    appendHistoryEvent({
+      category: "task",
+      type: HISTORY_EVENT_TYPE_TASK_PAUSED,
+      taskId: task.id,
+      taskNameSnapshot: task.name
+    });
+  }
   clearExecutionConfirmStates();
-  state.running.alerting = false;
-  state.running.alertAtSeconds = null;
-  state.running.taskFinishNotifyAtMs = null;
-  state.running.lastAlertTarget = null;
-  goHome();
+  state.running = createRunningState();
+  saveState();
+  if (navigateHome) {
+    goHome();
+  } else if (state.phase === "execution") {
+    renderExecution();
+  }
+  return true;
 }
 
-function resumePausedTask() {
-  const task = getRunningTask();
-  if (!task || !state.running.isPaused) return;
-  startAudioWarmupFromUserAction();
-  state.running.startedAt = Date.now();
-  state.running.baseSeconds = typeof task.actualSeconds === "number" ? task.actualSeconds : 0;
-  state.running.isPaused = false;
-  if (!Number.isFinite(Number(state.running.alertAtSeconds))) {
-    state.running.alertAtSeconds = sanitizeMinutes(task.plannedMinutes) * 60;
-  }
-  state.running.taskFinishNotifyAtMs = computeTaskFinishNotifyAtMs(
-    state.running.alertAtSeconds,
-    state.running.baseSeconds
-  );
-  if (state.running.nextAlertKind !== "task-recheck") {
-    state.running.nextAlertKind = "task-finish";
-  }
-  appendHistoryEvent({
-    category: "task",
-    type: HISTORY_EVENT_TYPE_TASK_RESUMED,
-    taskId: task.id,
-    taskNameSnapshot: task.name
-  });
-  clearExecutionConfirmStates();
-  saveState();
-  void scheduleTaskFinishNotificationForRunningTask(task, state.running.nextAlertKind || "task-finish");
-  changePhase("execution", false);
+function interruptRunningTask() {
+  pauseCurrentRunningTask({ navigateHome: true, recordHistory: true });
+}
+
+function resumePausedTask(taskId = "") {
+  const nextTaskId = String(taskId || "").trim();
+  if (!nextTaskId) return;
+  const task = findTask(nextTaskId);
+  if (!task || task.status !== "paused") return;
+  startTask(nextTaskId);
 }
 
 function finalizeTaskCompletion() {
@@ -7958,13 +8026,13 @@ function startTodayFinishFlow() {
   cancelSecondAlertFollowup();
   const runningTask = getRunningTask();
   if (runningTask) {
-    cancelTaskFinishNotification(runningTask.id);
-    runningTask.actualSeconds = Math.max(1, getRunningElapsedSeconds());
+    pauseCurrentRunningTask({ navigateHome: false, recordHistory: true });
   }
-  state.running = createRunningState();
   const executionDateKey = getCurrentHomeDateKey();
   state.review = {
-    pendingIds: getTasksForDate(executionDateKey).filter((t) => t.status === "pending").map((t) => t.id),
+    pendingIds: getTasksForDate(executionDateKey)
+      .filter((task) => task.status === "pending" || task.status === "paused")
+      .map((task) => task.id),
     index: 0,
     pendingAction: null,
     draftMemo: ""
@@ -8017,7 +8085,7 @@ function renderReview() {
 function moveReviewCursorToPending() {
   while (state.review.index < state.review.pendingIds.length) {
     const task = findTask(state.review.pendingIds[state.review.index]);
-    if (task && task.status === "pending") return;
+    if (task && (task.status === "pending" || task.status === "paused")) return;
     state.review.index += 1;
   }
 }
@@ -8447,27 +8515,11 @@ function renderReturnReport() {
     <h2>帰宅後報告</h2>
     <div id="returnReportText" class="report-box"></div>
     <div class="btn-row compact-stack">
-      <button id="copyOpenLineBtn" class="btn-main" type="button">コピーしてLINEを開く</button>
       <button id="sentReturnBtn" class="btn-quiet" type="button">送信しました</button>
     </div>
     <p id="returnReportMsg" class="helper"></p>
   `);
   document.getElementById("returnReportText").textContent = state.returnCheck.reportText || "";
-  document.getElementById("copyOpenLineBtn").addEventListener("click", async () => {
-    const ok = await copyToClipboard(state.returnCheck.reportText || "");
-    if (ok) {
-      finalizeReturnCheckSubmission();
-      document.getElementById("returnReportMsg").textContent = "コピーしました";
-      window.open("https://line.me", "_blank");
-      if (state.clubAfterCheck?.wasClubDay) {
-        changePhase("clubAfterCheck", false);
-        return;
-      }
-      changePhase("home", false);
-    } else {
-      document.getElementById("returnReportMsg").textContent = "コピーに失敗しました";
-    }
-  });
   document.getElementById("sentReturnBtn").addEventListener("click", () => {
     finalizeReturnCheckSubmission();
     saveState();
