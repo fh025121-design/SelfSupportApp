@@ -7223,8 +7223,9 @@ function getExecutionListTasks() {
 }
 
 function getExecutionListCollapsedTasks(tasks = getExecutionListTasks()) {
-  const unfinished = tasks.filter((task) => task.status !== "done").slice(0, 3);
-  const completed = tasks.filter((task) => task.status === "done").slice(0, 1);
+  const unfinished = tasks.filter((task) => task.status !== "done").slice(0, 4);
+  const remainingSlots = Math.max(0, 4 - unfinished.length);
+  const completed = tasks.filter((task) => task.status === "done").slice(0, remainingSlots);
   return [...unfinished, ...completed];
 }
 
