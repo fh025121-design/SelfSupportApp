@@ -7216,12 +7216,20 @@ function renderPlanReport() {
 }
 
 function getExecutionListTasks() {
-  return getHomeTaskDisplayTasks(getExecutionVisibleTasks(), state.running.taskId);
+  const orderedTasks = getHomeTaskDisplayTasks(getExecutionVisibleTasks(), state.running.taskId);
+  const unfinished = orderedTasks.filter((task) => task.status !== "done");
+  const completed = orderedTasks.filter((task) => task.status === "done");
+  return [...unfinished, ...completed];
 }
 
-function getExecutionListVisibleTasks() {
-  const tasks = getExecutionListTasks();
-  return state.executionTaskListExpanded ? tasks : tasks.slice(0, EXECUTION_SELECT_LIMIT);
+function getExecutionListCollapsedTasks(tasks = getExecutionListTasks()) {
+  const unfinished = tasks.filter((task) => task.status !== "done").slice(0, 3);
+  const completed = tasks.filter((task) => task.status === "done").slice(0, 1);
+  return [...unfinished, ...completed];
+}
+
+function getExecutionListVisibleTasks(tasks = getExecutionListTasks()) {
+  return state.executionTaskListExpanded ? tasks : getExecutionListCollapsedTasks(tasks);
 }
 
 function getExecutionListStatus(task) {
@@ -7255,11 +7263,11 @@ function openTaskFromExecutionList(taskId) {
 
 function renderExecutionTaskList() {
   const tasks = getExecutionListTasks();
-  const visibleTasks = getExecutionListVisibleTasks();
+  const collapsedTasks = getExecutionListCollapsedTasks(tasks);
+  const visibleTasks = getExecutionListVisibleTasks(tasks);
+  const hasHiddenTasks = tasks.length > collapsedTasks.length;
 
   renderScreen(`
-    <h2>今日のタスク</h2>
-    <p class="helper">今やっていること、次にやること、各タスクの明細を確認できます。</p>
     <div id="executionListArea"></div>
   `);
 
@@ -7271,7 +7279,7 @@ function renderExecutionTaskList() {
   } else {
     area.innerHTML = `
       <ul class="task-list execution-list" id="executionTaskList"></ul>
-      ${tasks.length > EXECUTION_SELECT_LIMIT ? `<div class="home-task-more-row"><button id="toggleExecutionTaskListBtn" class="btn-quiet" type="button">${state.executionTaskListExpanded ? "折りたたむ" : "すべて見る"}</button></div>` : ""}
+      ${hasHiddenTasks ? `<div class="home-task-more-row"><button id="toggleExecutionTaskListBtn" class="btn-quiet" type="button">${state.executionTaskListExpanded ? "折りたたむ" : "すべて見る"}</button></div>` : ""}
     `;
 
     const list = document.getElementById("executionTaskList");
@@ -7296,7 +7304,7 @@ function renderExecutionTaskList() {
           </div>
           <p class="execution-list-meta">予定${task.plannedMinutes}分　実績${escapeHtml(getHomeActualText(task))}</p>
         </div>
-        ${detail ? `<p class="execution-list-detail">明細：${escapeHtml(detail)}</p>` : ""}
+        ${detail ? `<p class="execution-list-detail">内容：　${escapeHtml(detail)}</p>` : ""}
       `;
       list?.appendChild(li);
     });
@@ -9297,20 +9305,24 @@ function renderTopNav() {
   if (state.phase === "home") return "";
   const isPlanReport = state.phase === "planReport";
   const primaryLabel = isPlanReport ? "戻る" : "ホーム";
+  const showTodayTaskBtn = !isPlanReport;
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>${primaryLabel}</button>
+      ${showTodayTaskBtn ? `<button id="todayTaskTopBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>今日のタスク</button>` : ""}
     </div>
   `;
 }
 
 function bindTopNav() {
   const homeBtn = document.getElementById("homeBtn");
+  const todayTaskTopBtn = document.getElementById("todayTaskTopBtn");
   if (state.phase === "planReport") {
     homeBtn?.addEventListener("click", goBack);
   } else {
     homeBtn?.addEventListener("click", goHome);
   }
+  todayTaskTopBtn?.addEventListener("click", () => changePhase("executionList", false));
 }
 
 function bindTextAction(id, onActivate) {
