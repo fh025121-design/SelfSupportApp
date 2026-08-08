@@ -9492,7 +9492,14 @@ function restoreDaySwitchTest() {
     syncWritesBlocked = daySwitchTestSyncWritesBlockedSnapshot;
     daySwitchTestSyncWritesBlockedSnapshot = null;
   }
-  replaceState(structuredClone(snapshot));
+  const restoredState = normalizeLoadedState(snapshot);
+  restoredState.phase = snapshot.phase === "settings" ? "settings" : "home";
+  restoredState.homeViewMode = "current";
+  restoredState.planFor = "today";
+  restoredState.dayClosed = false;
+  restoredState.goPressedAt = null;
+  restoredState.previousDayPending = null;
+  replaceState(restoredState);
   daySwitchTestMessage = "元の状態へ戻しました。";
   saveState({ skipRemote: true });
   render();
