@@ -138,8 +138,8 @@ const DEPARTURE_CHECK_ITEMS = [
   "テーブルに物は残っていないか",
   "コンタクトのゴミを捨てたか",
   "提出物・持ち物を指差し確認・目視したか",
-  "今日の予定に目を通したか",
-  "スマホを玄関へ置いたか"
+  "今日の予定（グーグルカレンダー、黒手帳含む）に目を通したか",
+  "スマホを玄関へ置くか、バッグ等に入れたか"
 ];
 const PLANNING_COLLAPSE_SECTION_KEYS = [
   "timeSettings",
@@ -452,27 +452,11 @@ function renderPlanningCollapsibleSection(sectionKey, title, bodyHtml) {
     <div class="task-card planning-collapsible">
       <button type="button" class="btn-quiet planning-collapse-toggle" data-planning-collapse-toggle="${escapeHtml(sectionKey)}" aria-expanded="${expanded ? "true" : "false"}">
         ${expanded ? "▼" : "▶"} ${escapeHtml(title)}
-      </button>
       <div class="${expanded ? "" : "hidden"}" data-planning-collapse-content="${escapeHtml(sectionKey)}">
         ${bodyHtml}
       </div>
     </div>
   `;
-}
-
-function createRecurringForm() {
-  return {
-    mode: "add",
-    targetId: null,
-    name: "",
-    minutes: String(DEFAULT_MINUTES),
-    content: "",
-    belongings: [],
-    belongingInput: "",
-    submissionTemplateId: SUBMISSION_TEMPLATE_NONE,
-    repeatType: "daily",
-    days: [],
-    googleSync: false
   };
 }
 
@@ -3436,59 +3420,11 @@ function renderSettings() {
   renderScreen(`
     <h2>設定</h2>
     <p class="helper">ログイン中: ${escapeHtml(currentUser?.email || "不明")}</p>
-    <div class="task-card settings-menu-list">
-      <button id="openRecurringListBtn" class="settings-menu-row" type="button">
-        <span>定期予定</span>
         <span aria-hidden="true">＞</span>
       </button>
       <button id="openSubmissionTemplateListBtn" class="settings-menu-row" type="button">
-        <span>提出・確認テンプレート</span>
-        <span aria-hidden="true">＞</span>
-      </button>
-    </div>
-    <div class="btn-row compact-stack">
-      <button id="logoutBtn" class="btn-danger" type="button">ログアウト</button>
-      <button id="backToHomeFromSettingsBtn" class="btn-quiet" type="button">戻る</button>
-    </div>
-    <div class="btn-row compact-stack">
-      <div class="task-card">
-        <h3>出発通知</h3>
-        <div class="form-stack">
-          <div>
-            <label for="departureNotificationLeadMinutes">通知を鳴らすタイミング</label>
-            <select id="departureNotificationLeadMinutes">
               ${renderDepartureNotificationLeadOptions()}
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
     <div class="btn-row compact-stack">
-      <div class="task-card">
-        <h3>通知音の個別設定（Android）</h3>
-        <p class="helper">端末内の音一覧を開き、試聴して選択できます。</p>
-        <div class="form-stack">
-          ${getNotificationSoundSettingRowsHtml()}
-          ${renderExactAlarmSettingsHtml()}
-        </div>
-      </div>
-    </div>
-    <div class="btn-row compact-stack">
-      <div class="task-card">
-        <h3>アラートテスト設定（開発用）</h3>
-        <div class="form-stack">
-          <div>
-            <label for="devAlertVolume">テスト音量（1〜10）</label>
-            <input id="devAlertVolume" type="range" min="1" max="10" step="1" value="${escapeHtml(String(devAlertTestConfig.volume))}" />
-            <p id="devAlertVolumeLabel" class="helper">現在: ${escapeHtml(String(devAlertTestConfig.volume))}</p>
-          </div>
-          <div>
-            <label for="devAlertToneType">テスト音の種類（1〜5）</label>
-            <select id="devAlertToneType">
-              <option value="type1" ${devAlertTestConfig.toneType === "type1" ? "selected" : ""}>1: 電子音（標準）</option>
-              <option value="type2" ${devAlertTestConfig.toneType === "type2" ? "selected" : ""}>2: 時計のアラーム</option>
-              <option value="type3" ${devAlertTestConfig.toneType === "type3" ? "selected" : ""}>3: 鳥の鳴き声</option>
-              <option value="type4" ${devAlertTestConfig.toneType === "type4" ? "selected" : ""}>4: クラクション</option>
               <option value="type5" ${devAlertTestConfig.toneType === "type5" ? "selected" : ""}>5: ブザー音</option>
             </select>
           </div>
@@ -8376,9 +8312,9 @@ function renderReturnCheck() {
     <h2>帰宅時チェック</h2>
     <div class="task-form-box">
       <div class="form-stack">
-        <div><label for="homeworkAnswer">宿題の有無</label><input id="homeworkAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.homework)}" placeholder="例: あり / なし" /></div>
+        <div><label for="homeworkAnswer">宿題・課題・プリントの有無 <span style="color:#d32f2f;font-weight:700;">（カレンダー、アプリに登録！！）</span></label><input id="homeworkAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.homework)}" placeholder="例: あり / なし" /></div>
         <div><label for="troubleAnswer">困ったことの有無</label><input id="troubleAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.trouble)}" placeholder="例: あり（内容） / なし" /></div>
-        <div><label for="replyAnswer">家庭教師・親への返信</label><input id="replyAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.reply)}" placeholder="例: LINEで返信した" /></div>
+        <div><label for="replyAnswer">家庭教師・親への返信（依頼されたことの回答）</label><input id="replyAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.reply)}" placeholder="例: LINEで返信した" /></div>
         <div>
           <p class="legend">帰宅が遅れそうな場合は、親へ連絡しましたか？</p>
           <div class="option-group">
@@ -8464,9 +8400,9 @@ function buildReturnCheckCopyText() {
         : "(未選択)";
   return [
     "【帰宅時チェック】",
-    `宿題の有無: ${a.homework || "(未入力)"}`,
+    `宿題・課題・プリントの有無（カレンダー、アプリに登録！！）: ${a.homework || "(未入力)"}`,
     `困ったことの有無: ${a.trouble || "(未入力)"}`,
-    `家庭教師・親への返信: ${a.reply || "(未入力)"}`,
+    `家庭教師・親への返信（依頼されたことの回答）: ${a.reply || "(未入力)"}`,
     `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`,
     `部活動の日: ${a.clubActivityDay === "yes" ? "はい" : a.clubActivityDay === "no" ? "いいえ" : "(未選択)"}`
   ].join("\n");
