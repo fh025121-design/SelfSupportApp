@@ -2638,8 +2638,12 @@ function renderHome() {
   const canOpenHomework = homeActionAvailability.canOpenHomework;
   const canOpenPlanning = homeActionAvailability.canOpenPlanning;
   const canOpenCompletionHistory = homeActionAvailability.canOpenCompletionHistory;
-  const showDepartureCheckHomeButton = !isPreviousView && hasPendingDepartureCheck();
-  const departureReminder = showDepartureCheckHomeButton ? getDepartureReminderForHome() : null;
+  const departureInfo = getDepartureTimingInfo();
+  const showDepartureCheckHomeButton = !isPreviousView
+    && Boolean(departureInfo)
+    && departureInfo.msUntil <= 60 * 60000
+    && departureInfo.msUntil >= 15 * 60000;
+  const departureReminder = showDepartureCheckHomeButton ? getDepartureReminderForHome(departureInfo) : null;
   const showReturnCheckHomeButton = !isPreviousView
     && state.departureCheck.done
     && getReturnCheckReminderStatus() !== "none";
@@ -9119,18 +9123,17 @@ function getDepartureTimingInfo() {
   return { msUntil, minutesUntil, departureAt: dt, now };
 }
 
-function getDepartureReminderForHome() {
-  const info = getDepartureTimingInfo();
-  if (!info) return null;
-  if (info.msUntil > 60 * 60000) return null;
-  if (info.msUntil <= 15 * 60000) return null;
-  return { minutesLeft: info.minutesUntil };
+function getDepartureReminderForHome(info = null) {
+  const departureInfo = info || getDepartureTimingInfo();
+  if (!departureInfo) return null;
+  if (departureInfo.msUntil > 60 * 60000) return null;
+  return { minutesLeft: departureInfo.minutesUntil };
 }
 
 function shouldAutoPromptDepartureCheck() {
   const info = getDepartureTimingInfo();
   if (!info) return false;
-  if (info.msUntil > 15 * 60000) return false;
+  if (info.msUntil >= 15 * 60000) return false;
 
   const nowMs = info.now.getTime();
   const lastMs = Number(state.departureCheck.lastAutoPromptAt || 0);
