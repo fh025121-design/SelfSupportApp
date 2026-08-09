@@ -952,7 +952,7 @@ button:disabled {
 
 .planning-new-task-hint-inline {
   position: absolute;
-  left: 10.2ch;
+  left: calc(1rem + 3cm);
   top: 50%;
   transform: translateY(-50%);
   color: #d32f2f;

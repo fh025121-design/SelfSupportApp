@@ -2704,7 +2704,7 @@ function renderPreviousDayEnd() {
       }
       state.previousDayPending = null;
       state.homeDisplayDateKey = getTodayKeyJst();
-      state.dayClosed = true;
+      state.dayClosed = false;
       state.homeViewMode = "current";
       state.homeTaskListExpanded = false;
       state.phase = "home";
