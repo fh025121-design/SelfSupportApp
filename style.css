@@ -941,6 +941,33 @@ button:disabled {
   animation: task-status-blink 2.2s ease-in-out infinite;
 }
 
+.planning-new-task-guide {
+  color: #b91c1c;
+  font-weight: 900;
+}
+
+.planning-task-name-wrap {
+  position: relative;
+}
+
+.planning-new-task-hint-inline {
+  position: absolute;
+  left: 10.2ch;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #d32f2f;
+  font-size: 0.88rem;
+  font-weight: 900;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: task-status-blink 1.7s ease-in-out infinite;
+}
+
+#taskNameInput:focus + .planning-new-task-hint-inline,
+#taskNameInput:not(:placeholder-shown) + .planning-new-task-hint-inline {
+  display: none;
+}
+
 @keyframes task-status-blink {
   0%, 40%, 100% {
     opacity: 1;
@@ -952,7 +979,8 @@ button:disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .home-task-status-active,
-  .home-task-status-resume {
+  .home-task-status-resume,
+  .planning-new-task-hint-inline {
     animation: none;
   }
 }

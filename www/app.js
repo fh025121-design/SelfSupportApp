@@ -6600,11 +6600,14 @@ function renderPlanning() {
     <ul id="taskList" class="task-list compact-task-list"></ul>
 
     <div class="task-form-box">
-      <p class="helper">${editingTask ? "修正内容を入力してください。" : "次の1件を入力してください。"}</p>
+      <p class="helper planning-new-task-guide">${editingTask ? "修正内容を入力してください。" : "次の1件を入力してください。"}</p>
       <div class="form-stack">
         <div>
           <label for="taskNameInput">タスク名</label>
-          <input id="taskNameInput" type="text" list="taskNameSuggestions" value="${escapeHtml(state.planningForm.taskName)}" maxlength="40" placeholder="例: 原田先生" autocomplete="off" />
+          <div class="planning-task-name-wrap">
+            <input id="taskNameInput" type="text" list="taskNameSuggestions" value="${escapeHtml(state.planningForm.taskName)}" maxlength="40" placeholder="例: 原田先生" autocomplete="off" />
+            ${editingTask ? "" : '<span class="planning-new-task-hint-inline">新規のタスクはここ</span>'}
+          </div>
           <datalist id="taskNameSuggestions">${renderTaskNameSuggestions()}</datalist>
         </div>
         <div>
