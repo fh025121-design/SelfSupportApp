@@ -1178,6 +1178,68 @@ button:disabled {
   margin: 0;
 }
 
+.plan-report-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.plan-report-meta-grid p {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plan-report-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.plan-report-time-grid p {
+  margin: 0;
+  border: 1px solid #d9e4f3;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 8px 9px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.plan-report-task-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.plan-report-task-card {
+  border: 1px solid #dbe5f2;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px 10px;
+}
+
+.plan-report-task-head {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.plan-report-task-body {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .confirm-item {
   border-bottom: 1px solid #e4e9f2;
   padding: 8px 0;
@@ -1676,5 +1738,9 @@ button:disabled {
 
   .compact-stack {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plan-report-time-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }

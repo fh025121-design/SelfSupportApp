@@ -2026,7 +2026,7 @@ function render() {
     case "planning":
       return renderPlanning();
     case "planConfirm":
-      return renderPlanConfirm();
+      return renderPlanReport();
     case "planReport":
       return renderPlanReport();
     case "executionList":
@@ -6626,7 +6626,7 @@ function renderPlanning() {
     </div>
 
     <div class="summary" id="totalPlanned"></div>
-    <div class="btn-row compact-stack"><button id="goBtn" class="btn-main" type="button" ${getBusyDisabledAttr()}>最終確認へ</button></div>
+    <div class="btn-row compact-stack"><button id="goBtn" class="btn-main" type="button" ${getBusyDisabledAttr()}>予定を確認する</button></div>
   `);
 
   renderTaskListForPlanning(planningTasks);
@@ -7011,7 +7011,7 @@ function onGoToPlanConfirm() {
   const invalid = planningTasks.find((t) => !t.name.trim());
   if (invalid) return alert("タスク名を確認してください。");
 
-  changePhase("planConfirm");
+  confirmPlan();
 }
 
 function renderPlanConfirm() {
@@ -7185,25 +7185,45 @@ function buildPlanReportBelongingsLines(dateKey) {
 
 function renderPlanReport() {
   const report = buildPlanReportText();
-  const canExecuteFromPlanReport = canExecuteTasksForDate(getPlanningTargetDateKey());
+  const targetDateKey = getPlanningTargetDateKey();
+  const targetDateHeading = formatHomeDateHeading(targetDateKey);
+  const planningTasks = getPlanningVisibleTasks();
   renderScreen(`
-    <h2>親への予定報告</h2>
-    <div id="planReportText" class="report-box"></div>
+    <h2>親への予定報告・確認</h2>
+    <p class="helper">${escapeHtml(targetDateHeading)} の予定です。内容を確認し、必要なら親へ報告してください。</p>
+    <div class="summary plan-report-meta-grid">
+      <p><strong>対象日</strong><span>${escapeHtml(targetDateHeading)}</span></p>
+      <p><strong>合計</strong><span>${formatStudyTotalDuration(sumPlanned(planningTasks))}</span></p>
+    </div>
+    <div class="summary plan-report-time-grid">
+      <p><strong>起床</strong><span>${formatTimeForDisplay(state.planTimes.wakeUp)}</span></p>
+      <p><strong>出発</strong><span>${formatTimeForDisplay(state.planTimes.departure)}</span></p>
+      <p><strong>帰宅</strong><span>${formatTimeForDisplay(state.planTimes.returnHome)}</span></p>
+      <p><strong>勉強開始</strong><span>${formatTimeForDisplay(state.planTimes.studyStart)}</span></p>
+    </div>
+    <ul class="plan-report-task-list">
+      ${planningTasks.map((task) => `
+        <li class="task-card plan-report-task-card">
+          <p class="plan-report-task-head"><span>${escapeHtml(task.name)}</span><span>${task.plannedMinutes}分</span></p>
+          ${task.content.trim() ? `<div class="task-content-row plan-report-task-body"><span class="task-content-label">内容：</span><span class="task-content-text">${escapeHtml(task.content)}</span></div>` : ""}
+        </li>
+      `).join("")}
+    </ul>
     <div class="btn-row compact-stack">
-      <button id="copyPlanBtn" class="btn-main" type="button">予定をコピー</button>
-      <button id="startExecutionBtn" class="btn-quiet" type="button" ${canExecuteFromPlanReport ? "" : "disabled"}>タスク実行へ進む</button>
+      <button id="backToPlanningFromReportBtn" class="btn-quiet" type="button">戻って修正</button>
+      <button id="copyPlanBtn" class="btn-main" type="button">予定を確定してコピー</button>
+      <button id="homeFromPlanReportBtn" class="btn-sub" type="button">確定してホームへ戻る</button>
     </div>
     <p id="copyPlanMessage" class="helper" aria-live="polite"></p>
   `);
 
-  document.getElementById("planReportText").textContent = report;
+  document.getElementById("backToPlanningFromReportBtn")?.addEventListener("click", () => changePhase("planning"));
   document.getElementById("copyPlanBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(report);
     document.getElementById("copyPlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
+    alert("親へ送信すること");
   });
-  if (canExecuteFromPlanReport) {
-    document.getElementById("startExecutionBtn")?.addEventListener("click", () => changePhase("execution"));
-  }
+  document.getElementById("homeFromPlanReportBtn")?.addEventListener("click", goHome);
 }
 
 function getExecutionListTasks() {
@@ -9295,9 +9315,8 @@ function renderScreen(content) {
 
 function renderTopNav() {
   if (state.phase === "home") return "";
-  const isPlanReport = state.phase === "planReport";
-  const primaryLabel = isPlanReport ? "戻る" : "ホーム";
-  const showTodayTaskBtn = !isPlanReport;
+  const primaryLabel = "ホーム";
+  const showTodayTaskBtn = true;
   return `
     <div class="top-nav">
       <button id="homeBtn" class="btn-mini btn-quiet" type="button" ${getBusyDisabledAttr()}>${primaryLabel}</button>
@@ -9309,11 +9328,7 @@ function renderTopNav() {
 function bindTopNav() {
   const homeBtn = document.getElementById("homeBtn");
   const todayTaskTopBtn = document.getElementById("todayTaskTopBtn");
-  if (state.phase === "planReport") {
-    homeBtn?.addEventListener("click", goBack);
-  } else {
-    homeBtn?.addEventListener("click", goHome);
-  }
+  homeBtn?.addEventListener("click", goHome);
   todayTaskTopBtn?.addEventListener("click", () => changePhase("executionList", false));
 }
 
