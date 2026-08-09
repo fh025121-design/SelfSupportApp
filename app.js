@@ -733,15 +733,6 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
 }
 
 function applyOneTimeCurrentDayReopen(targetState, todayKey = getTodayKeyJst()) {
-  if (!targetState || todayKey !== ONE_TIME_REOPEN_DATE_KEY) return targetState;
-  const normalizedTodayKey = normalizeTaskDateKey(todayKey) || todayKey;
-  targetState.dayClosed = false;
-  targetState.reopenedTodayDateKey = normalizedTodayKey;
-  targetState.homeDisplayDateKey = normalizedTodayKey;
-  targetState.homeViewMode = "current";
-  if (targetState.phase === "dayEnd") {
-    targetState.phase = "home";
-  }
   return targetState;
 }
 
