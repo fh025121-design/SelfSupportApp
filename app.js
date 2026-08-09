@@ -2801,7 +2801,7 @@ function renderHome() {
     <ul class="home-task-list" id="homeTaskList"></ul>
 
     <div class="btn-row">
-      <button id="openExecutionBtn" class="btn-main" type="button" ${canExecuteDisplayedTasks ? "" : "disabled"}>タスク実行へ</button>
+      <button id="openExecutionBtn" class="btn-main" type="button">タスク実行へ</button>
     </div>
 
     <div class="btn-row compact-stack">
@@ -2887,9 +2887,6 @@ function renderHome() {
       }
       shiftHomeDisplayDate(1);
     });
-    if (canExecuteDisplayedTasks) {
-      document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("executionList", false));
-    }
     if (canOpenHomework) {
       document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
     }
@@ -2911,6 +2908,8 @@ function renderHome() {
     planningRecurringPickerOpen = false;
     changePhase("planning", false);
   });
+
+  document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("executionList", false));
 
   if (canOpenCompletionHistory) {
     document.getElementById("openCompletionHistoryBtn")?.addEventListener("click", () => changePhase("completionHistory", false));
@@ -6446,7 +6445,7 @@ function getHomeActionAvailability() {
   if (isPreviousView || isPastView) {
     return {
       displayDateKey,
-      canOpenExecution: false,
+      canOpenExecution: true,
       canOpenHomework: false,
       canOpenPlanning: true,
       canOpenCompletionHistory: true
@@ -9439,7 +9438,6 @@ function changePhase(next, pushHistory = true) {
   if (next === "execution" || next === "executionList" || next === "homeworkList" || next === "completionHistory") {
     const availability = getHomeActionAvailability();
     if (next === "execution" && !availability.canOpenExecution) return;
-    if (next === "executionList" && !availability.canOpenExecution) return;
     if (next === "homeworkList" && !availability.canOpenHomework) return;
     if (next === "completionHistory" && !availability.canOpenCompletionHistory) return;
   }
