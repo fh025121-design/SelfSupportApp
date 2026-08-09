@@ -1212,6 +1212,41 @@ function buildCarryoverHomeworkTasks(previousState) {
     .map((item) => structuredClone(item));
 }
 
+function resolvePlanTimesForDateRollover(previousState, todayKey = getTodayKeyJst()) {
+  const defaults = createDefaultPlanTimes();
+  if (!previousState || typeof previousState !== "object") return defaults;
+
+  const normalizedTodayKey = normalizeTaskDateKey(todayKey);
+  if (!normalizedTodayKey) return defaults;
+
+  const planningTargetDateKey = normalizeTaskDateKey(previousState.planningTargetDateKey);
+  const confirmedTargetDateKey = normalizeTaskDateKey(previousState?.confirmedPlan?.targetDateKey);
+  const hasTomorrowContext = planningTargetDateKey === normalizedTodayKey
+    || confirmedTargetDateKey === normalizedTodayKey;
+  if (!hasTomorrowContext) return defaults;
+
+  const sourcePlanTimes = confirmedTargetDateKey === normalizedTodayKey
+    ? previousState?.confirmedPlan?.planTimes
+    : previousState.planTimes;
+  const rawWakeUp = String(sourcePlanTimes?.wakeUp || "").trim();
+  const rawDeparture = String(sourcePlanTimes?.departure || "").trim();
+  const rawReturnHome = String(sourcePlanTimes?.returnHome || "").trim();
+  const rawStudyStart = String(sourcePlanTimes?.studyStart || "").trim();
+
+  const isValidTime = (value) => /^\d{2}:\d{2}$/.test(value);
+
+  return {
+    wakeUp: isValidTime(rawWakeUp) ? rawWakeUp : defaults.wakeUp,
+    departure: rawDeparture === "none"
+      ? "none"
+      : (isValidTime(rawDeparture) ? rawDeparture : defaults.departure),
+    returnHome: rawReturnHome === "none"
+      ? "none"
+      : (isValidTime(rawReturnHome) ? rawReturnHome : defaults.returnHome),
+    studyStart: isValidTime(rawStudyStart) ? rawStudyStart : defaults.studyStart
+  };
+}
+
 function loadState() {
   const todayKey = getTodayKeyJst();
   todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
@@ -1229,6 +1264,7 @@ function loadState() {
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
       nextState.planFor = "today";
+      nextState.planTimes = resolvePlanTimesForDateRollover(parsed, todayKey);
       nextState.homeDisplayDateKey = todayKey;
       nextState.planningTargetDateKey = todayKey;
       nextState.goPressedAt = null;
@@ -2209,6 +2245,7 @@ function normalizeLoadedState(rawState) {
   if (parsed.dateKey !== todayKey) {
     const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
     nextState.planFor = "today";
+    nextState.planTimes = resolvePlanTimesForDateRollover(parsed, todayKey);
     nextState.goPressedAt = null;
     nextState.dayClosed = false;
     nextState.homeworkTasks = buildCarryoverHomeworkTasks(parsed);
