@@ -2724,7 +2724,6 @@ function renderHome() {
   const homeActionAvailability = getHomeActionAvailability();
   const canExecuteDisplayedTasks = homeActionAvailability.canOpenExecution;
   const canOpenHomework = homeActionAvailability.canOpenHomework;
-  const canOpenPlanning = homeActionAvailability.canOpenPlanning;
   const canOpenCompletionHistory = homeActionAvailability.canOpenCompletionHistory;
   const departureInfo = getDepartureTimingInfo();
   const showDepartureCheckHomeButton = !isPreviousView
@@ -2795,7 +2794,7 @@ function renderHome() {
       <div class="home-overview-right">${belongingsHtml}</div>
     </div>
     <div class="btn-row compact-stack">
-      <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button" ${canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
+      <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button">予定の入力・修正</button>
     </div>
     <hr class="sep" />
 
@@ -2903,15 +2902,15 @@ function renderHome() {
     document.getElementById("homeReminderInterruptBtn")?.addEventListener("click", interruptRunningTask);
   }
 
-  if (canOpenPlanning) {
-    document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
-      const displayedDateKey = normalizeTaskDateKey(homeActionAvailability.displayDateKey) || getCurrentHomeDateKey();
-      state.planningTargetDateKey = displayedDateKey;
-      state.planningForm = createPlanningForm();
-      planningRecurringPickerOpen = false;
-      changePhase("planning", false);
-    });
-  }
+  document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
+    const displayedDateKey = normalizeTaskDateKey(homeActionAvailability.displayDateKey)
+      || getCurrentHomeDateKey()
+      || getTodayKeyJst();
+    state.planningTargetDateKey = displayedDateKey;
+    state.planningForm = createPlanningForm();
+    planningRecurringPickerOpen = false;
+    changePhase("planning", false);
+  });
 
   if (canOpenCompletionHistory) {
     document.getElementById("openCompletionHistoryBtn")?.addEventListener("click", () => changePhase("completionHistory", false));
