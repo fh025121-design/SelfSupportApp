@@ -1417,6 +1417,36 @@ button:disabled {
   margin-top: 14px;
 }
 
+.plan-copy-reminder-modal {
+  border-color: #ffd7cc;
+  background: linear-gradient(165deg, #fff9f6 0%, #fff2eb 52%, #ffe8dc 100%);
+}
+
+.plan-copy-reminder-modal h3 {
+  font-size: 1.3rem;
+  color: #9a3412;
+  margin-bottom: 10px;
+}
+
+.plan-copy-reminder-lead {
+  font-size: 1.02rem;
+  font-weight: 800;
+  color: #7c2d12;
+}
+
+.plan-copy-reminder-main {
+  margin-top: 8px;
+  font-size: 1.08rem;
+  font-weight: 900;
+  color: #7c2d12;
+}
+
+.plan-copy-reminder-note {
+  margin-top: 8px;
+  color: #8b5e34;
+  font-weight: 700;
+}
+
 .submission-flow-list {
   grid-template-columns: 1fr;
   gap: 6px;

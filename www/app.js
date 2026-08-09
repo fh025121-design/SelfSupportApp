@@ -7221,9 +7221,33 @@ function renderPlanReport() {
   document.getElementById("copyPlanBtn").addEventListener("click", async () => {
     const ok = await copyToClipboard(report);
     document.getElementById("copyPlanMessage").textContent = ok ? "コピーしました" : "コピーに失敗しました";
-    alert("親へ送信すること");
+    if (ok) {
+      showPlanCopyReminderDialog();
+    }
   });
   document.getElementById("homeFromPlanReportBtn")?.addEventListener("click", goHome);
+}
+
+function showPlanCopyReminderDialog() {
+  document.getElementById("planCopyReminderOverlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "planCopyReminderOverlay";
+  overlay.className = "app-modal-overlay";
+  overlay.innerHTML = `
+    <div class="app-modal plan-copy-reminder-modal" role="dialog" aria-modal="true" aria-label="送信確認">
+      <p class="plan-copy-reminder-lead">コピーができました。</p>
+      <p class="plan-copy-reminder-main">内容が具体的か、コピペしただけになっていないか気を付けて、親へ送信してください。</p>
+      <div class="btn-row compact-stack app-modal-actions">
+        <button id="closePlanCopyReminderBtn" class="btn-main" type="button">黒の手帳もラストチェックした</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById("closePlanCopyReminderBtn")?.addEventListener("click", () => {
+    overlay.remove();
+  });
 }
 
 function getExecutionListTasks() {
