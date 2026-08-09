@@ -2794,11 +2794,9 @@ function renderHome() {
       </div>
       <div class="home-overview-right">${belongingsHtml}</div>
     </div>
-    ${!isPreviousView ? `
-      <div class="btn-row compact-stack">
-        <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button" ${canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
-      </div>
-    ` : ""}
+    <div class="btn-row compact-stack">
+      <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button" ${canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
+    </div>
     <hr class="sep" />
 
     <ul class="home-task-list" id="homeTaskList"></ul>
@@ -2890,15 +2888,6 @@ function renderHome() {
       }
       shiftHomeDisplayDate(1);
     });
-    if (canOpenPlanning) {
-      document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
-        state.planningTargetDateKey = getCurrentHomeDateKey();
-        state.planningForm = createPlanningForm();
-        planningRecurringPickerOpen = false;
-        changePhase("planning", false);
-      });
-    }
-
     if (canExecuteDisplayedTasks) {
       document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("executionList", false));
     }
@@ -2912,6 +2901,16 @@ function renderHome() {
     document.getElementById("openClubAfterCheckBtn")?.addEventListener("click", () => changePhase("clubAfterCheck", false));
     document.getElementById("homeReminderCompleteBtn")?.addEventListener("click", openTaskCompleteConfirmDialog);
     document.getElementById("homeReminderInterruptBtn")?.addEventListener("click", interruptRunningTask);
+  }
+
+  if (canOpenPlanning) {
+    document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
+      const displayedDateKey = normalizeTaskDateKey(homeActionAvailability.displayDateKey) || getCurrentHomeDateKey();
+      state.planningTargetDateKey = displayedDateKey;
+      state.planningForm = createPlanningForm();
+      planningRecurringPickerOpen = false;
+      changePhase("planning", false);
+    });
   }
 
   if (canOpenCompletionHistory) {
@@ -6450,7 +6449,7 @@ function getHomeActionAvailability() {
       displayDateKey,
       canOpenExecution: false,
       canOpenHomework: false,
-      canOpenPlanning: false,
+      canOpenPlanning: true,
       canOpenCompletionHistory: true
     };
   }
@@ -6469,7 +6468,7 @@ function getHomeActionAvailability() {
     return {
       displayDateKey,
       canOpenExecution: !todayTaskFlowClosed,
-      canOpenHomework: !todayTaskFlowClosed,
+      canOpenHomework: true,
       canOpenPlanning: !todayTaskFlowClosed,
       canOpenCompletionHistory: true
     };
