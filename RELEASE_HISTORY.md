@@ -1,5 +1,17 @@
 # Release History
 
+## 2026-08-10 10:33 JST
+- v2.71
+	- №159 帰宅後チェックが表示されない不具合を修正。
+	- 原因だった `departureCheck.done = true` かつ `departureCheck.activatedOnce = false` の不整合に対応。
+	- `normalizeDepartureCheckState` で既存保存データを整合補正し、`done=true` の場合は `activatedOnce=true` を強制保持するよう修正。
+	- `recomputeDepartureCheckCompletion` で出発前チェック完了時に `activatedOnce=true` を必ず保持するよう修正。
+	- 帰宅後チェックの表示時刻条件（帰宅予定時刻30分前から表示対象）は変更なし。
+	- 帰宅後チェックの内容・完了処理は変更なし。
+	- 通知・音・バイブ・Exact Alarm 関連の仕様変更なし。
+	- `index.html` の表示バージョンを `2.70` から `2.71` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.71` に更新。
+
 ## 2026-08-10 01:10 JST
 - v2.70
 	- 左画面で `タスク実行へ` が押せない症状を追加是正。

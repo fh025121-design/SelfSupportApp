@@ -9164,6 +9164,9 @@ function normalizeDepartureCheckState(raw) {
   base.belongingChecked = base.belongingChecked && typeof base.belongingChecked === "object" ? { ...base.belongingChecked } : {};
   base.lastAutoPromptAt = typeof base.lastAutoPromptAt === "number" ? base.lastAutoPromptAt : 0;
   base.done = Boolean(base.done) && base.remainingIndices.length === 0;
+  if (base.done) {
+    base.activatedOnce = true;
+  }
   base.completedAtMs = Number.isFinite(Number(base.completedAtMs)) ? Math.max(0, Number(base.completedAtMs)) : 0;
   base.completedAtTimeLabel = base.done ? String(base.completedAtTimeLabel || "") : "";
   delete base.index;
@@ -9274,6 +9277,9 @@ function recomputeDepartureCheckCompletion(belongingsItems = null) {
     : getBelongingsSummaryForDate(state.dateKey).mergedItems;
   const belongingsDone = areDepartureBelongingsComplete(resolvedBelongings);
   state.departureCheck.done = fixedDone && belongingsDone;
+  if (state.departureCheck.done) {
+    state.departureCheck.activatedOnce = true;
+  }
   if (!wasDone && state.departureCheck.done) {
     const departureCompletedEvent = appendHistoryEvent({
       category: "check",
