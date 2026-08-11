@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  runTransaction,
   serverTimestamp,
   setDoc
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
@@ -171,6 +172,8 @@ let syncSaveTimer = null;
 let syncSaveInFlight = false;
 let isApplyingRemoteState = false;
 let lastSavedStateHash = "";
+let lastSavedStateRevision = 0;
+let lastSavedStateContentHash = "";
 let syncWritesBlocked = false;
 let localBootHasValidData = false;
 let localBootRawExisted = false;
@@ -187,6 +190,7 @@ let uiNoticeTimer = null;
 let pendingSyncHash = "";
 let syncDrainPromise = null;
 let resolveSyncDrainPromise = null;
+let lastPersistedContentHash = "";
 let daySwitchTestSnapshot = null;
 let daySwitchTestMessage = "";
 let daySwitchTestTodayKeyOverride = "";
@@ -323,6 +327,8 @@ function buildNotificationChannelId(target, toneType, uri) {
 }
 
 const state = loadState();
+lastPersistedContentHash = hashStateContent(state);
+trackLastSavedStateMetrics(state);
 setupInputGuard();
 initializeLocalNotificationTrial();
 setupLocalNotificationActionListener();
@@ -686,6 +692,7 @@ function createMedicineReminderState(dateKey = getTodayKeyJst()) {
 
 function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
   return {
+    revision: 0,
     dateKey,
     phase: "planning",
     navHistory: [],
@@ -1263,6 +1270,7 @@ function loadState() {
 
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+      nextState.revision = normalizeStateRevision(parsed.revision);
       nextState.planFor = "today";
       nextState.planTimes = resolvePlanTimesForDateRollover(parsed, todayKey);
       nextState.homeDisplayDateKey = todayKey;
@@ -1290,6 +1298,7 @@ function loadState() {
       dateKey: todayKey
     };
 
+    safe.revision = normalizeStateRevision(safe.revision);
     safe.phase = [
       "home", "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result",
       "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
@@ -1716,11 +1725,17 @@ function normalizeHomeworkForm(raw) {
 }
 
 function saveState(options = {}) {
+  const nextContentHash = hashStateContent(state);
+  if (!options.skipRevisionBump && nextContentHash !== lastPersistedContentHash) {
+    state.revision = normalizeStateRevision(state.revision) + 1;
+  }
+
   state.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, getTodayKeyJst(), 7);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (currentUser?.uid) {
     localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
   }
+  lastPersistedContentHash = hashStateContent(state);
 
   if (options.skipRemote) return Promise.resolve({ status: "local-only" });
   return scheduleFirestoreSave({
@@ -1976,7 +1991,7 @@ function applyRemoteStateKeepingCurrentPhase(rawState) {
   isApplyingRemoteState = true;
   replaceState(nextState);
   state.phase = currentPhase;
-  saveState({ skipRemote: true });
+  saveState({ skipRemote: true, skipRevisionBump: true });
   isApplyingRemoteState = false;
   requestMedicineReminderNotificationRefresh();
 }
@@ -1994,7 +2009,7 @@ function flushDeferredUiUpdates() {
   if (pendingRemoteState) {
     applyRemoteStateKeepingCurrentPhase(pendingRemoteState);
     pendingRemoteState = null;
-    lastSavedStateHash = pendingRemoteHash || hashStateObject(state);
+    trackLastSavedStateMetrics(state);
     pendingRemoteHash = "";
     requestPassiveRender();
     return;
@@ -2208,6 +2223,34 @@ function hashStateObject(value) {
   }
 }
 
+function normalizeStateRevision(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+function getStateRevision(candidate = state) {
+  return normalizeStateRevision(candidate?.revision);
+}
+
+function hashStateContent(value) {
+  try {
+    const clone = JSON.parse(JSON.stringify(value));
+    if (clone && typeof clone === "object" && !Array.isArray(clone)) {
+      delete clone.revision;
+    }
+    return JSON.stringify(clone);
+  } catch {
+    return "";
+  }
+}
+
+function trackLastSavedStateMetrics(referenceState) {
+  lastSavedStateHash = hashStateObject(referenceState);
+  lastSavedStateRevision = getStateRevision(referenceState);
+  lastSavedStateContentHash = hashStateContent(referenceState);
+}
+
 function cloneStateForSync() {
   return JSON.parse(JSON.stringify(state));
 }
@@ -2244,6 +2287,7 @@ function normalizeLoadedState(rawState) {
   const parsed = rawState;
   if (parsed.dateKey !== todayKey) {
     const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+    nextState.revision = normalizeStateRevision(parsed.revision);
     nextState.planFor = "today";
     nextState.planTimes = resolvePlanTimesForDateRollover(parsed, todayKey);
     nextState.goPressedAt = null;
@@ -2268,6 +2312,7 @@ function normalizeLoadedState(rawState) {
     dateKey: todayKey
   };
 
+  safe.revision = normalizeStateRevision(safe.revision);
   safe.phase = [
     "home", "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result",
     "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "previousDayEnd", "settings", "recurringList", "recurringEdit", "homeworkList", "homeworkWorkType", "homeworkEdit", "submissionTemplateList", "submissionTemplateEdit"
@@ -2338,6 +2383,8 @@ function teardownSyncSession() {
   syncOwnerUid = null;
   isApplyingRemoteState = false;
   lastSavedStateHash = "";
+  lastSavedStateRevision = 0;
+  lastSavedStateContentHash = "";
   syncWritesBlocked = false;
   syncStatus = "syncing";
   pendingRemoteState = null;
@@ -2452,6 +2499,7 @@ async function startSyncSessionForUser(user) {
   requestPassiveRender();
 
   const appStateRef = getAppStateDocRef(uid);
+  let shouldPushLocalState = false;
   let snapshot;
   try {
     snapshot = await getDoc(appStateRef);
@@ -2462,8 +2510,20 @@ async function startSyncSessionForUser(user) {
 
   if (snapshot.exists() && isValidSyncPayload(snapshot.data())) {
     const payload = snapshot.data();
-    applyRemoteStateKeepingCurrentPhase(payload.state);
-    lastSavedStateHash = hashStateObject(payload.state);
+    const remoteState = payload.state;
+    const remoteRevision = getStateRevision(remoteState);
+    const localRevision = getStateRevision(state);
+    const remoteContentHash = hashStateContent(remoteState);
+    const localContentHash = hashStateContent(state);
+
+    trackLastSavedStateMetrics(remoteState);
+
+    if (remoteRevision > localRevision) {
+      applyRemoteStateKeepingCurrentPhase(remoteState);
+      trackLastSavedStateMetrics(state);
+    } else if (remoteRevision < localRevision || remoteContentHash !== localContentHash) {
+      shouldPushLocalState = true;
+    }
   } else {
     const canSeedFromLocal = localBootHasValidData && (!localBootOwnerUid || localBootOwnerUid === uid);
     const seedState = canSeedFromLocal ? cloneStateForSync() : createInitialState(getTodayKeyJst());
@@ -2478,9 +2538,10 @@ async function startSyncSessionForUser(user) {
       reportFirestoreError("initial-seed-write", error, { uid });
       throw error;
     }
-    lastSavedStateHash = hashStateObject(seedState);
+    trackLastSavedStateMetrics(seedState);
     if (!canSeedFromLocal && !localBootRawExisted) {
       applyRemoteStateKeepingCurrentPhase(seedState);
+      trackLastSavedStateMetrics(state);
     }
   }
 
@@ -2491,14 +2552,27 @@ async function startSyncSessionForUser(user) {
     const remoteHash = hashStateObject(payload.state);
     if (!remoteHash) return;
 
+    const remoteRevision = getStateRevision(payload.state);
+    const localRevision = getStateRevision(state);
+
     if (payload.updatedBy === uid && remoteHash === lastSavedStateHash) {
       if (syncStatus !== "offline") syncStatus = "synced";
       return;
     }
 
+    if (remoteRevision < localRevision) {
+      if (syncStatus !== "offline") syncStatus = "synced";
+      return;
+    }
+
     const currentHash = hashStateObject(state);
-    if (remoteHash === currentHash) {
-      lastSavedStateHash = remoteHash;
+    if (remoteRevision === localRevision) {
+      if (remoteHash !== currentHash) {
+        if (syncStatus !== "offline") syncStatus = "synced";
+        void scheduleFirestoreSave({ immediate: true });
+        return;
+      }
+      trackLastSavedStateMetrics(payload.state);
       if (syncStatus !== "offline") syncStatus = "synced";
       return;
     }
@@ -2511,7 +2585,7 @@ async function startSyncSessionForUser(user) {
     }
 
     applyRemoteStateKeepingCurrentPhase(payload.state);
-    lastSavedStateHash = remoteHash;
+    trackLastSavedStateMetrics(state);
     if (syncStatus !== "offline") syncStatus = "synced";
     requestPassiveRender();
   }, (error) => {
@@ -2523,6 +2597,9 @@ async function startSyncSessionForUser(user) {
   syncReady = true;
   syncStatus = navigator.onLine ? "synced" : "offline";
   localStorage.setItem(STORAGE_OWNER_UID_KEY, uid);
+  if (shouldPushLocalState) {
+    void scheduleFirestoreSave({ immediate: true });
+  }
 }
 
 function shouldSyncToFirestore() {
@@ -2537,8 +2614,13 @@ function shouldSyncToFirestore() {
 function scheduleFirestoreSave(options = {}) {
   if (!shouldSyncToFirestore()) return Promise.resolve({ status: "local-only" });
 
-  const nextHash = hashStateObject(state);
-  if (!nextHash || nextHash === lastSavedStateHash) {
+  const nextHash = hashStateContent(state);
+  const nextRevision = getStateRevision(state);
+  if (!nextHash) {
+    pendingSyncHash = "";
+    return Promise.resolve({ status: "synced" });
+  }
+  if (nextHash === lastSavedStateContentHash && nextRevision <= lastSavedStateRevision) {
     pendingSyncHash = "";
     return Promise.resolve({ status: "synced" });
   }
@@ -2575,8 +2657,8 @@ async function flushFirestoreSave(expectedHash) {
 
   const targetHash = pendingSyncHash || expectedHash;
   if (syncSaveInFlight) return;
-  if (!targetHash || targetHash === lastSavedStateHash) {
-    if (targetHash === lastSavedStateHash) {
+  if (!targetHash || (targetHash === lastSavedStateContentHash && getStateRevision(state) <= lastSavedStateRevision)) {
+    if (targetHash === lastSavedStateContentHash) {
       pendingSyncHash = "";
     }
     if (!syncSaveTimer) {
@@ -2588,24 +2670,68 @@ async function flushFirestoreSave(expectedHash) {
   syncSaveInFlight = true;
   const uid = currentUser.uid;
   try {
-    const payloadState = cloneStateForSync();
-    const latestHash = hashStateObject(payloadState);
-    if (!latestHash || latestHash === lastSavedStateHash) {
-      pendingSyncHash = "";
+    const appStateRef = getAppStateDocRef(uid);
+    const localStateForWrite = cloneStateForSync();
+    const localRevision = getStateRevision(localStateForWrite);
+
+    const txResult = await runTransaction(db, async (transaction) => {
+      const remoteSnap = await transaction.get(appStateRef);
+      let remoteState = null;
+      let remoteRevision = 0;
+      if (remoteSnap.exists() && isValidSyncPayload(remoteSnap.data())) {
+        remoteState = remoteSnap.data().state;
+        remoteRevision = getStateRevision(remoteState);
+      }
+
+      if (remoteRevision > localRevision) {
+        return {
+          accepted: false,
+          remoteState,
+          remoteRevision
+        };
+      }
+
+      const nextRevision = localRevision > remoteRevision ? localRevision : (remoteRevision + 1);
+      localStateForWrite.revision = nextRevision;
+      transaction.set(appStateRef, {
+        state: localStateForWrite,
+        schemaVersion: SYNC_SCHEMA_VERSION,
+        updatedBy: uid,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      return {
+        accepted: true,
+        state: localStateForWrite
+      };
+    });
+
+    if (!txResult?.accepted) {
+      if (txResult?.remoteState && getStateRevision(txResult.remoteState) > getStateRevision(state)) {
+        if (isUserEditing()) {
+          pendingRemoteState = txResult.remoteState;
+          pendingRemoteHash = hashStateObject(txResult.remoteState);
+        } else {
+          applyRemoteStateKeepingCurrentPhase(txResult.remoteState);
+          requestPassiveRender();
+        }
+        trackLastSavedStateMetrics(txResult.remoteState);
+      }
       if (syncStatus !== "offline") syncStatus = "synced";
       resolveSyncDrain({ status: "synced" });
       return;
     }
 
-    await setDoc(getAppStateDocRef(uid), {
-      state: payloadState,
-      schemaVersion: SYNC_SCHEMA_VERSION,
-      updatedBy: uid,
-      updatedAt: serverTimestamp()
-    }, { merge: true });
+    const writtenState = txResult.state;
+    state.revision = getStateRevision(writtenState);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (currentUser?.uid) {
+      localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
+    }
+    lastPersistedContentHash = hashStateContent(state);
+    trackLastSavedStateMetrics(writtenState);
 
-    lastSavedStateHash = latestHash;
-    if (pendingSyncHash === latestHash) {
+    if (pendingSyncHash === targetHash) {
       pendingSyncHash = "";
     }
     if (syncStatus !== "offline") syncStatus = "synced";
@@ -2619,12 +2745,12 @@ async function flushFirestoreSave(expectedHash) {
   } finally {
     syncSaveInFlight = false;
     requestPassiveRender();
-    if (shouldSyncToFirestore() && pendingSyncHash && pendingSyncHash !== lastSavedStateHash && syncStatus !== "error" && syncStatus !== "offline") {
+    if (shouldSyncToFirestore() && pendingSyncHash && pendingSyncHash !== lastSavedStateContentHash && syncStatus !== "error" && syncStatus !== "offline") {
       void flushFirestoreSave(pendingSyncHash);
       return;
     }
     if (!syncSaveTimer) {
-      resolveSyncDrain(pendingSyncHash && pendingSyncHash !== lastSavedStateHash ? { status: "local-only" } : { status: "synced" });
+      resolveSyncDrain(pendingSyncHash && pendingSyncHash !== lastSavedStateContentHash ? { status: "local-only" } : { status: "synced" });
     }
   }
 }

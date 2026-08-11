@@ -1,5 +1,20 @@
 # Release History
 
+## 2026-08-11 21:44 JST
+- v2.72
+	- №162 複数端末同期の競合防止として、state 全体に同期用 `revision` を導入。
+	- `saveState` 時に内容差分（`revision` 除外ハッシュ）を判定し、実データ変更時のみ `revision` を進めるよう修正。
+	- Firestore 保存処理を `runTransaction` ベースに変更し、サーバー側 `revision` を確認してから書き込むよう修正。
+	- ローカル `revision` より Firestore 側 `revision` が新しい場合は、古い端末からの上書きを拒否するよう修正。
+	- Firestore 受信時に `remote revision` と `local revision` を比較し、古い remote state は適用せず棄却するよう修正。
+	- `revision` が同値で内容が競合する場合はローカル状態を優先し、即時再保存で整合させるよう修正。
+	- 古い remote による `running.taskId / running.startedAt / running.baseSeconds / running.isPaused / actualSeconds` の巻き戻しを抑止。
+	- 既存 `revision` 未設定データは `0` として正規化し、既存 state を消さずに移行できるよう対応。
+	- `getRunningElapsedSeconds()` の実時間計算（`baseSeconds + (Date.now() - startedAt)`）は維持。
+	- 通知・音・バイブ・Exact Alarm 関連ロジックは変更なし。
+	- `index.html` の表示バージョンを `2.71` から `2.72` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.72` に更新。
+
 ## 2026-08-10 10:33 JST
 - v2.71
 	- №159 帰宅後チェックが表示されない不具合を修正。
