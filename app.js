@@ -31,6 +31,18 @@ const db = getFirestore(firebaseApp);
 const STORAGE_KEY = "selfSupportAppTrialStateV3";
 const STORAGE_OWNER_UID_KEY = "selfSupportAppTrialStateV3_ownerUid";
 const ONE_TIME_REOPEN_DATE_KEY = "2026-08-09";
+
+function getUserLocalStorageStateKey(uid = "") {
+  const normalizedUid = String(uid || "").trim();
+  if (!normalizedUid) return STORAGE_KEY;
+  return `${STORAGE_KEY}_${normalizedUid}`;
+}
+
+function getUserLocalStorageOwnerKey(uid = "") {
+  const normalizedUid = String(uid || "").trim();
+  if (!normalizedUid) return STORAGE_OWNER_UID_KEY;
+  return `${STORAGE_OWNER_UID_KEY}_${normalizedUid}`;
+}
 const DEFAULT_MINUTES = 30;
 const EXECUTION_SELECT_LIMIT = 5;
 const TASK_NAME_NEW = "__new__";
@@ -362,6 +374,7 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   currentUser = user;
+  replaceState(loadStateForUser(user.uid));
   try {
     await startSyncSessionForUser(user);
   } catch (error) {
@@ -1255,14 +1268,15 @@ function resolvePlanTimesForDateRollover(previousState, todayKey = getTodayKeyJs
   };
 }
 
-function loadState() {
+function loadStateForUser(uid = currentUser?.uid || "") {
   const todayKey = getTodayKeyJst();
   todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
 
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const storageKey = getUserLocalStorageStateKey(uid);
+    const raw = uid ? localStorage.getItem(storageKey) : null;
     localBootRawExisted = Boolean(raw);
-    localBootOwnerUid = String(localStorage.getItem(STORAGE_OWNER_UID_KEY) || "");
+    localBootOwnerUid = uid && raw ? String(uid) : "";
     if (!raw) return createInitialState(todayKey);
 
     const parsed = JSON.parse(raw);
@@ -1363,6 +1377,10 @@ function loadState() {
     localBootHasValidData = false;
     return createInitialState(todayKey);
   }
+}
+
+function loadState() {
+  return loadStateForUser(currentUser?.uid || "");
 }
 
 function buildPastDaySummary(prev) {
@@ -1738,9 +1756,10 @@ function saveState(options = {}) {
   state.pastTasksByDate[snapshotDateKey] = buildPastTasksSnapshotForDate(snapshotDateKey);
   state.pastTasksByDate = prunePastTasksByDate(state.pastTasksByDate, getTodayKeyJst(), 5);
   state.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, getTodayKeyJst(), 7);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const storageKey = getUserLocalStorageStateKey(currentUser?.uid || "");
+  localStorage.setItem(storageKey, JSON.stringify(state));
   if (currentUser?.uid) {
-    localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
+    localStorage.setItem(getUserLocalStorageOwnerKey(currentUser.uid), currentUser.uid);
   }
   lastPersistedContentHash = hashStateContent(state);
 
@@ -2397,6 +2416,9 @@ function teardownSyncSession() {
   pendingRemoteState = null;
   pendingRemoteHash = "";
   pendingPassiveRender = false;
+  localBootHasValidData = false;
+  localBootRawExisted = false;
+  localBootOwnerUid = "";
   clearPhaseRefreshTimer();
 }
 
@@ -2603,7 +2625,7 @@ async function startSyncSessionForUser(user) {
 
   syncReady = true;
   syncStatus = navigator.onLine ? "synced" : "offline";
-  localStorage.setItem(STORAGE_OWNER_UID_KEY, uid);
+  localStorage.setItem(getUserLocalStorageOwnerKey(uid), uid);
   if (shouldPushLocalState) {
     void scheduleFirestoreSave({ immediate: true });
   }
@@ -2731,9 +2753,9 @@ async function flushFirestoreSave(expectedHash) {
 
     const writtenState = txResult.state;
     state.revision = getStateRevision(writtenState);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(getUserLocalStorageStateKey(currentUser?.uid || ""), JSON.stringify(state));
     if (currentUser?.uid) {
-      localStorage.setItem(STORAGE_OWNER_UID_KEY, currentUser.uid);
+      localStorage.setItem(getUserLocalStorageOwnerKey(currentUser.uid), currentUser.uid);
     }
     lastPersistedContentHash = hashStateContent(state);
     trackLastSavedStateMetrics(writtenState);

@@ -1,5 +1,15 @@
 # Release History
 
+## 2026-08-15 00:00 JST
+- v2.74
+	- ユーザーごとの localStorage 分離を追加し、UID ごとの state を独立して保存・読み込みするよう修正。
+	- 別 UID 登録時の local seed で既存の異ユーザー state を使用しないよう防止。
+	- 再ログイン時に直前ユーザーの state を引き継がないよう調整。
+	- Firestore 保存先 `users/{uid}/appState/main` は維持。
+	- `revision` 同期と通知関連は変更なし。
+	- `index.html` の表示バージョンを `2.73` から `2.74` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.74` に更新。
+
 ## 2026-08-14 00:00 JST
 - v2.73
 	- №163 今日から過去5日分のタスクを `state.pastTasksByDate` に保存し、保存済みの過去日を参照専用で表示するよう対応。
