@@ -701,6 +701,7 @@ function createInitialState(dateKey, tasks = [], historyEventsByDate = null) {
     homeViewMode: "current",
     homeDisplayDateKey: dateKey,
     previousDayArchive: null,
+    pastTasksByDate: {},
     homeReturnPhase: "planning",
     planFor: "today",
     planningTargetDateKey: dateKey,
@@ -1270,6 +1271,7 @@ function loadState() {
 
     if (parsed.dateKey !== todayKey) {
       const nextState = createInitialState(todayKey, buildNextDateTasks(parsed, todayKey), parsed.historyEventsByDate);
+      nextState.pastTasksByDate = prunePastTasksByDate(parsed.pastTasksByDate, todayKey, 5);
       nextState.revision = normalizeStateRevision(parsed.revision);
       nextState.planFor = "today";
       nextState.planTimes = resolvePlanTimesForDateRollover(parsed, todayKey);
@@ -1309,6 +1311,7 @@ function loadState() {
     safe.homeViewMode = "current";
     safe.homeDisplayDateKey = normalizeTaskDateKey(safe.homeDisplayDateKey) || todayKey;
     safe.previousDayArchive = normalizePreviousDayArchive(safe.previousDayArchive);
+    safe.pastTasksByDate = prunePastTasksByDate(safe.pastTasksByDate, todayKey, 5);
     safe.homeReturnPhase = [
       "completionHistory", "planning", "planConfirm", "planReport", "executionList", "execution", "review", "result", "departureCheck", "returnCheck", "returnReport", "clubAfterCheck", "clubAfterCheckConfirm", "dayEnd", "submissionTemplateList", "submissionTemplateEdit"
     ].includes(safe.homeReturnPhase) ? safe.homeReturnPhase : "planning";
@@ -1730,6 +1733,10 @@ function saveState(options = {}) {
     state.revision = normalizeStateRevision(state.revision) + 1;
   }
 
+  const snapshotDateKey = normalizeTaskDateKey(state.dateKey) || getTodayKeyJst();
+  state.pastTasksByDate = prunePastTasksByDate(state.pastTasksByDate, getTodayKeyJst(), 5);
+  state.pastTasksByDate[snapshotDateKey] = buildPastTasksSnapshotForDate(snapshotDateKey);
+  state.pastTasksByDate = prunePastTasksByDate(state.pastTasksByDate, getTodayKeyJst(), 5);
   state.homeworkCompletionHistoryByDate = pruneHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, getTodayKeyJst(), 7);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (currentUser?.uid) {
@@ -2920,14 +2927,14 @@ function renderHome() {
       <div class="home-overview-right">${belongingsHtml}</div>
     </div>
     <div class="btn-row compact-stack">
-      <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button">予定の入力・修正</button>
+      <button id="openPlanningForThisDayBtn" class="btn-main home-planning-btn" type="button" ${homeActionAvailability.canOpenPlanning ? "" : "disabled"}>予定の入力・修正</button>
     </div>
     <hr class="sep" />
 
     <ul class="home-task-list" id="homeTaskList"></ul>
 
     <div class="btn-row">
-      <button id="openExecutionBtn" class="btn-main" type="button">タスク実行へ</button>
+      <button id="openExecutionBtn" class="btn-main" type="button" ${homeActionAvailability.canOpenExecution ? "" : "disabled"}>タスク実行へ</button>
     </div>
 
     <div class="btn-row compact-stack">
@@ -3025,17 +3032,21 @@ function renderHome() {
     document.getElementById("homeReminderInterruptBtn")?.addEventListener("click", interruptRunningTask);
   }
 
-  document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
-    const displayedDateKey = normalizeTaskDateKey(homeActionAvailability.displayDateKey)
-      || getCurrentHomeDateKey()
-      || getTodayKeyJst();
-    state.planningTargetDateKey = displayedDateKey;
-    state.planningForm = createPlanningForm();
-    planningRecurringPickerOpen = false;
-    changePhase("planning", false);
-  });
+  if (homeActionAvailability.canOpenPlanning) {
+    document.getElementById("openPlanningForThisDayBtn")?.addEventListener("click", () => {
+      const displayedDateKey = normalizeTaskDateKey(homeActionAvailability.displayDateKey)
+        || getCurrentHomeDateKey()
+        || getTodayKeyJst();
+      state.planningTargetDateKey = displayedDateKey;
+      state.planningForm = createPlanningForm();
+      planningRecurringPickerOpen = false;
+      changePhase("planning", false);
+    });
+  }
 
-  document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("executionList", false));
+  if (homeActionAvailability.canOpenExecution) {
+    document.getElementById("openExecutionBtn")?.addEventListener("click", () => changePhase("executionList", false));
+  }
 
   if (canOpenCompletionHistory) {
     document.getElementById("openCompletionHistoryBtn")?.addEventListener("click", () => changePhase("completionHistory", false));
@@ -6471,6 +6482,72 @@ function formatHomeDateHeading(dateKey) {
   return `${Number(m[2])}月${Number(m[3])}日(${weekdayLabel})`;
 }
 
+function normalizePastTasksByDate(raw, referenceDateKey = getTodayKeyJst()) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([dateKey, snapshot]) => {
+    const normalizedDateKey = normalizeTaskDateKey(dateKey);
+    if (!normalizedDateKey || !snapshot || typeof snapshot !== "object") return;
+    const tasks = Array.isArray(snapshot.tasks)
+      ? snapshot.tasks.map((task) => normalizeTask(task, normalizedDateKey))
+      : [];
+    out[normalizedDateKey] = {
+      dateKey: normalizedDateKey,
+      tasks,
+      planTimes: {
+        ...createDefaultPlanTimes(),
+        ...(snapshot.planTimes || {})
+      },
+      belongingsItems: Array.isArray(snapshot.belongingsItems)
+        ? snapshot.belongingsItems.map((item) => String(item || "").trim()).filter(Boolean)
+        : [],
+      totalPlanned: Number(snapshot.totalPlanned) || sumPlanned(tasks),
+      totalActual: Number(snapshot.totalActual) || sumActualMinutes(tasks)
+    };
+  });
+  const referenceKey = normalizeTaskDateKey(referenceDateKey) || getTodayKeyJst();
+  const refDayNumber = getDateKeyDayNumber(referenceKey);
+  if (refDayNumber === null) return out;
+  const startDayNumber = refDayNumber - Math.max(0, 4);
+  const filtered = {};
+  Object.keys(out).forEach((dateKey) => {
+    const dayNumber = getDateKeyDayNumber(dateKey);
+    if (dayNumber === null) return;
+    if (dayNumber >= startDayNumber && dayNumber <= refDayNumber) {
+      filtered[dateKey] = out[dateKey];
+    }
+  });
+  return filtered;
+}
+
+function prunePastTasksByDate(raw, referenceDateKey = getTodayKeyJst(), keepDays = 5) {
+  return normalizePastTasksByDate(raw, referenceDateKey || getTodayKeyJst());
+}
+
+function buildPastTasksSnapshotForDate(dateKey = state.dateKey) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey) || getTodayKeyJst();
+  const tasks = Array.isArray(state.tasks)
+    ? state.tasks.map((task) => normalizeTask(task, normalizedDateKey))
+    : [];
+  const belongingsSummary = getBelongingsSummaryForDate(normalizedDateKey);
+  return {
+    dateKey: normalizedDateKey,
+    planTimes: { ...state.planTimes },
+    tasks,
+    belongingsItems: [...belongingsSummary.mergedItems],
+    totalPlanned: sumPlanned(tasks),
+    totalActual: sumActualMinutes(tasks)
+  };
+}
+
+function getSavedPastTasksForDate(dateKey) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey);
+  if (!normalizedDateKey) return null;
+  const snapshot = normalizePastTasksByDate(state.pastTasksByDate, normalizedDateKey)[normalizedDateKey];
+  if (!snapshot) return null;
+  return snapshot;
+}
+
 function normalizePreviousDayArchive(rawArchive) {
   if (!rawArchive || typeof rawArchive !== "object") return null;
   const dateKey = String(rawArchive.dateKey || "");
@@ -6571,9 +6648,9 @@ function getHomeActionAvailability() {
   if (isPreviousView || isPastView) {
     return {
       displayDateKey,
-      canOpenExecution: true,
+      canOpenExecution: false,
       canOpenHomework: false,
-      canOpenPlanning: true,
+      canOpenPlanning: false,
       canOpenCompletionHistory: true
     };
   }
@@ -6633,6 +6710,9 @@ function canExecuteCurrentHomeTasks() {
 function getHomeDisplayContext() {
   const archive = normalizePreviousDayArchive(state.previousDayArchive);
   const showPrevious = state.homeViewMode === "previous" && Boolean(archive);
+  const displayDateKey = getCurrentHomeDateKey();
+  const pastSnapshot = getSavedPastTasksForDate(displayDateKey);
+  const isPastSavedDate = Boolean(pastSnapshot) && getDateKeyDayNumber(displayDateKey) !== null && getDateKeyDayNumber(displayDateKey) < getDateKeyDayNumber(getTodayKeyJst());
   if (showPrevious && archive) {
     return {
       isPreviousView: true,
@@ -6643,7 +6723,16 @@ function getHomeDisplayContext() {
       runningTaskId: null
     };
   }
-  const displayDateKey = getCurrentHomeDateKey();
+  if (isPastSavedDate && pastSnapshot) {
+    return {
+      isPreviousView: true,
+      dateKey: displayDateKey,
+      tasks: pastSnapshot.tasks,
+      planTimes: pastSnapshot.planTimes,
+      belongingsItems: pastSnapshot.belongingsItems,
+      runningTaskId: null
+    };
+  }
   const belongingsSummary = getBelongingsSummaryForDate(displayDateKey);
   return {
     isPreviousView: false,
