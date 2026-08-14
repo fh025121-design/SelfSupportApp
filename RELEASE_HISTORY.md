@@ -1,6 +1,15 @@
 # Release History
 
 ## 2026-08-15 00:00 JST
+- v2.75
+	- 前日・過去日表示で `previousDayArchive` より `pastTasksByDate[displayDateKey]` を優先し、保存済みの過去タスクスナップショットを確実に表示するよう修正。
+	- `shiftHomeDisplayDate()` で `previousDayArchive` が `null` になっても、保存済みの `pastTasksByDate` がある過去日ではスナップショット表示を継続。
+	- 過去5日分保持・参照専用の `pastTasksByDate` 仕様と、当日からの保存開始・過去データ復元なしの挙動は維持。
+	- `revision` 同期、通知関連、音・バイブ・Exact Alarm などは変更なし。
+	- `index.html` の表示バージョンを `2.74` から `2.75` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.75` に更新。
+
+## 2026-08-15 00:00 JST
 - v2.74
 	- ユーザーごとの localStorage 分離を追加し、UID ごとの state を独立して保存・読み込みするよう修正。
 	- 別 UID 登録時の local seed で既存の異ユーザー state を使用しないよう防止。

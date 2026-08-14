@@ -6635,10 +6635,17 @@ function shiftHomeDisplayDate(deltaDays) {
 
 function getDisplayedHomeDateKey() {
   const archive = normalizePreviousDayArchive(state.previousDayArchive);
-  if (state.homeViewMode === "previous" && archive) {
-    return normalizeTaskDateKey(archive.dateKey);
+  const currentDateKey = normalizeTaskDateKey(getCurrentHomeDateKey());
+  const pastSnapshot = currentDateKey ? getSavedPastTasksForDate(currentDateKey) : null;
+  if (state.homeViewMode === "previous") {
+    if (pastSnapshot && currentDateKey && getDateKeyDayNumber(currentDateKey) !== null && getDateKeyDayNumber(currentDateKey) < getDateKeyDayNumber(getTodayKeyJst())) {
+      return currentDateKey;
+    }
+    if (archive) {
+      return normalizeTaskDateKey(archive.dateKey);
+    }
   }
-  return normalizeTaskDateKey(getCurrentHomeDateKey());
+  return currentDateKey || getTodayKeyJst();
 }
 
 function isTodayTaskFlowClosed(displayDateKey) {
@@ -6730,11 +6737,25 @@ function canExecuteCurrentHomeTasks() {
 }
 
 function getHomeDisplayContext() {
-  const archive = normalizePreviousDayArchive(state.previousDayArchive);
-  const showPrevious = state.homeViewMode === "previous" && Boolean(archive);
   const displayDateKey = getCurrentHomeDateKey();
   const pastSnapshot = getSavedPastTasksForDate(displayDateKey);
-  const isPastSavedDate = Boolean(pastSnapshot) && getDateKeyDayNumber(displayDateKey) !== null && getDateKeyDayNumber(displayDateKey) < getDateKeyDayNumber(getTodayKeyJst());
+  const archive = normalizePreviousDayArchive(state.previousDayArchive);
+  const showPrevious = state.homeViewMode === "previous";
+  const isPastSavedDate = Boolean(pastSnapshot)
+    && getDateKeyDayNumber(displayDateKey) !== null
+    && getDateKeyDayNumber(displayDateKey) < getDateKeyDayNumber(getTodayKeyJst());
+
+  if (showPrevious && isPastSavedDate && pastSnapshot) {
+    return {
+      isPreviousView: true,
+      dateKey: displayDateKey,
+      tasks: pastSnapshot.tasks,
+      planTimes: pastSnapshot.planTimes,
+      belongingsItems: pastSnapshot.belongingsItems,
+      runningTaskId: null
+    };
+  }
+
   if (showPrevious && archive) {
     return {
       isPreviousView: true,
@@ -6745,6 +6766,7 @@ function getHomeDisplayContext() {
       runningTaskId: null
     };
   }
+
   if (isPastSavedDate && pastSnapshot) {
     return {
       isPreviousView: true,
@@ -6755,6 +6777,7 @@ function getHomeDisplayContext() {
       runningTaskId: null
     };
   }
+
   const belongingsSummary = getBelongingsSummaryForDate(displayDateKey);
   return {
     isPreviousView: false,
