@@ -3687,23 +3687,58 @@ function renderSettings() {
   renderScreen(`
     <h2>設定</h2>
     <p class="helper">ログイン中: ${escapeHtml(currentUser?.email || "不明")}</p>
+
+    <div class="settings-menu-list">
+      <button id="openRecurringListBtn" class="settings-menu-row" type="button">
+        <span>定期予定一覧</span>
         <span aria-hidden="true">＞</span>
       </button>
       <button id="openSubmissionTemplateListBtn" class="settings-menu-row" type="button">
-              ${renderDepartureNotificationLeadOptions()}
-    <div class="btn-row compact-stack">
-              <option value="type5" ${devAlertTestConfig.toneType === "type5" ? "selected" : ""}>5: ブザー音</option>
-            </select>
-          </div>
-          <div>
-            <label for="devAlertDuration">テスト鳴動秒数（1〜10秒）</label>
-            <input id="devAlertDuration" type="range" min="1" max="10" step="1" value="${escapeHtml(String(devAlertTestConfig.durationSeconds))}" />
-            <p id="devAlertDurationLabel" class="helper">現在: ${escapeHtml(String(devAlertTestConfig.durationSeconds))}秒</p>
-          </div>
-        </div>
-      </div>
+        <span>提出確認テンプレート</span>
+        <span aria-hidden="true">＞</span>
+      </button>
+      <button id="logoutBtn" class="settings-menu-row" type="button">
+        <span>ログアウト</span>
+        <span aria-hidden="true">＞</span>
+      </button>
+      <button id="backToHomeFromSettingsBtn" class="settings-menu-row" type="button">
+        <span>ホームへ戻る</span>
+        <span aria-hidden="true">＞</span>
+      </button>
+    </div>
+
+    <div class="task-card">
+      <h3>出発前通知</h3>
+      <label for="departureNotificationLeadMinutes">通知の先行時間</label>
+      <select id="departureNotificationLeadMinutes">${renderDepartureNotificationLeadOptions()}</select>
+    </div>
+
+    <div class="task-card">
+      <h3>アラーム音設定</h3>
+      ${getNotificationSoundSettingRowsHtml()}
+    </div>
+
+    ${renderExactAlarmSettingsHtml()}
+
+    <div class="task-card">
+      <h3>アラートテスト</h3>
+      <label for="devAlertVolume">音量（1〜10）</label>
+      <input id="devAlertVolume" type="range" min="1" max="10" step="1" value="${escapeHtml(String(devAlertTestConfig.volume))}" />
+      <p id="devAlertVolumeLabel" class="helper">現在: ${escapeHtml(String(devAlertTestConfig.volume))}</p>
+      <label for="devAlertToneType">音の種類</label>
+      <select id="devAlertToneType">
+        <option value="type1" ${devAlertTestConfig.toneType === "type1" ? "selected" : ""}>1: 端末標準</option>
+        <option value="type2" ${devAlertTestConfig.toneType === "type2" ? "selected" : ""}>2: 低め</option>
+        <option value="type3" ${devAlertTestConfig.toneType === "type3" ? "selected" : ""}>3: しっかり</option>
+        <option value="type4" ${devAlertTestConfig.toneType === "type4" ? "selected" : ""}>4: 明るい</option>
+        <option value="type5" ${devAlertTestConfig.toneType === "type5" ? "selected" : ""}>5: ブザー音</option>
+      </select>
+      <label for="devAlertDuration">テスト鳴動秒数（1〜10秒）</label>
+      <input id="devAlertDuration" type="range" min="1" max="10" step="1" value="${escapeHtml(String(devAlertTestConfig.durationSeconds))}" />
+      <p id="devAlertDurationLabel" class="helper">現在: ${escapeHtml(String(devAlertTestConfig.durationSeconds))}秒</p>
       <button id="devAlertTestBtn" class="btn-sub" type="button">🔔 アラートテスト</button>
     </div>
+
     <div class="btn-row compact-stack">
       <div class="task-card">
         <h3>日付切替テスト（開発用確認）</h3>
@@ -3715,9 +3750,11 @@ function renderSettings() {
         </div>
       </div>
     </div>
+
     <div id="devAlertFeedbackArea" class="notice warn hidden">
       <p>予定時間を超えました。</p>
     </div>
+
     <div class="btn-row compact-stack">
       <div class="task-card">
         <h3>Androidローカル通知試験</h3>
@@ -3730,15 +3767,16 @@ function renderSettings() {
         <pre id="notificationChannelDebugMsg" class="helper" aria-live="polite">${escapeHtml(notificationChannelDebugMessage)}</pre>
       </div>
     </div>
+
     <div class="btn-row compact-stack">
       <button id="resetDailyStatusBtn" class="btn-danger" type="button">当日の状態をクリーンにする</button>
     </div>
   `);
 
-  document.getElementById("openRecurringListBtn").addEventListener("click", () => changePhase("recurringList"));
+  document.getElementById("openRecurringListBtn")?.addEventListener("click", () => changePhase("recurringList"));
   document.getElementById("openSubmissionTemplateListBtn")?.addEventListener("click", () => changePhase("submissionTemplateList"));
-  document.getElementById("logoutBtn").addEventListener("click", performLogout);
-  document.getElementById("backToHomeFromSettingsBtn").addEventListener("click", goHome);
+  document.getElementById("logoutBtn")?.addEventListener("click", performLogout);
+  document.getElementById("backToHomeFromSettingsBtn")?.addEventListener("click", goHome);
   document.getElementById("departureNotificationLeadMinutes")?.addEventListener("change", (e) => {
     const target = e.target;
     if (!(target instanceof HTMLSelectElement)) return;
@@ -3750,11 +3788,13 @@ function renderSettings() {
     saveState();
     refreshDepartureNotification();
   });
+
   const volumeInput = document.getElementById("devAlertVolume");
   const volumeLabel = document.getElementById("devAlertVolumeLabel");
   const toneTypeInput = document.getElementById("devAlertToneType");
   const durationInput = document.getElementById("devAlertDuration");
   const durationLabel = document.getElementById("devAlertDurationLabel");
+
   volumeInput?.addEventListener("input", () => {
     const n = Number(volumeInput.value);
     if (Number.isFinite(n)) {
@@ -3762,10 +3802,12 @@ function renderSettings() {
       if (volumeLabel) volumeLabel.textContent = `現在: ${devAlertTestConfig.volume}`;
     }
   });
+
   toneTypeInput?.addEventListener("change", () => {
     const value = String(toneTypeInput.value || "type1");
     devAlertTestConfig.toneType = ["type1", "type2", "type3", "type4", "type5"].includes(value) ? value : "type1";
   });
+
   durationInput?.addEventListener("input", () => {
     const n = Number(durationInput.value);
     if (Number.isFinite(n)) {
@@ -3773,14 +3815,15 @@ function renderSettings() {
       if (durationLabel) durationLabel.textContent = `現在: ${devAlertTestConfig.durationSeconds}秒`;
     }
   });
-  document.getElementById("devAlertTestBtn").addEventListener("click", runDevAlertTest);
+
+  document.getElementById("devAlertTestBtn")?.addEventListener("click", runDevAlertTest);
   document.getElementById("runDaySwitchTestBtn")?.addEventListener("click", runDaySwitchTest);
   document.getElementById("restoreDaySwitchTestBtn")?.addEventListener("click", restoreDaySwitchTest);
   document.getElementById("localNotificationTestBtn")?.addEventListener("click", runLocalNotificationTest);
   document.getElementById("dumpNotificationChannelsBtn")?.addEventListener("click", () => {
     void dumpRegisteredNotificationChannels();
   });
-  document.getElementById("resetDailyStatusBtn").addEventListener("click", resetDailyStatus);
+  document.getElementById("resetDailyStatusBtn")?.addEventListener("click", resetDailyStatus);
   document.getElementById("pickDepartureSoundBtn")?.addEventListener("click", () => {
     void pickNotificationSound(NOTIFICATION_SOUND_TARGET_DEPARTURE, "alarm");
   });

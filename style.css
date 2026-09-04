@@ -27,8 +27,8 @@ body {
 }
 
 .app-shell {
-  width: min(780px, 100%);
-  margin: 0 auto;
+  width: min(820px, calc(100% - 20px));
+  margin: 0;
   padding: 18px 14px 30px;
 }
 
@@ -93,15 +93,13 @@ h1 {
   display: grid;
   justify-items: end;
   gap: 2px;
-  position: relative;
-  top: -2cm;
+  position: static;
 }
 
 .sync-header-label {
   text-align: right;
   white-space: nowrap;
-  position: relative;
-  top: -2cm;
+  position: static;
 }
 
 .home-sync-footer {
@@ -235,6 +233,9 @@ h1 {
 
 .settings-menu-list {
   padding: 0;
+  display: grid;
+  gap: 8px;
+  width: min(100%, 620px);
 }
 
 .settings-menu-row {
@@ -248,6 +249,22 @@ h1 {
   font-weight: 800;
   color: var(--ink);
   cursor: pointer;
+}
+
+.sound-setting-row {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.sound-setting-row:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.task-card {
+  width: min(100%, 620px);
 }
 
 h2 {
