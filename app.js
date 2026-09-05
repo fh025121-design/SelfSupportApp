@@ -4720,8 +4720,15 @@ function getMedicineReminderEndAt(dateKey = state.dateKey) {
   return getDateTimeByDateKeyAndTime(dateKey, MEDICINE_REMINDER_LAST_HOUR, MEDICINE_REMINDER_LAST_MINUTE);
 }
 
+function getPendingMedicineTypes(reminder = state.medicineReminder) {
+  const pending = [];
+  if (!reminder?.blue?.done) pending.push(MEDICINE_TYPE_BLUE);
+  if (!reminder?.red?.done) pending.push(MEDICINE_TYPE_RED);
+  return pending;
+}
+
 function isMedicineDoneAll(reminder = state.medicineReminder) {
-  return Boolean(reminder?.blue?.done && reminder?.red?.done);
+  return getPendingMedicineTypes(reminder).length === 0;
 }
 
 function getIncompleteMedicineLabels(reminder = state.medicineReminder) {
@@ -4815,7 +4822,8 @@ async function refreshMedicineReminderNotifications() {
 
 function shouldShowMedicineReminderOverlayNow() {
   const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
-  if (isMedicineDoneAll(reminder)) return Boolean(reminder.forceOpen);
+  const pendingTypes = getPendingMedicineTypes(reminder);
+  if (pendingTypes.length === 0) return Boolean(reminder.forceOpen);
 
   const nowMs = getNowInJst().getTime();
   if (reminder.forceOpen) return true;
@@ -8745,9 +8753,13 @@ function applyMedicineDoseStatus(type, done) {
     });
   }
 
-  if (isMedicineDoneAll(reminder)) {
+  const pendingTypes = getPendingMedicineTypes(reminder);
+  if (pendingTypes.length === 0) {
     reminder.snoozeUntil = 0;
     reminder.forceOpen = true;
+  } else {
+    reminder.snoozeUntil = 0;
+    reminder.forceOpen = false;
   }
 
   state.medicineReminder = reminder;
