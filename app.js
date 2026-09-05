@@ -2876,6 +2876,7 @@ function renderHome() {
   }
   const homeContext = getHomeDisplayContext();
   const isPreviousView = homeContext.isPreviousView;
+  const displayedDateKey = normalizeTaskDateKey(getDisplayedHomeDateKey()) || getTodayKeyJst();
   const homeActionAvailability = getHomeActionAvailability();
   const canExecuteDisplayedTasks = homeActionAvailability.canOpenExecution;
   const canOpenHomework = homeActionAvailability.canOpenHomework;
@@ -2920,10 +2921,10 @@ function renderHome() {
     <div class="home-title-row">
       <h2 class="home-title-item">${escapeHtml(formatHomeDateHeading(homeContext.dateKey))}</h2>
     </div>
-    ${!isPreviousView ? `
+    ${(!isPreviousView || displayedDateKey !== getTodayKeyJst()) ? `
       <div class="home-task-more-row home-task-more-row-split">
-        <button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button>
-        <button id="openNextDayBtn" class="btn-quiet" type="button">次の日を見る ＞</button>
+        ${!isPreviousView ? '<button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button>' : ""}
+        <button id="openNextDayBtn" class="btn-quiet" type="button">${isPreviousView ? "翌日に行く ＞" : "次の日を見る ＞"}</button>
       </div>
     ` : ""}
     ${showRunningReminder ? `
@@ -3028,19 +3029,20 @@ function renderHome() {
     });
   }
 
+  document.getElementById("openNextDayBtn")?.addEventListener("click", async () => {
+    const currentHomeDateKey = getCurrentHomeDateKey();
+    if (currentHomeDateKey === getTodayKeyJst()) {
+      const nextDateKey = addDaysToDateKey(currentHomeDateKey, 1);
+      const ok = await showNextDayViewConfirmDialog(nextDateKey);
+      if (!ok) return;
+    }
+    shiftHomeDisplayDate(1);
+  });
+
   if (isPreviousView) {
   } else {
     document.getElementById("openPreviousDayBtn")?.addEventListener("click", () => {
       shiftHomeDisplayDate(-1);
-    });
-    document.getElementById("openNextDayBtn")?.addEventListener("click", async () => {
-      const currentHomeDateKey = getCurrentHomeDateKey();
-      if (currentHomeDateKey === getTodayKeyJst()) {
-        const nextDateKey = addDaysToDateKey(currentHomeDateKey, 1);
-        const ok = await showNextDayViewConfirmDialog(nextDateKey);
-        if (!ok) return;
-      }
-      shiftHomeDisplayDate(1);
     });
     if (canOpenHomework) {
       document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
