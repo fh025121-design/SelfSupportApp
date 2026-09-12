@@ -241,6 +241,29 @@ h1 {
   font-weight: 900;
 }
 
+.execution-status-bar-pulse {
+  animation: execution-status-bar-pulse 0.6s ease-in-out 3;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7), 0 0 18px rgba(255, 255, 255, 0.26);
+}
+
+@keyframes execution-status-bar-pulse {
+  0% {
+    filter: brightness(1);
+    transform: scale(1);
+    background: linear-gradient(90deg, rgba(231, 90, 60, 0.12), rgba(31, 111, 120, 0.08));
+  }
+  35% {
+    filter: brightness(1.18);
+    transform: scale(1.01);
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.18));
+  }
+  100% {
+    filter: brightness(1);
+    transform: scale(1);
+    background: linear-gradient(90deg, rgba(231, 90, 60, 0.12), rgba(31, 111, 120, 0.08));
+  }
+}
+
 .top-nav {
   display: flex;
   gap: 8px;

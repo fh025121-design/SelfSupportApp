@@ -8244,13 +8244,15 @@ function startAudioWarmupFromUserAction() {
   });
 }
 
-function triggerStartResumeShortVibration() {
-  try {
-    if (!("vibrate" in navigator)) return;
-    navigator.vibrate(35);
-  } catch (_) {
-    // Ignore unsupported or unavailable vibration environments.
-  }
+function triggerExecutionStatusBarPulse() {
+  const statusBar = document.querySelector(".execution-status-bar");
+  if (!statusBar) return;
+  statusBar.classList.remove("execution-status-bar-pulse");
+  void statusBar.offsetWidth;
+  statusBar.classList.add("execution-status-bar-pulse");
+  window.setTimeout(() => {
+    statusBar.classList.remove("execution-status-bar-pulse");
+  }, 1800);
 }
 
 function startTask(taskId) {
@@ -8295,12 +8297,15 @@ function startTask(taskId) {
     taskId: targetTask.id,
     taskNameSnapshot: targetTask.name
   });
-  triggerStartResumeShortVibration();
   saveState();
   void scheduleTaskFinishNotificationForRunningTask(targetTask, "task-finish");
   void maybePromptTaskFinishExactAlarmPermission();
-  if (state.phase !== "execution") return changePhase("execution");
+  if (state.phase !== "execution") {
+    changePhase("execution");
+    return;
+  }
   renderExecution();
+  triggerExecutionStatusBarPulse();
 }
 
 function getRunningTask() {
