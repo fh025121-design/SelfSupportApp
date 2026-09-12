@@ -1,6 +1,12 @@
 # Release History
 
 ## 2026-09-13 00:00 JST
+- v2.83
+	- 過去日表示中でも `openPreviousDayBtn` に click を登録し、`shiftHomeDisplayDate(-1)` で 1 日ずつ連続して戻れるよう修正。
+	- `index.html` の表示バージョンを `2.82` から `2.83` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.83` に更新。
+
+## 2026-09-13 00:00 JST
 - v2.82
 	- 過去日表示中でも `openPreviousDayBtn` の click を登録し、`shiftHomeDisplayDate(-1)` が実行されるよう修正。
 	- `index.html` の表示バージョンを `2.81` から `2.82` へ更新（+0.01）。

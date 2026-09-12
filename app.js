@@ -2923,7 +2923,7 @@ function renderHome() {
     </div>
     ${(!isPreviousView || displayedDateKey !== getTodayKeyJst()) ? `
       <div class="home-task-more-row home-task-more-row-split">
-        ${!isPreviousView ? '<button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button>' : ""}
+        <button id="openPreviousDayBtn" class="btn-quiet" type="button">＜ 前日を見る</button>
         <button id="openNextDayBtn" class="btn-quiet" type="button">${isPreviousView ? "翌日に行く ＞" : "次の日を見る ＞"}</button>
       </div>
     ` : ""}
