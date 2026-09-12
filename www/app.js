@@ -9702,13 +9702,27 @@ function getDateTimeToday(hhmm) {
   return dt;
 }
 
+function renderExecutionStatusBar() {
+  const runningTask = getRunningTask();
+  if (!runningTask || state.running.isPaused) return "";
+
+  const elapsedText = formatElapsedSmart(getRunningElapsedSeconds());
+  return `
+    <div class="execution-status-bar" role="status" aria-live="polite">
+      <span class="execution-status-badge">▶ 実行中</span>
+      <span class="execution-status-task">${escapeHtml(runningTask.name)}</span>
+      <span class="execution-status-time">${elapsedText}</span>
+    </div>
+  `;
+}
+
 function renderScreen(content) {
   if (state.phase !== "home") {
     if (todayLabel) todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
     if (syncHeaderLabel) syncHeaderLabel.textContent = "";
     if (headerHomeActions) headerHomeActions.innerHTML = "";
   }
-  app.innerHTML = `${renderTopNav()}${renderUiNotice()}${content}`;
+  app.innerHTML = `${renderExecutionStatusBar()}${renderTopNav()}${renderUiNotice()}${content}`;
   bindTopNav();
   renderReturnCheckReminderOverlay();
   renderSubmissionChecklistOverlay();
