@@ -862,9 +862,8 @@ button:disabled {
 
 .home-title-row {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  gap: 10px;
+  gap: 6px;
   margin-bottom: 3px;
 }
 
@@ -873,6 +872,14 @@ button:disabled {
   font-size: 1.35rem;
   line-height: 1.35;
   font-weight: 800;
+}
+
+.home-title-relative {
+  color: var(--sub);
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .home-title-link {

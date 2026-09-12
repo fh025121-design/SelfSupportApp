@@ -2917,10 +2917,12 @@ function renderHome() {
   const displayTasks = homeContext.tasks;
   const showRunningReminder = !isPreviousView && isRunningTaskReminderVisible();
   const runningReminderLabel = showRunningReminder ? buildRunningReminderTaskLabel(runningTask) : "";
+  const homeDateRelativeLabel = getHomeDateRelativeLabel(homeContext.dateKey);
 
   renderScreen(`
     <div class="home-title-row">
       <h2 class="home-title-item">${escapeHtml(formatHomeDateHeading(homeContext.dateKey))}</h2>
+      ${homeDateRelativeLabel ? `<span class="home-title-relative">${escapeHtml(homeDateRelativeLabel)}</span>` : ""}
     </div>
     ${(!isPreviousView || displayedDateKey !== getTodayKeyJst()) ? `
       <div class="home-task-more-row home-task-more-row-split">
@@ -6558,6 +6560,21 @@ function formatHomeDateHeading(dateKey) {
   return `${Number(m[2])}月${Number(m[3])}日(${weekdayLabel})`;
 }
 
+function getHomeDateRelativeLabel(dateKey) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey);
+  const todayKey = getTodayKeyJst();
+  const todayDayNumber = getDateKeyDayNumber(todayKey);
+  const displayDayNumber = getDateKeyDayNumber(normalizedDateKey);
+  if (!normalizedDateKey || !Number.isFinite(todayDayNumber) || !Number.isFinite(displayDayNumber)) {
+    return "";
+  }
+  const diffDays = displayDayNumber - todayDayNumber;
+  if (diffDays === 0) return "今日";
+  if (diffDays === -1) return "昨日";
+  if (diffDays === 1) return "翌日";
+  return "";
+}
+
 function normalizePastTasksByDate(raw, referenceDateKey = getTodayKeyJst()) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out = {};
@@ -6694,18 +6711,21 @@ function shiftHomeDisplayDate(deltaDays) {
   const nextDateKey = addDaysToDateKey(currentDateKey, deltaDays);
   if (!normalizeTaskDateKey(nextDateKey)) return;
 
-  const todayKey = getTodayKeyJst();
-  const currentDayNumber = getDateKeyDayNumber(currentDateKey);
-  const nextDayNumber = getDateKeyDayNumber(nextDateKey);
-  const todayDayNumber = getDateKeyDayNumber(todayKey);
-  const isAllowedTowardToday = deltaDays > 0
-    && Number.isFinite(currentDayNumber)
-    && Number.isFinite(todayDayNumber)
-    && Number.isFinite(nextDayNumber)
-    && currentDayNumber < todayDayNumber
-    && nextDayNumber <= todayDayNumber;
+  if (deltaDays < 0) {
+    const todayKey = getTodayKeyJst();
+    const currentDayNumber = getDateKeyDayNumber(currentDateKey);
+    const nextDayNumber = getDateKeyDayNumber(nextDateKey);
+    const todayDayNumber = getDateKeyDayNumber(todayKey);
+    if (Number.isFinite(nextDayNumber) && Number.isFinite(todayDayNumber) && Number.isFinite(currentDayNumber)) {
+      const isReturningTowardToday = nextDayNumber <= currentDayNumber && nextDayNumber >= todayDayNumber;
+      if (!isReturningTowardToday && !isWithinPastNavigationWindow(nextDateKey)) {
+        return;
+      }
+    } else if (!isWithinPastNavigationWindow(nextDateKey)) {
+      return;
+    }
+  }
 
-  if (!isAllowedTowardToday && !isWithinPastNavigationWindow(nextDateKey)) return;
   state.homeDisplayDateKey = nextDateKey;
   state.homeViewMode = "current";
   state.previousDayArchive = null;

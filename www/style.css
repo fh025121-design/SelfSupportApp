@@ -875,6 +875,14 @@ button:disabled {
   font-weight: 800;
 }
 
+.home-title-relative {
+  color: var(--sub);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .home-title-link {
   color: #1f2430;
   font-size: inherit;
