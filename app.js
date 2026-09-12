@@ -3039,11 +3039,11 @@ function renderHome() {
     shiftHomeDisplayDate(1);
   });
 
-  if (isPreviousView) {
-  } else {
-    document.getElementById("openPreviousDayBtn")?.addEventListener("click", () => {
-      shiftHomeDisplayDate(-1);
-    });
+  document.getElementById("openPreviousDayBtn")?.addEventListener("click", () => {
+    shiftHomeDisplayDate(-1);
+  });
+
+  if (!isPreviousView) {
     if (canOpenHomework) {
       document.getElementById("openHomeworkBtn")?.addEventListener("click", () => changePhase("homeworkList", false));
     }
