@@ -8244,6 +8244,15 @@ function startAudioWarmupFromUserAction() {
   });
 }
 
+function triggerStartResumeShortVibration() {
+  try {
+    if (!("vibrate" in navigator)) return;
+    navigator.vibrate(35);
+  } catch (_) {
+    // Ignore unsupported or unavailable vibration environments.
+  }
+}
+
 function startTask(taskId) {
   if (!canExecuteCurrentHomeTasks()) return;
   const task = findTask(taskId);
@@ -8286,6 +8295,7 @@ function startTask(taskId) {
     taskId: targetTask.id,
     taskNameSnapshot: targetTask.name
   });
+  triggerStartResumeShortVibration();
   saveState();
   void scheduleTaskFinishNotificationForRunningTask(targetTask, "task-finish");
   void maybePromptTaskFinishExactAlarmPermission();
