@@ -208,14 +208,14 @@ h1 {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 28px;
-  padding: 6px 12px;
+  min-height: 112px;
+  padding: 18px 16px;
   margin: 0 0 10px;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(231, 90, 60, 0.12), rgba(31, 111, 120, 0.08));
   border: 1px solid rgba(231, 90, 60, 0.22);
   color: var(--ink);
-  font-size: 0.84rem;
+  font-size: clamp(1.05rem, 2vw, 1.5rem);
   font-weight: 800;
   line-height: 1.3;
   white-space: nowrap;
@@ -238,6 +238,7 @@ h1 {
   margin-left: auto;
   flex-shrink: 0;
   color: var(--sub);
+  font-weight: 900;
 }
 
 .top-nav {

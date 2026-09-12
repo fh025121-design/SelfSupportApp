@@ -7862,6 +7862,8 @@ function updateRunningElapsedLabels(seconds) {
   if (mainLabel) mainLabel.textContent = text;
   const supportLabel = document.getElementById("startSupportElapsedLabel");
   if (supportLabel) supportLabel.textContent = text;
+  const statusTime = document.getElementById("executionStatusTime");
+  if (statusTime) statusTime.textContent = text;
 }
 
 function renderExecutionCompleteControls() {
@@ -9711,7 +9713,7 @@ function renderExecutionStatusBar() {
     <div class="execution-status-bar" role="status" aria-live="polite">
       <span class="execution-status-badge">▶ 実行中</span>
       <span class="execution-status-task">${escapeHtml(runningTask.name)}</span>
-      <span class="execution-status-time">${elapsedText}</span>
+      <span id="executionStatusTime" class="execution-status-time">${elapsedText}</span>
     </div>
   `;
 }
