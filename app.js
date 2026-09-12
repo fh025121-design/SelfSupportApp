@@ -166,6 +166,7 @@ const syncHeaderLabel = document.getElementById("syncHeaderLabel");
 const headerHomeActions = document.getElementById("headerHomeActions");
 
 let tickTimer = null;
+let executionStatusBarTimer = null;
 let phaseRefreshTimer = null;
 let notificationAudioCtx = null;
 let secondAlertTimeoutId = null;
@@ -9718,6 +9719,33 @@ function renderExecutionStatusBar() {
   `;
 }
 
+function clearExecutionStatusBarTimer() {
+  if (executionStatusBarTimer) {
+    clearInterval(executionStatusBarTimer);
+    executionStatusBarTimer = null;
+  }
+}
+
+function ensureExecutionStatusBarTimer() {
+  const runningTask = getRunningTask();
+  if (!runningTask || state.running.isPaused) {
+    clearExecutionStatusBarTimer();
+    return;
+  }
+  if (executionStatusBarTimer) return;
+
+  executionStatusBarTimer = setInterval(() => {
+    const liveTask = getRunningTask();
+    if (!liveTask || state.running.isPaused) {
+      clearExecutionStatusBarTimer();
+      return;
+    }
+    const statusTime = document.getElementById("executionStatusTime");
+    if (!statusTime) return;
+    statusTime.textContent = formatElapsedSmart(getRunningElapsedSeconds());
+  }, 1000);
+}
+
 function renderScreen(content) {
   if (state.phase !== "home") {
     if (todayLabel) todayLabel.textContent = `本日：${getTodayDisplayJst()}`;
@@ -9725,6 +9753,7 @@ function renderScreen(content) {
     if (headerHomeActions) headerHomeActions.innerHTML = "";
   }
   app.innerHTML = `${renderExecutionStatusBar()}${renderTopNav()}${renderUiNotice()}${content}`;
+  ensureExecutionStatusBarTimer();
   bindTopNav();
   renderReturnCheckReminderOverlay();
   renderSubmissionChecklistOverlay();
