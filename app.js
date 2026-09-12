@@ -6692,7 +6692,20 @@ function isWithinPastNavigationWindow(dateKey) {
 function shiftHomeDisplayDate(deltaDays) {
   const currentDateKey = getCurrentHomeDateKey();
   const nextDateKey = addDaysToDateKey(currentDateKey, deltaDays);
-  if (!normalizeTaskDateKey(nextDateKey) || !isWithinPastNavigationWindow(nextDateKey)) return;
+  if (!normalizeTaskDateKey(nextDateKey)) return;
+
+  const todayKey = getTodayKeyJst();
+  const currentDayNumber = getDateKeyDayNumber(currentDateKey);
+  const nextDayNumber = getDateKeyDayNumber(nextDateKey);
+  const todayDayNumber = getDateKeyDayNumber(todayKey);
+  const isAllowedTowardToday = deltaDays > 0
+    && Number.isFinite(currentDayNumber)
+    && Number.isFinite(todayDayNumber)
+    && Number.isFinite(nextDayNumber)
+    && currentDayNumber < todayDayNumber
+    && nextDayNumber <= todayDayNumber;
+
+  if (!isAllowedTowardToday && !isWithinPastNavigationWindow(nextDateKey)) return;
   state.homeDisplayDateKey = nextDateKey;
   state.homeViewMode = "current";
   state.previousDayArchive = null;
