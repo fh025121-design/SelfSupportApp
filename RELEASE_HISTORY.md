@@ -1,5 +1,12 @@
 # Release History
 
+## 2026-09-13 00:00 JST
+- v2.81
+	- 過去5日までの日付移動だけを最小修正し、保存データの有無に依存せず 1 日ずつ移動できるよう調整。
+	- `shiftHomeDisplayDate()` と `getDisplayedHomeDateKey()` の範囲判定を修正し、過去5日を超える移動と保存データ依存を防止。
+	- `index.html` の表示バージョンを `2.80` から `2.81` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.81` に更新。
+
 ## 2026-09-06 00:00 JST
 - v2.80
 	- ホームで前日表示中に、`homeViewMode === "previous"` の判定で「翌日に行く」ボタンが消えてしまう不具合を修正。

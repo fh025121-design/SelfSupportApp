@@ -6676,9 +6676,22 @@ function getCurrentHomeDateKey() {
   return normalizeTaskDateKey(state.homeDisplayDateKey) || normalizeTaskDateKey(state.dateKey) || getTodayKeyJst();
 }
 
+function isWithinPastNavigationWindow(dateKey) {
+  const normalizedDateKey = normalizeTaskDateKey(dateKey);
+  const todayKey = getTodayKeyJst();
+  const todayDayNumber = getDateKeyDayNumber(todayKey);
+  const targetDayNumber = getDateKeyDayNumber(normalizedDateKey);
+  if (!normalizedDateKey || !Number.isFinite(todayDayNumber) || !Number.isFinite(targetDayNumber)) {
+    return false;
+  }
+  const earliestAllowedDayNumber = todayDayNumber - 5;
+  return targetDayNumber <= todayDayNumber && targetDayNumber >= earliestAllowedDayNumber;
+}
+
 function shiftHomeDisplayDate(deltaDays) {
-  const nextDateKey = addDaysToDateKey(getCurrentHomeDateKey(), deltaDays);
-  if (!normalizeTaskDateKey(nextDateKey)) return;
+  const currentDateKey = getCurrentHomeDateKey();
+  const nextDateKey = addDaysToDateKey(currentDateKey, deltaDays);
+  if (!normalizeTaskDateKey(nextDateKey) || !isWithinPastNavigationWindow(nextDateKey)) return;
   state.homeDisplayDateKey = nextDateKey;
   state.homeViewMode = "current";
   state.previousDayArchive = null;
@@ -6691,14 +6704,17 @@ function getDisplayedHomeDateKey() {
   const currentDateKey = normalizeTaskDateKey(getCurrentHomeDateKey());
   const pastSnapshot = currentDateKey ? getSavedPastTasksForDate(currentDateKey) : null;
   if (state.homeViewMode === "previous") {
-    if (pastSnapshot && currentDateKey && getDateKeyDayNumber(currentDateKey) !== null && getDateKeyDayNumber(currentDateKey) < getDateKeyDayNumber(getTodayKeyJst())) {
+    if (currentDateKey && isWithinPastNavigationWindow(currentDateKey)) {
       return currentDateKey;
     }
     if (archive) {
       return normalizeTaskDateKey(archive.dateKey);
     }
   }
-  return currentDateKey || getTodayKeyJst();
+  if (currentDateKey && isWithinPastNavigationWindow(currentDateKey)) {
+    return currentDateKey;
+  }
+  return getTodayKeyJst();
 }
 
 function isTodayTaskFlowClosed(displayDateKey) {
@@ -6794,11 +6810,14 @@ function getHomeDisplayContext() {
   const pastSnapshot = getSavedPastTasksForDate(displayDateKey);
   const archive = normalizePreviousDayArchive(state.previousDayArchive);
   const showPrevious = state.homeViewMode === "previous";
-  const isPastSavedDate = Boolean(pastSnapshot)
-    && getDateKeyDayNumber(displayDateKey) !== null
-    && getDateKeyDayNumber(displayDateKey) < getDateKeyDayNumber(getTodayKeyJst());
+  const todayDayNumber = getDateKeyDayNumber(getTodayKeyJst());
+  const displayDayNumber = getDateKeyDayNumber(displayDateKey);
+  const isPastDateInWindow = Number.isFinite(displayDayNumber)
+    && Number.isFinite(todayDayNumber)
+    && displayDayNumber <= todayDayNumber
+    && displayDayNumber >= todayDayNumber - 5;
 
-  if (showPrevious && isPastSavedDate && pastSnapshot) {
+  if (showPrevious && pastSnapshot && isPastDateInWindow) {
     return {
       isPreviousView: true,
       dateKey: displayDateKey,
@@ -6820,13 +6839,13 @@ function getHomeDisplayContext() {
     };
   }
 
-  if (isPastSavedDate && pastSnapshot) {
+  if (isPastDateInWindow && displayDateKey !== getTodayKeyJst()) {
     return {
       isPreviousView: true,
       dateKey: displayDateKey,
-      tasks: pastSnapshot.tasks,
-      planTimes: pastSnapshot.planTimes,
-      belongingsItems: pastSnapshot.belongingsItems,
+      tasks: getTasksForDate(displayDateKey),
+      planTimes: state.planTimes,
+      belongingsItems: getBelongingsSummaryForDate(displayDateKey).mergedItems,
       runningTaskId: null
     };
   }
