@@ -1,6 +1,12 @@
 # Release History
 
 ## 2026-09-13 00:00 JST
+- v2.84
+	- タスク実行画面で、既存の `getRunningElapsedSeconds()` を使い、実行中の経過時間を 1 秒ごとに表示するよう調整。
+	- `index.html` の表示バージョンを `2.83` から `2.84` へ更新（+0.01）。
+	- `index.html` の `style.css` / `app.js` 読み込みクエリを `v=2.84` に更新。
+
+## 2026-09-13 00:00 JST
 - v2.83
 	- 過去日表示中でも `openPreviousDayBtn` に click を登録し、`shiftHomeDisplayDate(-1)` で 1 日ずつ連続して戻れるよう修正。
 	- `index.html` の表示バージョンを `2.82` から `2.83` へ更新（+0.01）。
