@@ -3052,6 +3052,7 @@ function renderHome() {
     }
     document.getElementById("openMedicineReminderBtn")?.addEventListener("click", () => openMedicineReminderOverlay(true));
     bindTextAction("openMedicineReminderCard", () => openMedicineReminderOverlay(true));
+    document.getElementById("continueDepartureCheckBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openDepartureCheckNowBtn")?.addEventListener("click", () => changePhase("departureCheck", false));
     document.getElementById("openReturnCheckNowBtn")?.addEventListener("click", () => changePhase("returnCheck", false));
     document.getElementById("openClubAfterCheckBtn")?.addEventListener("click", () => changePhase("clubAfterCheck", false));
@@ -9732,6 +9733,51 @@ function getDepartureReminderForHome(info = null) {
   return { minutesLeft: departureInfo.minutesUntil };
 }
 
+function getDepartureCheckUnfinishedSummary() {
+  normalizeDepartureCheckQueue();
+  const departureDisplayDateKey = normalizeTaskDateKey(getCurrentHomeDateKey()) || getTodayKeyJst();
+  const belongingsSummary = getBelongingsSummaryForDate(departureDisplayDateKey);
+  const remainingFixed = Array.isArray(state.departureCheck.remainingIndices)
+    ? state.departureCheck.remainingIndices
+    : [];
+  const checkedMap = state.departureCheck.belongingChecked || {};
+  const remainingBelongings = Array.isArray(belongingsSummary.mergedItems)
+    ? belongingsSummary.mergedItems.filter((name) => !Boolean(checkedMap[name]))
+    : [];
+  const summaryItems = [
+    ...remainingFixed.map((idx) => DEPARTURE_CHECK_ITEMS[idx]).filter(Boolean),
+    ...remainingBelongings
+  ];
+  if (summaryItems.length === 0) return null;
+  const firstItem = summaryItems[0];
+  const extraCount = Math.max(0, summaryItems.length - 1);
+  return { total: summaryItems.length, firstItem, extraCount };
+}
+
+function shouldShowDepartureCheckUnfinishedCard() {
+  if (state.phase !== "home") return false;
+  const departureInfo = getDepartureTimingInfo();
+  if (!departureInfo || departureInfo.msUntil > 20 * 60000) return false;
+  const summary = getDepartureCheckUnfinishedSummary();
+  return Boolean(summary && summary.total > 0);
+}
+
+function renderDepartureCheckUnfinishedCard() {
+  if (!shouldShowDepartureCheckUnfinishedCard()) return "";
+  const summary = getDepartureCheckUnfinishedSummary();
+  if (!summary || summary.total <= 0) return "";
+  const extraText = summary.extraCount > 0 ? `　ほか${summary.extraCount}件` : "";
+  return `
+    <div class="notice warn departure-check-unfinished-card">
+      <p>⚠ 出発前チェック　未完了</p>
+      <p>${escapeHtml(summary.firstItem)}${escapeHtml(extraText)}</p>
+      <div class="btn-row compact-stack">
+        <button id="continueDepartureCheckBtn" class="btn-sub" type="button">チェックを続ける</button>
+      </div>
+    </div>
+  `;
+}
+
 function shouldAutoPromptDepartureCheck() {
   const info = getDepartureTimingInfo();
   if (!info) return false;
@@ -9802,7 +9848,7 @@ function renderScreen(content) {
     if (syncHeaderLabel) syncHeaderLabel.textContent = "";
     if (headerHomeActions) headerHomeActions.innerHTML = "";
   }
-  app.innerHTML = `${renderExecutionStatusBar()}${renderTopNav()}${renderUiNotice()}${content}`;
+  app.innerHTML = `${renderDepartureCheckUnfinishedCard()}${renderExecutionStatusBar()}${renderTopNav()}${renderUiNotice()}${content}`;
   ensureExecutionStatusBarTimer();
   bindTopNav();
   renderReturnCheckReminderOverlay();
