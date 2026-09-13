@@ -1474,6 +1474,28 @@ button:disabled {
   color: var(--warn);
 }
 
+.departure-check-unfinished-card {
+  border-left: 6px solid #d9480f;
+  padding-left: 14px;
+}
+
+.departure-check-unfinished-card > p:first-child {
+  color: #b42318;
+  font-weight: 900;
+}
+
+.departure-check-unfinished-card .btn-sub {
+  background: #f8b26a;
+  color: #5b2200;
+  border: 1px solid #d9480f;
+}
+
+.departure-check-unfinished-card .btn-sub:hover,
+.departure-check-unfinished-card .btn-sub:focus-visible {
+  background: #f29b4a;
+  color: #4d1b00;
+}
+
 .return-check-notice {
   background: linear-gradient(135deg, #fff6bf 0%, #ffe48a 100%);
   color: #8b1a1a;

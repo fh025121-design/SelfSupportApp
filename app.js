@@ -6738,6 +6738,13 @@ function getDisplayedHomeDateKey() {
   const archive = normalizePreviousDayArchive(state.previousDayArchive);
   const currentDateKey = normalizeTaskDateKey(getCurrentHomeDateKey());
   const pastSnapshot = currentDateKey ? getSavedPastTasksForDate(currentDateKey) : null;
+  const todayKey = getTodayKeyJst();
+  const currentDayNumber = currentDateKey ? getDateKeyDayNumber(currentDateKey) : null;
+  const todayDayNumber = getDateKeyDayNumber(todayKey);
+  const isFutureDate = Number.isFinite(currentDayNumber)
+    && Number.isFinite(todayDayNumber)
+    && currentDayNumber > todayDayNumber;
+
   if (state.homeViewMode === "previous") {
     if (currentDateKey && isWithinPastNavigationWindow(currentDateKey)) {
       return currentDateKey;
@@ -6747,6 +6754,9 @@ function getDisplayedHomeDateKey() {
     }
   }
   if (currentDateKey && isWithinPastNavigationWindow(currentDateKey)) {
+    return currentDateKey;
+  }
+  if (isFutureDate) {
     return currentDateKey;
   }
   return getTodayKeyJst();
