@@ -218,7 +218,14 @@ h1 {
   font-size: clamp(1.05rem, 2vw, 1.5rem);
   font-weight: 800;
   line-height: 1.3;
-  white-space: nowrap;
+  overflow: hidden;
+}
+
+.execution-status-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
@@ -228,6 +235,7 @@ h1 {
 }
 
 .execution-status-task {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -238,7 +246,10 @@ h1 {
   margin-left: auto;
   flex-shrink: 0;
   color: var(--sub);
+  font-size: clamp(1.2rem, 2.5vw, 2rem);
   font-weight: 900;
+  line-height: 1;
+  align-self: center;
 }
 
 .execution-status-bar-pulse {
@@ -862,9 +873,8 @@ button:disabled {
 
 .home-title-row {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  gap: 10px;
+  gap: 6px;
   margin-bottom: 3px;
 }
 
@@ -877,9 +887,9 @@ button:disabled {
 
 .home-title-relative {
   color: var(--sub);
-  font-size: 0.85rem;
-  font-weight: 700;
-  line-height: 1.2;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.35;
   white-space: nowrap;
 }
 

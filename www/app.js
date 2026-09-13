@@ -9760,8 +9760,10 @@ function renderExecutionStatusBar() {
   const elapsedText = formatElapsedSmart(getRunningElapsedSeconds());
   return `
     <div class="execution-status-bar" role="status" aria-live="polite">
-      <span class="execution-status-badge">▶ 実行中</span>
-      <span class="execution-status-task">${escapeHtml(runningTask.name)}</span>
+      <div class="execution-status-main">
+        <span class="execution-status-badge">▶ 実行中</span>
+        <span class="execution-status-task">${escapeHtml(runningTask.name)}</span>
+      </div>
       <span id="executionStatusTime" class="execution-status-time">${elapsedText}</span>
     </div>
   `;
