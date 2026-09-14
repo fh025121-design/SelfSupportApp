@@ -2012,9 +2012,46 @@ function requestPassiveRender() {
   render();
 }
 
+function hasActiveLocalRunningState(targetState = state) {
+  const running = targetState?.running || {};
+  const taskId = String(running.taskId || "").trim();
+  if (!taskId || !running.startedAt) return false;
+
+  const task = Array.isArray(targetState?.tasks)
+    ? targetState.tasks.find((item) => item && item.id === taskId)
+    : null;
+  if (!task) return false;
+  if (["done", "deferred", "discarded"].includes(task.status)) return false;
+  if (running.isPaused) return false;
+  return true;
+}
+
 function applyRemoteStateKeepingCurrentPhase(rawState) {
   const currentPhase = state.phase;
   const nextState = normalizeLoadedState(rawState);
+  const incomingRevision = getStateRevision(rawState);
+  const localRevision = getStateRevision(state);
+
+  if (incomingRevision <= localRevision && hasActiveLocalRunningState(state)) {
+    nextState.running = {
+      ...createRunningState(),
+      ...nextState.running,
+      ...state.running,
+      taskId: String(state.running?.taskId || "").trim() || nextState.running?.taskId || "",
+      startedAt: state.running?.startedAt || nextState.running?.startedAt || null,
+      baseSeconds: Number.isFinite(Number(state.running?.baseSeconds)) ? Number(state.running.baseSeconds) : (Number(nextState.running?.baseSeconds) || 0),
+      isPaused: Boolean(state.running?.isPaused),
+      confirmingComplete: Boolean(state.running?.confirmingComplete),
+      awaitingStartSupportConfirmation: Boolean(state.running?.awaitingStartSupportConfirmation),
+      startSupportId: String(state.running?.startSupportId || ""),
+      alertAtSeconds: Number.isFinite(Number(state.running?.alertAtSeconds)) ? Number(state.running.alertAtSeconds) : (Number(nextState.running?.alertAtSeconds) || null),
+      taskFinishNotifyAtMs: Number.isFinite(Number(state.running?.taskFinishNotifyAtMs)) ? Number(state.running.taskFinishNotifyAtMs) : (Number(nextState.running?.taskFinishNotifyAtMs) || null),
+      nextAlertKind: state.running?.nextAlertKind === "task-recheck" ? "task-recheck" : "task-finish",
+      alerting: Boolean(state.running?.alerting),
+      lastAlertTarget: Number.isFinite(Number(state.running?.lastAlertTarget)) ? Number(state.running.lastAlertTarget) : null
+    };
+  }
+
   isApplyingRemoteState = true;
   replaceState(nextState);
   state.phase = currentPhase;
