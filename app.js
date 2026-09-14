@@ -6014,11 +6014,23 @@ function renderSubmissionChecklistOverlay() {
 
   document.getElementById("completeSubmissionChecklistBtn")?.addEventListener("click", () => {
     if (context.targetType === "homework") {
-      if (!target.done) {
-        target.completedAtMs = Date.now();
-      }
+      state.homeworkForm = {
+        mode: "edit",
+        targetId: target.id,
+        name: target.name,
+        deadlineDate: target.deadlineDate,
+        content: target.content,
+        homeworkWorkType: normalizeHomeworkWorkType(target.homeworkWorkType),
+        googleSync: Boolean(target.googleSync),
+        done: true,
+        submissionTemplateId: normalizeSubmissionTemplateId(target.submissionTemplateId)
+      };
+      target.completedAtMs = Date.now();
       target.done = true;
+      target.submissionChecklistCompleted = true;
       recordHomeworkCompletionHistorySnapshot(target, target.completedAtMs || Date.now());
+      void saveHomeworkItem();
+      return;
     }
     target.submissionChecklistCompleted = true;
     saveState();
@@ -10040,8 +10052,16 @@ function isRecurringPlanForWeekday(plan, weekdayKey) {
 }
 
 function getSortedPendingHomeworkTasks() {
+  const todayKey = getTodayKeyJst();
   return state.homeworkTasks
-    .filter((item) => !item.done)
+    .filter((item) => {
+      if (!item) return false;
+      if (!item.done) return true;
+      const completedAtMs = Number(item.completedAtMs) || 0;
+      const completedDateKey = normalizeTaskDateKey(item.completedDateKey)
+        || (completedAtMs > 0 ? getHistoryDateKeyFromTimestampMs(completedAtMs) : "");
+      return completedDateKey === todayKey;
+    })
     .slice()
     .sort((a, b) => {
       if (a.deadlineDate === b.deadlineDate) return a.name.localeCompare(b.name, "ja");
@@ -10050,7 +10070,7 @@ function getSortedPendingHomeworkTasks() {
 }
 
 function getHomeworkPendingCount() {
-  return state.homeworkTasks.filter((item) => !item.done).length;
+  return getSortedPendingHomeworkTasks().length;
 }
 
 function getDateKeyDayNumber(dateKey) {
