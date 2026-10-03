@@ -582,6 +582,7 @@ function createReturnCheckState() {
       trouble: "",
       reply: "",
       delayedContact: "",
+      delayReason: "",
       clubActivityDay: ""
     },
     reminderPromptTriggered: false,
@@ -2897,6 +2898,14 @@ function renderHome() {
   const homeworkLabel = homeworkPending > 0 ? `宿題・課題（${homeworkPending}件）` : "宿題・課題";
   const homeworkSummaryHtml = renderHomeHomeworkSummary(pendingHomework);
   const medicineSummaryHtml = isPreviousView ? "" : renderHomeMedicineSummary();
+  const shouldShowMedicineSummaryOnTop = !isPreviousView && (() => {
+    const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
+    if (isMedicineDoneAll(reminder)) return false;
+    const now = getNowInJst();
+    return now.getHours() >= 18;
+  })();
+  const medicineSummaryTopHtml = shouldShowMedicineSummaryOnTop ? medicineSummaryHtml : "";
+  const medicineSummaryBottomHtml = shouldShowMedicineSummaryOnTop ? "" : medicineSummaryHtml;
   const syncText = getSyncStatusText();
   if (todayLabel) {
     todayLabel.textContent = "";
@@ -2943,6 +2952,7 @@ function renderHome() {
     ${showDepartureCheckHomeButton ? `<div class="notice warn"><p>🟡 出発前チェック${departureReminder ? `（あと${departureReminder.minutesLeft}分）` : ""}</p><div class="btn-row compact-stack"><button id="openDepartureCheckNowBtn" class="btn-sub" type="button">今チェックする</button></div></div>` : ""}
     ${showReturnCheckHomeButton ? `<div class="notice warn return-check-notice"><p>帰宅後チェックが未完了です。</p><div class="btn-row compact-stack"><button id="openReturnCheckNowBtn" class="btn-sub" type="button">帰宅後チェックをする</button></div></div>` : ""}
     ${showClubAfterCheckHomeButton ? `<div class="notice warn return-check-notice"><p>⚾ 部活後チェック（未完了）</p><div class="btn-row compact-stack"><button id="openClubAfterCheckBtn" class="btn-sub" type="button">部活後チェックをする</button></div></div>` : ""}
+    ${medicineSummaryTopHtml}
     <div class="home-overview">
       <div class="home-overview-left">
         <p>起床 ${formatTimeForDisplay(homeContext.planTimes.wakeUp)}</p>
@@ -2972,7 +2982,7 @@ function renderHome() {
     </div>
 
     ${homeworkSummaryHtml}
-    ${medicineSummaryHtml}
+    ${medicineSummaryBottomHtml}
 
     <p class="home-sync-footer">同期：${escapeHtml(syncText || "-")}</p>
     <div class="home-logout-row">
@@ -4664,6 +4674,28 @@ async function cancelLocalNotificationsByIds(notificationIds) {
   }
 }
 
+async function cancelMedicineReminderNotificationsFromPending() {
+  const bridge = getCapacitorBridge();
+  const plugin = getLocalNotificationsPlugin();
+  if (!bridge?.isNativePlatform?.() || !plugin?.getPending || !plugin?.cancel) return false;
+
+  try {
+    const pending = await plugin.getPending();
+    const pendingNotifications = Array.isArray(pending?.notifications) ? pending.notifications : [];
+    const medicineNotificationIds = pendingNotifications
+      .map((notification) => Number(notification?.id))
+      .filter((id) => Number.isInteger(id)
+        && id >= MEDICINE_REMINDER_NOTIFICATION_ID_BASE
+        && id < (MEDICINE_REMINDER_NOTIFICATION_ID_BASE + MEDICINE_REMINDER_NOTIFICATION_ID_RANGE));
+
+    if (medicineNotificationIds.length === 0) return false;
+    return cancelLocalNotificationsByIds(medicineNotificationIds);
+  } catch (error) {
+    console.error("[MedicineReminder] Failed to cancel queued medicine notifications", error);
+    return false;
+  }
+}
+
 async function cancelLegacyTaskRecheckNotificationsFromPending() {
   const bridge = getCapacitorBridge();
   const plugin = getLocalNotificationsPlugin();
@@ -4770,6 +4802,7 @@ async function refreshMedicineReminderNotifications() {
   const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
   state.medicineReminder = reminder;
 
+  await cancelMedicineReminderNotificationsFromPending();
   const notificationIds = getMedicineNotificationIdsForDate(reminder.dateKey);
   await cancelLocalNotificationsByIds(notificationIds);
 
@@ -9000,7 +9033,7 @@ function renderReturnCheck() {
     <div class="task-form-box">
       <div class="form-stack">
         <div><label for="homeworkAnswer">宿題・課題・プリントの有無 <span style="color:#d32f2f;font-weight:700;">（カレンダー、アプリに登録！！）</span></label><input id="homeworkAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.homework)}" placeholder="例: あり / なし" /></div>
-        <div><label for="troubleAnswer">困ったことの有無</label><input id="troubleAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.trouble)}" placeholder="例: あり（内容） / なし" /></div>
+        <div><label for="troubleAnswer">共有事項、困ったことの報告</label><input id="troubleAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.trouble)}" placeholder="例: あり（内容） / なし" /></div>
         <div><label for="replyAnswer">家庭教師・親への返信（依頼されたことの回答）</label><input id="replyAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.reply)}" placeholder="例: LINEで返信した" /></div>
         <div>
           <p class="legend">帰宅が遅れそうな場合は、親へ連絡しましたか？</p>
@@ -9010,6 +9043,7 @@ function renderReturnCheck() {
             <label class="option-item"><input type="radio" name="delayedContactAnswer" value="na" ${state.returnCheck.answers.delayedContact === "na" ? "checked" : ""} />該当なし</label>
           </div>
         </div>
+        <div><label for="delayReasonAnswer">帰宅が遅れた理由</label><input id="delayReasonAnswer" type="text" value="${escapeHtml(state.returnCheck.answers.delayReason)}" placeholder="例: 部活が長引いた / 交通が混んでいた" /></div>
         ${shouldShowClubQuestion ? `
         <div>
           <p class="legend">今日は部活動の日でしたか？</p>
@@ -9055,6 +9089,12 @@ function renderReturnCheck() {
     saveState();
     refreshCopyText();
   });
+  document.getElementById("delayReasonAnswer")?.addEventListener("input", (e) => {
+    if (shouldSkipInputWhileComposing(e)) return;
+    state.returnCheck.answers.delayReason = e.target.value;
+    saveState();
+    refreshCopyText();
+  });
   document.querySelectorAll("input[name='delayedContactAnswer']").forEach((input) => {
     input.addEventListener("change", (e) => {
       const target = e.target;
@@ -9088,9 +9128,10 @@ function buildReturnCheckCopyText() {
   return [
     "【帰宅時チェック】",
     `宿題・課題・プリントの有無（カレンダー、アプリに登録！！）: ${a.homework || "(未入力)"}`,
-    `困ったことの有無: ${a.trouble || "(未入力)"}`,
+    `共有事項、困ったことの報告: ${a.trouble || "(未入力)"}`,
     `家庭教師・親への返信（依頼されたことの回答）: ${a.reply || "(未入力)"}`,
     `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`,
+    `帰宅が遅れた理由: ${a.delayReason || "(未入力)"}`,
     `部活動の日: ${a.clubActivityDay === "yes" ? "はい" : a.clubActivityDay === "no" ? "いいえ" : "(未選択)"}`
   ].join("\n");
 }
@@ -9110,6 +9151,7 @@ function finishReturnCheck() {
     `困ったこと: ${a.trouble || "(未入力)"}`,
     `返信: ${a.reply || "(未入力)"}`,
     `帰宅が遅れそうな場合の親への連絡: ${delayedContactLabel}`,
+    `帰宅が遅れた理由: ${a.delayReason || "(未入力)"}`,
     `部活動の日: ${a.clubActivityDay === "yes" ? "はい" : a.clubActivityDay === "no" ? "いいえ" : "(未選択)"}`
   ].join("\n");
   state.clubAfterCheck = normalizeClubAfterCheckState({
