@@ -3521,6 +3521,56 @@ function buildHomeworkCaseHistoryEntries(dateKey = getCompletionHistoryTargetDat
   });
 }
 
+function buildCompletionHistoryAdditionalLines(entries) {
+  const sections = [];
+  const medicine = [];
+  const departure = [];
+  const returnCheck = [];
+
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    if (entry.kind !== "single") return;
+    const label = String(entry.label || "");
+    const timeLabel = String(entry.timeLabel || "");
+    if (!timeLabel || timeLabel === "--:--") return;
+    if (label.startsWith("青の薬")) {
+      medicine.push({ timeLabel, label: "青の薬" });
+      return;
+    }
+    if (label.startsWith("赤の薬")) {
+      medicine.push({ timeLabel, label: "赤の薬" });
+      return;
+    }
+    if (label === "出発前チェック完了") {
+      departure.push({ timeLabel, label: "完了" });
+      return;
+    }
+    if (label === "帰宅後チェック完了") {
+      returnCheck.push({ timeLabel, label: "完了" });
+    }
+  });
+
+  if (medicine.length > 0) {
+    sections.push({
+      heading: "【薬】",
+      items: medicine.map((item) => ({ timeLabel: item.timeLabel, label: `${item.label}` }))
+    });
+  }
+  if (departure.length > 0) {
+    sections.push({
+      heading: "【出発前チェック】",
+      items: departure.map((item) => ({ timeLabel: item.timeLabel, label: item.label }))
+    });
+  }
+  if (returnCheck.length > 0) {
+    sections.push({
+      heading: "【帰宅時チェック】",
+      items: returnCheck.map((item) => ({ timeLabel: item.timeLabel, label: item.label }))
+    });
+  }
+
+  return sections;
+}
+
 function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   const dateKey = getCompletionHistoryTargetDateKey();
   const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -3551,6 +3601,19 @@ function buildCompletionHistoryCopyText(entries, homeworkEntries) {
       entry.actions.forEach((action) => {
         lines.push(`　${action.label}　${action.timeLabel}`);
       });
+    });
+  }
+
+  const extraSections = buildCompletionHistoryAdditionalLines(entries);
+  if (extraSections.length > 0) {
+    lines.push("", "━━━━━━━━━━━━", "■ その他の完了記録", "━━━━━━━━━━━━", "");
+    extraSections.forEach((section) => {
+      lines.push(section.heading);
+      lines.push("");
+      section.items.forEach((item) => {
+        lines.push(`${item.label}　${item.timeLabel}`);
+      });
+      lines.push("");
     });
   }
 
@@ -3602,6 +3665,16 @@ function renderCompletionHistory() {
     return `<div class="completion-history-block"><p class="completion-history-line">${escapeHtml(entry.firstTimeLabel)}　${escapeHtml(taskHead)}</p>${actionLine}</div>`;
   }).join("")}</div>`;
 
+  const additionalSections = buildCompletionHistoryAdditionalLines(entries);
+  const additionalRowsHtml = additionalSections.length === 0
+    ? ""
+    : `<div class="completion-history-text-list">${additionalSections.map((section) => `
+      <div class="completion-history-block">
+        <p class="completion-history-line">${escapeHtml(section.heading)}</p>
+        ${section.items.map((item) => `<p class="completion-history-subline">　${escapeHtml(item.label)}　${escapeHtml(item.timeLabel)}</p>`).join("")}
+      </div>
+    `).join("")}</div>`;
+
   const homeworkRowsHtml = homeworkEntries.length === 0
     ? '<p class="helper">今日はまだ宿題・課題の履歴がありません。</p>'
     : `<div class="completion-history-text-list">${homeworkEntries.map((entry) => {
@@ -3627,6 +3700,7 @@ function renderCompletionHistory() {
     <hr class="sep" />
     <h3>【完了履歴】</h3>
     ${historyRowsHtml}
+    ${additionalSections.length > 0 ? `<hr class="sep" /><h3>■ その他の完了記録</h3>${additionalRowsHtml}` : ""}
     <hr class="sep" />
     <h3>【宿題・課題】</h3>
     ${homeworkRowsHtml}
