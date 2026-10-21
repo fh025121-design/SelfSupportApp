@@ -173,6 +173,7 @@ let secondAlertTimeoutId = null;
 let secondAlertScheduledKey = "";
 let secondAlertActiveOscillators = [];
 let secondAlertActiveGains = [];
+let medicineReminderRefreshGeneration = 0;
 let authReady = false;
 let authErrorMessage = "";
 let authLoading = false;
@@ -5027,13 +5028,28 @@ function getNextMedicineReminderSlotAt(baseMs, dateKey = state.dateKey) {
   return slotAt;
 }
 
-async function refreshMedicineReminderNotifications() {
+async function refreshMedicineReminderNotifications(generation = medicineReminderRefreshGeneration) {
   const reminder = normalizeMedicineReminderState(state.medicineReminder, state.dateKey);
   state.medicineReminder = reminder;
 
+  if (generation !== medicineReminderRefreshGeneration) {
+    return { ok: true, reason: "stale" };
+  }
+
   await cancelMedicineReminderNotificationsFromPending();
+  if (generation !== medicineReminderRefreshGeneration) {
+    return { ok: true, reason: "stale" };
+  }
+
   const notificationIds = getMedicineNotificationIdsForDate(reminder.dateKey);
-  await cancelLocalNotificationsByIds(notificationIds);
+  const cancelSucceeded = await cancelLocalNotificationsByIds(notificationIds);
+  if (generation !== medicineReminderRefreshGeneration) {
+    return { ok: true, reason: "stale" };
+  }
+  if (!cancelSucceeded) {
+    console.warn("[MedicineReminder] Cancelled medicine notification refresh aborted because pending IDs could not be cleared.");
+    return { ok: false, reason: "cancel-failed" };
+  }
 
   if (isMedicineDoneAll(reminder)) return { ok: true, reason: "done" };
 
@@ -5068,6 +5084,10 @@ async function refreshMedicineReminderNotifications() {
   });
 
   for (let i = 0; i < uniqueTimes.length; i += 1) {
+    if (generation !== medicineReminderRefreshGeneration) {
+      return { ok: true, reason: "stale" };
+    }
+
     const notifyAt = uniqueTimes[i];
     const result = await scheduleLocalNotification({
       id: getMedicineNotificationId(reminder.dateKey, i),
@@ -5155,7 +5175,9 @@ function setupLocalNotificationActionListener() {
 }
 
 function requestMedicineReminderNotificationRefresh() {
-  void refreshMedicineReminderNotifications().catch((error) => {
+  medicineReminderRefreshGeneration += 1;
+  const generation = medicineReminderRefreshGeneration;
+  void refreshMedicineReminderNotifications(generation).catch((error) => {
     console.error("[MedicineReminder] Failed to refresh notifications", error);
   });
 }
