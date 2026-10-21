@@ -3623,6 +3623,72 @@ function buildDayEndAdditionalReportSections(dateKey = state.dateKey) {
   };
 }
 
+function buildDayEndCompactExtraReportLines(dateKey = state.dateKey) {
+  const extra = buildDayEndAdditionalReportSections(dateKey);
+  const lines = [];
+  const medicine = [];
+  const departure = [];
+  const returnCheck = [];
+
+  extra.sections.forEach((section) => {
+    const heading = String(section.heading || "");
+    const items = Array.isArray(section.items) ? section.items : [];
+    if (heading.includes("薬")) {
+      items.forEach((item) => {
+        const label = String(item.label || "").replace(/^青の薬$/, "青").replace(/^赤の薬$/, "赤");
+        if (label && String(item.timeLabel || "").trim()) {
+          medicine.push(`${label} ${String(item.timeLabel || "").trim()}`);
+        }
+      });
+      return;
+    }
+    if (heading.includes("出発前チェック")) {
+      items.forEach((item) => {
+        if (String(item.timeLabel || "").trim()) {
+          departure.push(String(item.timeLabel || "").trim());
+        }
+      });
+      return;
+    }
+    if (heading.includes("帰宅時チェック")) {
+      items.forEach((item) => {
+        if (String(item.timeLabel || "").trim()) {
+          returnCheck.push(String(item.timeLabel || "").trim());
+        }
+      });
+    }
+  });
+
+  if (medicine.length > 0) {
+    lines.push(`薬：${medicine.join(" ／ ")}`);
+  }
+  const quickCheckParts = [];
+  if (departure.length > 0) quickCheckParts.push(`出発前チェック：${departure[0]}`);
+  if (returnCheck.length > 0) quickCheckParts.push(`帰宅時チェック：${returnCheck[0]}`);
+  if (quickCheckParts.length > 0) {
+    lines.push(quickCheckParts.join(" ／ "));
+  }
+
+  if (extra.homeworkEntries.length > 0) {
+    lines.push("【宿題・課題】");
+    extra.homeworkEntries.forEach((entry) => {
+      const homeworkName = String(entry.homeworkName || "").trim();
+      const deadLineMatch = String(entry.summaryLine || "").match(/期限：([^　]+)/);
+      const deadlineText = deadLineMatch ? deadLineMatch[1].trim() : "";
+      lines.push(`${homeworkName}${deadlineText ? `（期限${deadlineText}）` : ""}`);
+      const nextLabel = String(entry.nextLabel || "").replace(/（他\d+項目）$/, "").trim();
+      entry.dateGroups.forEach((group) => {
+        group.items.forEach((event, index) => {
+          const suffix = index === 0 && nextLabel ? ` → ${nextLabel}` : "";
+          lines.push(`・${event.timeLabel} ${event.label}${suffix}`);
+        });
+      });
+    });
+  }
+
+  return lines;
+}
+
 function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   const dateKey = getCompletionHistoryTargetDateKey();
   const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -9590,37 +9656,10 @@ function buildResultReportText(targetTasks, done, deferred, discarded, unfinishe
     lines.push("");
   });
 
-  const extra = buildDayEndAdditionalReportSections(dateKey);
-  if (extra.sections.length > 0 || extra.homeworkEntries.length > 0) {
-    lines.push("", "━━━━━━━━━━━━", "■ その他の完了記録", "━━━━━━━━━━━━", "");
-    extra.sections.forEach((section) => {
-      lines.push(section.heading);
-      lines.push("");
-      section.items.forEach((item) => {
-        lines.push(`${item.label}　${item.timeLabel}`);
-      });
-      lines.push("");
-    });
-    if (extra.homeworkEntries.length > 0) {
-      lines.push("【宿題・課題】");
-      lines.push("");
-      extra.homeworkEntries.forEach((entry) => {
-        lines.push(`■ ${entry.homeworkName}`);
-        lines.push("");
-        lines.push(entry.summaryLine);
-        lines.push("");
-        entry.dateGroups.forEach((group) => {
-          lines.push(group.dateLabel);
-          group.items.forEach((event) => {
-            lines.push(`${event.timeLabel}　${event.label}`);
-          });
-          lines.push("");
-        });
-        if (entry.nextLabel) lines.push(entry.nextLabel);
-        if (entry.completedLabel) lines.push(entry.completedLabel);
-        lines.push("");
-      });
-    }
+  const extraLines = buildDayEndCompactExtraReportLines(dateKey);
+  if (extraLines.length > 0) {
+    lines.push("", "■ その他の完了記録", "");
+    lines.push(...extraLines);
   }
 
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -9662,32 +9701,14 @@ function buildResultReportHtml(targetTasks, doneCount, unfinishedCount, totalAct
     lines.push('</div>');
   });
 
-  const extra = buildDayEndAdditionalReportSections(dateKey);
-  if (extra.sections.length > 0 || extra.homeworkEntries.length > 0) {
+  const extraLines = buildDayEndCompactExtraReportLines(dateKey);
+  if (extraLines.length > 0) {
     lines.push('<div class="result-report-gap"></div>');
     lines.push('<div class="result-report-task">');
     lines.push('<p>■ その他の完了記録</p>');
-    extra.sections.forEach((section) => {
-      lines.push(`<p>${escapeHtml(section.heading)}</p>`);
-      section.items.forEach((item) => {
-        lines.push(`<p>${escapeHtml(item.label)}　${escapeHtml(item.timeLabel)}</p>`);
-      });
+    extraLines.forEach((line) => {
+      lines.push(`<p>${escapeHtml(line)}</p>`);
     });
-    if (extra.homeworkEntries.length > 0) {
-      lines.push('<p>【宿題・課題】</p>');
-      extra.homeworkEntries.forEach((entry) => {
-        lines.push(`<p>■ ${escapeHtml(entry.homeworkName)}</p>`);
-        lines.push(`<p>${escapeHtml(entry.summaryLine)}</p>`);
-        entry.dateGroups.forEach((group) => {
-          lines.push(`<p>${escapeHtml(group.dateLabel)}</p>`);
-          group.items.forEach((event) => {
-            lines.push(`<p>${escapeHtml(event.timeLabel)}　${escapeHtml(event.label)}</p>`);
-          });
-        });
-        if (entry.nextLabel) lines.push(`<p>${escapeHtml(entry.nextLabel)}</p>`);
-        if (entry.completedLabel) lines.push(`<p>${escapeHtml(entry.completedLabel)}</p>`);
-      });
-    }
     lines.push('</div>');
   }
 

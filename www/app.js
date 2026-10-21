@@ -3586,6 +3586,72 @@ function buildDayEndAdditionalReportSections(dateKey = state.dateKey) {
   };
 }
 
+function buildDayEndCompactExtraReportLines(dateKey = state.dateKey) {
+  const extra = buildDayEndAdditionalReportSections(dateKey);
+  const lines = [];
+  const medicine = [];
+  const departure = [];
+  const returnCheck = [];
+
+  extra.sections.forEach((section) => {
+    const heading = String(section.heading || "");
+    const items = Array.isArray(section.items) ? section.items : [];
+    if (heading.includes("薬")) {
+      items.forEach((item) => {
+        const label = String(item.label || "").replace(/^青の薬$/, "青").replace(/^赤の薬$/, "赤");
+        if (label && String(item.timeLabel || "").trim()) {
+          medicine.push(`${label} ${String(item.timeLabel || "").trim()}`);
+        }
+      });
+      return;
+    }
+    if (heading.includes("出発前チェック")) {
+      items.forEach((item) => {
+        if (String(item.timeLabel || "").trim()) {
+          departure.push(String(item.timeLabel || "").trim());
+        }
+      });
+      return;
+    }
+    if (heading.includes("帰宅時チェック")) {
+      items.forEach((item) => {
+        if (String(item.timeLabel || "").trim()) {
+          returnCheck.push(String(item.timeLabel || "").trim());
+        }
+      });
+    }
+  });
+
+  if (medicine.length > 0) {
+    lines.push(`薬：${medicine.join(" ／ ")}`);
+  }
+  const quickCheckParts = [];
+  if (departure.length > 0) quickCheckParts.push(`出発前チェック：${departure[0]}`);
+  if (returnCheck.length > 0) quickCheckParts.push(`帰宅時チェック：${returnCheck[0]}`);
+  if (quickCheckParts.length > 0) {
+    lines.push(quickCheckParts.join(" ／ "));
+  }
+
+  if (extra.homeworkEntries.length > 0) {
+    lines.push("【宿題・課題】");
+    extra.homeworkEntries.forEach((entry) => {
+      const homeworkName = String(entry.homeworkName || "").trim();
+      const deadLineMatch = String(entry.summaryLine || "").match(/期限：([^　]+)/);
+      const deadlineText = deadLineMatch ? deadLineMatch[1].trim() : "";
+      lines.push(`${homeworkName}${deadlineText ? `（期限${deadlineText}）` : ""}`);
+      const nextLabel = String(entry.nextLabel || "").replace(/（他\d+項目）$/, "").trim();
+      entry.dateGroups.forEach((group) => {
+        group.items.forEach((event, index) => {
+          const suffix = index === 0 && nextLabel ? ` → ${nextLabel}` : "";
+          lines.push(`・${event.timeLabel} ${event.label}${suffix}`);
+        });
+      });
+    });
+  }
+
+  return lines;
+}
+
 function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   const dateKey = getCompletionHistoryTargetDateKey();
   const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -9541,6 +9607,12 @@ function buildResultReportText(targetTasks, done, deferred, discarded, unfinishe
     lines.push("");
   });
 
+  const extraLines = buildDayEndCompactExtraReportLines(dateKey);
+  if (extraLines.length > 0) {
+    lines.push("", "■ その他の完了記録", "");
+    lines.push(...extraLines);
+  }
+
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
 }
@@ -9579,6 +9651,17 @@ function buildResultReportHtml(targetTasks, doneCount, unfinishedCount, totalAct
     }
     lines.push('</div>');
   });
+
+  const extraLines = buildDayEndCompactExtraReportLines(dateKey);
+  if (extraLines.length > 0) {
+    lines.push('<div class="result-report-gap"></div>');
+    lines.push('<div class="result-report-task">');
+    lines.push('<p>■ その他の完了記録</p>');
+    extraLines.forEach((line) => {
+      lines.push(`<p>${escapeHtml(line)}</p>`);
+    });
+    lines.push('</div>');
+  }
 
   return `<div class="result-report-lines">${lines.join("")}</div>`;
 }
