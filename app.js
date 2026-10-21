@@ -3571,6 +3571,58 @@ function buildCompletionHistoryAdditionalLines(entries) {
   return sections;
 }
 
+function buildHomeworkReportEntriesForDate(dateKey = state.dateKey) {
+  const targetDateKey = normalizeTaskDateKey(dateKey);
+  if (!targetDateKey) return [];
+
+  const activeEntries = state.homeworkTasks
+    .filter((item) => item && !item.done)
+    .map(buildHomeworkHistoryEntryFromActiveItem)
+    .filter((entry) => entry && Array.isArray(entry.dateGroups) && entry.dateGroups.some((group) => group.dateKey === targetDateKey))
+    .map((entry) => ({
+      ...entry,
+      dateGroups: (Array.isArray(entry.dateGroups) ? entry.dateGroups : []).filter((group) => group.dateKey === targetDateKey),
+      nextLabel: entry.nextLabel && entry.dateGroups.some((group) => group.dateKey === targetDateKey)
+        ? entry.nextLabel
+        : ""
+    }))
+    .filter((entry) => Array.isArray(entry.dateGroups) && entry.dateGroups.length > 0);
+
+  const historyByDate = normalizeHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, targetDateKey);
+  const completedEntries = (Array.isArray(historyByDate[targetDateKey]) ? historyByDate[targetDateKey] : [])
+    .map(buildHomeworkHistoryEntryFromStoredRecord)
+    .filter((entry) => entry && Array.isArray(entry.dateGroups) && entry.dateGroups.some((group) => group.dateKey === targetDateKey))
+    .map((entry) => ({
+      ...entry,
+      dateGroups: (Array.isArray(entry.dateGroups) ? entry.dateGroups : []).filter((group) => group.dateKey === targetDateKey),
+      completedLabel: entry.completedLabel || "✔ 完了"
+    }))
+    .filter((entry) => Array.isArray(entry.dateGroups) && entry.dateGroups.length > 0);
+
+  return [...activeEntries, ...completedEntries].sort((a, b) => {
+    if ((a.sortOccurredAtMs || 0) === (b.sortOccurredAtMs || 0)) {
+      return String(a.homeworkName || "").localeCompare(String(b.homeworkName || ""), "ja");
+    }
+    return (a.sortOccurredAtMs || 0) - (b.sortOccurredAtMs || 0);
+  });
+}
+
+function buildDayEndAdditionalReportSections(dateKey = state.dateKey) {
+  const targetDateKey = normalizeTaskDateKey(dateKey) || getTodayKeyJst();
+  const rawEvents = state.historyEventsByDate && typeof state.historyEventsByDate === "object"
+    ? (Array.isArray(state.historyEventsByDate[targetDateKey]) ? state.historyEventsByDate[targetDateKey] : [])
+    : [];
+  const events = rawEvents
+    .map((event) => normalizeHistoryEvent(event, targetDateKey))
+    .filter((event) => event && HISTORY_EVENT_DISPLAYABLE_TYPES.has(String(event.type || "")))
+    .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+
+  return {
+    sections: buildCompletionHistoryAdditionalLines(buildCompletionHistoryDisplayEntries(events)),
+    homeworkEntries: buildHomeworkReportEntriesForDate(targetDateKey)
+  };
+}
+
 function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   const dateKey = getCompletionHistoryTargetDateKey();
   const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -9538,6 +9590,39 @@ function buildResultReportText(targetTasks, done, deferred, discarded, unfinishe
     lines.push("");
   });
 
+  const extra = buildDayEndAdditionalReportSections(dateKey);
+  if (extra.sections.length > 0 || extra.homeworkEntries.length > 0) {
+    lines.push("", "━━━━━━━━━━━━", "■ その他の完了記録", "━━━━━━━━━━━━", "");
+    extra.sections.forEach((section) => {
+      lines.push(section.heading);
+      lines.push("");
+      section.items.forEach((item) => {
+        lines.push(`${item.label}　${item.timeLabel}`);
+      });
+      lines.push("");
+    });
+    if (extra.homeworkEntries.length > 0) {
+      lines.push("【宿題・課題】");
+      lines.push("");
+      extra.homeworkEntries.forEach((entry) => {
+        lines.push(`■ ${entry.homeworkName}`);
+        lines.push("");
+        lines.push(entry.summaryLine);
+        lines.push("");
+        entry.dateGroups.forEach((group) => {
+          lines.push(group.dateLabel);
+          group.items.forEach((event) => {
+            lines.push(`${event.timeLabel}　${event.label}`);
+          });
+          lines.push("");
+        });
+        if (entry.nextLabel) lines.push(entry.nextLabel);
+        if (entry.completedLabel) lines.push(entry.completedLabel);
+        lines.push("");
+      });
+    }
+  }
+
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n");
 }
@@ -9576,6 +9661,35 @@ function buildResultReportHtml(targetTasks, doneCount, unfinishedCount, totalAct
     }
     lines.push('</div>');
   });
+
+  const extra = buildDayEndAdditionalReportSections(dateKey);
+  if (extra.sections.length > 0 || extra.homeworkEntries.length > 0) {
+    lines.push('<div class="result-report-gap"></div>');
+    lines.push('<div class="result-report-task">');
+    lines.push('<p>■ その他の完了記録</p>');
+    extra.sections.forEach((section) => {
+      lines.push(`<p>${escapeHtml(section.heading)}</p>`);
+      section.items.forEach((item) => {
+        lines.push(`<p>${escapeHtml(item.label)}　${escapeHtml(item.timeLabel)}</p>`);
+      });
+    });
+    if (extra.homeworkEntries.length > 0) {
+      lines.push('<p>【宿題・課題】</p>');
+      extra.homeworkEntries.forEach((entry) => {
+        lines.push(`<p>■ ${escapeHtml(entry.homeworkName)}</p>`);
+        lines.push(`<p>${escapeHtml(entry.summaryLine)}</p>`);
+        entry.dateGroups.forEach((group) => {
+          lines.push(`<p>${escapeHtml(group.dateLabel)}</p>`);
+          group.items.forEach((event) => {
+            lines.push(`<p>${escapeHtml(event.timeLabel)}　${escapeHtml(event.label)}</p>`);
+          });
+        });
+        if (entry.nextLabel) lines.push(`<p>${escapeHtml(entry.nextLabel)}</p>`);
+        if (entry.completedLabel) lines.push(`<p>${escapeHtml(entry.completedLabel)}</p>`);
+      });
+    }
+    lines.push('</div>');
+  }
 
   return `<div class="result-report-lines">${lines.join("")}</div>`;
 }

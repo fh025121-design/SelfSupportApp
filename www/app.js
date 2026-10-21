@@ -3534,6 +3534,58 @@ function buildCompletionHistoryAdditionalLines(entries) {
   return sections;
 }
 
+function buildHomeworkReportEntriesForDate(dateKey = state.dateKey) {
+  const targetDateKey = normalizeTaskDateKey(dateKey);
+  if (!targetDateKey) return [];
+
+  const activeEntries = state.homeworkTasks
+    .filter((item) => item && !item.done)
+    .map(buildHomeworkHistoryEntryFromActiveItem)
+    .filter((entry) => entry && Array.isArray(entry.dateGroups) && entry.dateGroups.some((group) => group.dateKey === targetDateKey))
+    .map((entry) => ({
+      ...entry,
+      dateGroups: (Array.isArray(entry.dateGroups) ? entry.dateGroups : []).filter((group) => group.dateKey === targetDateKey),
+      nextLabel: entry.nextLabel && entry.dateGroups.some((group) => group.dateKey === targetDateKey)
+        ? entry.nextLabel
+        : ""
+    }))
+    .filter((entry) => Array.isArray(entry.dateGroups) && entry.dateGroups.length > 0);
+
+  const historyByDate = normalizeHomeworkCompletionHistoryByDate(state.homeworkCompletionHistoryByDate, targetDateKey);
+  const completedEntries = (Array.isArray(historyByDate[targetDateKey]) ? historyByDate[targetDateKey] : [])
+    .map(buildHomeworkHistoryEntryFromStoredRecord)
+    .filter((entry) => entry && Array.isArray(entry.dateGroups) && entry.dateGroups.some((group) => group.dateKey === targetDateKey))
+    .map((entry) => ({
+      ...entry,
+      dateGroups: (Array.isArray(entry.dateGroups) ? entry.dateGroups : []).filter((group) => group.dateKey === targetDateKey),
+      completedLabel: entry.completedLabel || "✔ 完了"
+    }))
+    .filter((entry) => Array.isArray(entry.dateGroups) && entry.dateGroups.length > 0);
+
+  return [...activeEntries, ...completedEntries].sort((a, b) => {
+    if ((a.sortOccurredAtMs || 0) === (b.sortOccurredAtMs || 0)) {
+      return String(a.homeworkName || "").localeCompare(String(b.homeworkName || ""), "ja");
+    }
+    return (a.sortOccurredAtMs || 0) - (b.sortOccurredAtMs || 0);
+  });
+}
+
+function buildDayEndAdditionalReportSections(dateKey = state.dateKey) {
+  const targetDateKey = normalizeTaskDateKey(dateKey) || getTodayKeyJst();
+  const rawEvents = state.historyEventsByDate && typeof state.historyEventsByDate === "object"
+    ? (Array.isArray(state.historyEventsByDate[targetDateKey]) ? state.historyEventsByDate[targetDateKey] : [])
+    : [];
+  const events = rawEvents
+    .map((event) => normalizeHistoryEvent(event, targetDateKey))
+    .filter((event) => event && HISTORY_EVENT_DISPLAYABLE_TYPES.has(String(event.type || "")))
+    .sort((a, b) => (a.occurredAtMs || 0) - (b.occurredAtMs || 0));
+
+  return {
+    sections: buildCompletionHistoryAdditionalLines(buildCompletionHistoryDisplayEntries(events)),
+    homeworkEntries: buildHomeworkReportEntriesForDate(targetDateKey)
+  };
+}
+
 function buildCompletionHistoryCopyText(entries, homeworkEntries) {
   const dateKey = getCompletionHistoryTargetDateKey();
   const dateMatch = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
