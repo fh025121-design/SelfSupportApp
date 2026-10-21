@@ -3622,14 +3622,14 @@ function buildDayEndCompactExtraReportLines(dateKey = state.dateKey) {
     }
   });
 
-  if (medicine.length > 0) {
-    lines.push(`薬：${medicine.join(" ／ ")}`);
-  }
   const quickCheckParts = [];
   if (departure.length > 0) quickCheckParts.push(`出発前チェック：${departure[0]}`);
   if (returnCheck.length > 0) quickCheckParts.push(`帰宅時チェック：${returnCheck[0]}`);
   if (quickCheckParts.length > 0) {
     lines.push(quickCheckParts.join(" ／ "));
+  }
+  if (medicine.length > 0) {
+    lines.push(`薬：${medicine.join(" ／ ")}`);
   }
 
   if (extra.homeworkEntries.length > 0) {
